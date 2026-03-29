@@ -154,6 +154,13 @@ int main(int argc, char **argv) {
     if (have_warp8_256) {
         CHECK_CU(cuModuleGetFunction(&warp8_256_func, warp8_256_module, "igemm_8warp_256"));
     }
+    // --- Load 8-warp 256×256 IGEMM kernel ---
+    CUmodule   warp8_256x256_module = NULL;
+    CUfunction warp8_256x256_func   = NULL;
+    bool have_warp8_256x256 = (cuModuleLoad(&warp8_256x256_module, "igemm_8warp_256x256.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_warp8_256x256) {
+        CHECK_CU(cuModuleGetFunction(&warp8_256x256_func, warp8_256x256_module, "igemm_8warp_256x256"));
+    }
     // --- Load 8-warp triple-buffer IGEMM kernel ---
     CUmodule   tribuf_module = NULL;
     CUfunction tribuf_func   = NULL;
@@ -492,6 +499,12 @@ int main(int argc, char **argv) {
     if (have_warp8_256)
         warp8_256_tops = run_bench(warp8_256_func, grid_8w256_x, grid_8w256_y, 256, 1,
                                    "igemm_8warp_256 (128x256 cp.async)");
+    double warp8_256x256_tops = 0.0;
+    if (have_warp8_256x256) {
+        int gx256 = (N + 255) / 256, gy256 = (M + 255) / 256;
+        warp8_256x256_tops = run_bench(warp8_256x256_func, gx256, gy256, 256, 1,
+                                       "igemm_8warp_256x256 (256x256)");
+    }
     double tribuf_tops = 0.0;
     if (have_tribuf)
         tribuf_tops = run_bench(tribuf_func, grid_8warp_x, grid_8warp_y, 256, 1,
@@ -578,6 +591,10 @@ int main(int argc, char **argv) {
         printf("  128x256 vs 128x128: %.4f×  (%+.2f%%)\n",
                warp8_256_tops / warp8_tops,
                100.0 * (warp8_256_tops - warp8_tops) / warp8_tops);
+    if (warp8_256x256_tops > 0 && warp8_256_tops > 0)
+        printf("  256x256 vs 128x256: %.4f×  (%+.2f%%)\n",
+               warp8_256x256_tops / warp8_256_tops,
+               100.0 * (warp8_256x256_tops - warp8_256_tops) / warp8_256_tops);
     if (tribuf_tops > 0 && warp8_tops > 0)
         printf("  Triple-buf vs double-buf (128x128): %.4f×  (%+.2f%%)\n",
                tribuf_tops / warp8_tops,

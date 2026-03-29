@@ -740,7 +740,15 @@ Half the loop iterations (K/64 vs K/32) also means less pipeline ramp-up amortiz
 **The "short loops at 8 warps" rule now holds across tiled, register-blocked, and pipelined
 kernels — it's structural, not incidental.**
 
-**Insight 17: Per-channel dequantization is faster than wmma::store_matrix_sync.**
+**Insight 17: 1 block × 8 warps escapes the 50 KB smem cliff.**
+The "50 KB smem cliff" was self-imposed by the 2-blocks/SM × 4-warps assumption.
+1 block/SM × 8 warps/block = same 8-warp occupancy, but 100 KB smem instead of 50 KB.
+This unlocks 128×128 (+18%, 24,533 TOPS) and 128×256 (+32%, 27,591 TOPS). The prior
+128×128 failure (igemm_register_blocked, 0.84×) was caused by 4 warps with no pipelining,
+not by the tile size. 256×256 collapses (-56%) due to register spill (255 regs + stack).
+**128×256 is the optimal tile: 210 regs, no spill, 192 ops/byte arithmetic intensity.**
+
+**Insight 18: Per-channel dequantization epilogue is faster than wmma::store_matrix_sync.**
 Adding per-channel asymmetric quantization to the cp.async IGEMM epilogue (INT32 acc →
 shared memory → explicit (row,col) indexing → per-channel scale/zp → coalesced global
 write) gave +3.1% over the symmetric version that uses wmma::store_matrix_sync directly
@@ -750,7 +758,7 @@ wmma::store_matrix_sync may scatter writes due to the fragment-to-memory mapping
 **Rule: when the epilogue needs per-element transforms, routing through shared memory
 with explicit indexing can be faster than the WMMA store intrinsic.**
 
-**Insight 18: FFMA stall counts in direct kernels ARE often conservative.**
+**Insight 19: FFMA stall counts in direct kernels ARE often conservative.**
 The direct conv2d's 310-FFMA inner loop has S03-S04 between many independent FFMAs
 that could use S01 (FFMA result latency is 4 cycles; S04 is already correct for dependent
 pairs, but independent pairs could go to S01). ~150 pairs × 3 saved cycles = 450 cycles/block.
@@ -786,5 +794,8 @@ INT8 IGEMM (M=N=K=4096, symmetric quantization):
   Pipelined LDG (dbuf):     7.6 ms   18,114 TOPS   1.63×
   Pipelined cp.async (dbuf): 6.6 ms  20,688 TOPS   1.86×
   cp.async BK=64:            7.0 ms  19,725 TOPS   1.78×  (BK too long, -5%)
-  Per-channel asymmetric:    6.4 ms  21,331 TOPS   1.92×  ← best (3.1% of peak)
+  Per-channel asymmetric:    6.4 ms  21,331 TOPS   1.92×
+  8-warp 128×128 (1 blk/SM): 5.6 ms  24,533 TOPS   2.21×  (+18% vs 64×64)
+  8-warp 128×256 (1 blk/SM): 5.0 ms  27,591 TOPS   2.49×  ← best (4.0% of peak)
+  8-warp 256×256:           11.3 ms  12,114 TOPS   1.09×  (reg spill, -56%)
 ```
