@@ -1,25 +1,36 @@
 /*
  * bench.cu — End-to-end Transformer self-attention layer pipeline
  *
- * Chains bare-metal kernels into a complete forward pass:
+ * Chains bare-metal kernels into a complete forward pass.
  *
- *   X [B*S × D] FP32 (input)
+ * Two pipeline variants are benchmarked:
+ *
+ * ORIGINAL (11 steps):
  *     1. LayerNorm(X)           → X_norm  [B*S × D]   FP32
  *     2. fp32_to_fp16           → X_fp16  [B*S × D]   FP16
- *     3. Q = X_fp16 @ W_q      → Q_flat  [B*S × D]   FP32  (HGEMM)
- *     4. K = X_fp16 @ W_k      → K_flat  [B*S × D]   FP32  (HGEMM)
- *     5. V = X_fp16 @ W_v      → V_flat  [B*S × D]   FP32  (HGEMM)
- *     6. fp32_to_fp16 + transpose [B,S,H,D]→[B,H,S,D] for Q,K,V
+ *   3-5. Q,K,V = X_fp16 @ W    → flat    [B*S × D]   FP32  (3× HGEMM)
+ *     6. 3×(fp32_to_fp16 + transpose [B,S,H,D]→[B,H,S,D]) for Q,K,V
  *     7. O = FlashAttention(Q,K,V) → [B,H,S,D] FP32
  *     8. transpose_bhsd [B,H,S,D]→[B,S,H,D] = [B*S × D] FP32
  *     9. fp32_to_fp16           → O_fp16  [B*S × D]   FP16
  *    10. Out = O_fp16 @ W_out   → Out     [B*S × D]   FP32  (HGEMM)
  *    11. Result = Out + X       → Result  [B*S × D]   FP32  (residual add)
  *
+ * FUSED (10 steps — eliminates all 4 transposes):
+ *     1. LayerNorm(X)           → X_norm  [B*S × D]   FP32
+ *     2. fp32_to_fp16           → X_fp16  [B*S × D]   FP16
+ *   3-5. Q,K,V = X_fp16 @ W    → flat    [B*S × D]   FP32  (3× HGEMM)
+ *   6-8. 3× fp32_to_fp16       → Q,K,V   [B*S × D]   FP16  (no transpose!)
+ *     9. O = FlashAttnFused(Q,K,V [B,S,H,D] FP16) → [B,S,H,D] FP32
+ *    10. fp32_to_fp16           → O_fp16  [B*S × D]   FP16  (no transpose!)
+ *    11. Out = O_fp16 @ W_out   → Out     [B*S × D]   FP32  (HGEMM)
+ *    12. Result = Out + X       → Result  [B*S × D]   FP32  (residual add)
+ *
  * Cubins loaded:
  *   ../../phase2/layernorm/layernorm.sm_86.cubin  (layernorm_block)
  *   ../../phase2/hgemm/hgemm.sm_86.cubin          (hgemm_wmma)
- *   ../../phase3/flash_attention/flash_br16.sm_86.cubin (flash_attn_br16)
+ *   ../../phase3/flash_attention/flash_br16.sm_86.cubin  (flash_attn_br16)
+ *   ../../phase3/flash_attention/flash_fused.sm_86.cubin (flash_attn_fused)
  *   utils.sm_86.cubin                              (fp32_to_fp16, fp16_to_fp32,
  *                                                   transpose_bshd, transpose_bhsd,
  *                                                   residual_add)
@@ -35,6 +46,7 @@
  *   #   phase2/layernorm: nvcc --cubin -arch=sm_86 -O2 -o layernorm.sm_86.cubin layernorm.cu
  *   #   phase2/hgemm:     nvcc --cubin -arch=sm_86 -O2 -o hgemm.sm_86.cubin hgemm.cu
  *   #   phase3/flash_attention: nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
+ *   #   phase3/flash_attention: nvcc --cubin -arch=sm_86 -O2 -o flash_fused.sm_86.cubin flash_attn_fused.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o utils.sm_86.cubin utils.cu
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
  *
@@ -206,8 +218,8 @@ int main(int argc, char **argv) {
     CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
 
     // ---- Load cubins ----
-    CUmodule mod_ln, mod_hgemm, mod_flash, mod_utils;
-    CUfunction fn_layernorm, fn_hgemm, fn_flash, fn_f2h, fn_h2f,
+    CUmodule mod_ln, mod_hgemm, mod_flash, mod_fused, mod_utils;
+    CUfunction fn_layernorm, fn_hgemm, fn_flash, fn_flash_fused, fn_f2h, fn_h2f,
                fn_tr_bshd, fn_tr_bhsd, fn_residual;
 
     auto load_or_die = [](CUmodule *mod, const char *path) {
@@ -220,25 +232,30 @@ int main(int argc, char **argv) {
     load_or_die(&mod_ln,    "../../phase2/layernorm/layernorm.sm_86.cubin");
     load_or_die(&mod_hgemm, "../../phase2/hgemm/hgemm.sm_86.cubin");
     load_or_die(&mod_flash, "../../phase3/flash_attention/flash_br16.sm_86.cubin");
+    load_or_die(&mod_fused, "../../phase3/flash_attention/flash_fused.sm_86.cubin");
     load_or_die(&mod_utils, "utils.sm_86.cubin");
 
-    CHECK_CU(cuModuleGetFunction(&fn_layernorm, mod_ln,    "layernorm_block"));
-    CHECK_CU(cuModuleGetFunction(&fn_hgemm,     mod_hgemm, "hgemm_wmma"));
-    CHECK_CU(cuModuleGetFunction(&fn_flash,     mod_flash, "flash_attn_br16"));
-    CHECK_CU(cuModuleGetFunction(&fn_f2h,       mod_utils, "fp32_to_fp16"));
-    CHECK_CU(cuModuleGetFunction(&fn_h2f,       mod_utils, "fp16_to_fp32"));
-    CHECK_CU(cuModuleGetFunction(&fn_tr_bshd,   mod_utils, "transpose_bshd"));
-    CHECK_CU(cuModuleGetFunction(&fn_tr_bhsd,   mod_utils, "transpose_bhsd"));
-    CHECK_CU(cuModuleGetFunction(&fn_residual,  mod_utils, "residual_add"));
+    CHECK_CU(cuModuleGetFunction(&fn_layernorm,    mod_ln,    "layernorm_block"));
+    CHECK_CU(cuModuleGetFunction(&fn_hgemm,        mod_hgemm, "hgemm_wmma"));
+    CHECK_CU(cuModuleGetFunction(&fn_flash,        mod_flash, "flash_attn_br16"));
+    CHECK_CU(cuModuleGetFunction(&fn_flash_fused,  mod_fused, "flash_attn_fused"));
+    CHECK_CU(cuModuleGetFunction(&fn_f2h,          mod_utils, "fp32_to_fp16"));
+    CHECK_CU(cuModuleGetFunction(&fn_h2f,          mod_utils, "fp16_to_fp32"));
+    CHECK_CU(cuModuleGetFunction(&fn_tr_bshd,      mod_utils, "transpose_bshd"));
+    CHECK_CU(cuModuleGetFunction(&fn_tr_bhsd,      mod_utils, "transpose_bhsd"));
+    CHECK_CU(cuModuleGetFunction(&fn_residual,     mod_utils, "residual_add"));
 
-    // Flash attention needs 48 KB smem
+    // Flash attention smem: both use 48 KB (Q loaded from global, not smem)
     size_t flash_smem = 2 * 64 * 64 * sizeof(short)      // K+V tiles FP16
                       + 64 * 64 * sizeof(float)           // smem_work FP32
                       + 64 * 64 * sizeof(float);          // smem_pv FP32
     CHECK_CU(cuFuncSetAttribute(fn_flash,
         CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)flash_smem));
+    CHECK_CU(cuFuncSetAttribute(fn_flash_fused,
+        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)flash_smem));
 
-    printf("All cubins loaded. Flash smem: %zu bytes.\n\n", flash_smem);
+    printf("All cubins loaded. Flash smem: %zu bytes (48 KB, both kernels).\n\n",
+           flash_smem);
 
     // ---- Allocate host memory ----
     size_t bsd   = (size_t)BS * D;
@@ -438,6 +455,74 @@ int main(int argc, char **argv) {
         }
     };
 
+    // ====================================================================
+    // Fused pipeline: eliminates all transposes.
+    //   QKV HGEMM outputs [BS×D] FP32 = [B,S,H,D] naturally.
+    //   fp32→fp16 converts without layout change.
+    //   flash_attn_fused reads FP16 [B,S,H,D] directly (stride = d_model).
+    //   Output: FP32 [B,S,H,D] = [BS×D], ready for fp32→fp16 + HGEMM.
+    //
+    // Pipeline: LN → f2h → 3×HGEMM → 3×f2h → Flash(BSHD) → f2h → HGEMM → res_add
+    // vs original: LN → f2h → 3×HGEMM → 3×(f2h+tr) → Flash(BHSD) → tr → f2h → HGEMM → res_add
+    //
+    // Reuses d_q_h/d_k_h/d_v_h as FP16 [BS×D] = [B,S,H,D] (no transpose needed).
+    // ====================================================================
+    auto run_pipeline_fused = [&]() {
+        // 1. LayerNorm
+        {
+            int num_rows = BS; int row_width = D;
+            void *args[] = { &d_X, &d_gamma, &d_beta, &d_xnorm, &num_rows, &row_width, &epsilon };
+            CHECK_CU(cuLaunchKernel(fn_layernorm,
+                BS, 1, 1,   128, 1, 1,   0, NULL, args, NULL));
+        }
+        // 2. fp32→fp16 (x_norm)
+        {
+            void *args[] = { &d_xnorm, &d_xnorm_h, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
+        }
+        // 3-5. QKV projections → FP32 [BS×D]
+        {
+            void *aq[] = { &d_xnorm_h, &d_Wq, &d_qflat, &BS, &D, &D };
+            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, aq, NULL));
+            void *ak[] = { &d_xnorm_h, &d_Wk, &d_kflat, &BS, &D, &D };
+            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, ak, NULL));
+            void *av[] = { &d_xnorm_h, &d_Wv, &d_vflat, &BS, &D, &D };
+            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, av, NULL));
+        }
+        // 6. fp32→fp16 for Q,K,V (no transpose — BSHD stays BSHD)
+        {
+            void *fq[] = { &d_qflat, &d_q_h, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fq, NULL));
+            void *fk[] = { &d_kflat, &d_k_h, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fk, NULL));
+            void *fv[] = { &d_vflat, &d_v_h, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fv, NULL));
+        }
+        // 7. Flash Attention (BSHD): FP16 [B,S,H,D] → FP32 [B,S,H,D]
+        {
+            void *args[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_flat,
+                             &seq, &heads, &attn_scale };
+            CHECK_CU(cuLaunchKernel(fn_flash_fused,
+                flash_gx, heads, batch,   128, 1, 1,
+                (unsigned)flash_smem, NULL, args, NULL));
+        }
+        // 8. fp32→fp16: O_flat → O_flat_h
+        {
+            void *args[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
+        }
+        // 9. Output projection
+        {
+            void *args[] = { &d_o_flat_h, &d_Wout, &d_out, &BS, &D, &D };
+            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args, NULL));
+        }
+        // 10. Residual add
+        {
+            void *args[] = { &d_out, &d_X, &d_result, &n_bsd };
+            CHECK_CU(cuLaunchKernel(fn_residual, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
+        }
+    };
+
     // ---- Correctness check ----
     if (run_ref) {
         run_pipeline();
@@ -445,9 +530,15 @@ int main(int argc, char **argv) {
         CHECK_CU(cuMemcpyDtoH(h_result, d_result, bsd * sizeof(float)));
 
         printf("Correctness (GPU pipeline vs CPU reference):\n");
-        // Use loose tolerance: FP16 quantization in QKV projections + flash attention
         auto r = check_fp32(h_result, h_ref, bsd, 0.5f, 0.5f);
-        print_check_result("attention_layer (end-to-end)", r);
+        print_check_result("original pipeline (11 steps)", r);
+
+        // Fused pipeline correctness
+        run_pipeline_fused();
+        CHECK_CU(cuCtxSynchronize());
+        CHECK_CU(cuMemcpyDtoH(h_result, d_result, bsd * sizeof(float)));
+        auto rf = check_fp32(h_result, h_ref, bsd, 0.5f, 0.5f);
+        print_check_result("fused pipeline    (7 steps) ", rf);
         printf("  Note: FP16 projections + online softmax accumulation → loose tolerance\n\n");
     }
 
@@ -459,13 +550,24 @@ int main(int argc, char **argv) {
     for (int i = 0; i < warmup; i++) run_pipeline();
     CHECK_CU(cuCtxSynchronize());
 
-    // Total pipeline timing
+    // Total pipeline timing: original
     float total_ms;
     {
         BenchTimer timer;
         timer.start();
         for (int i = 0; i < bench_n; i++) run_pipeline();
         total_ms = timer.stop_ms() / bench_n;
+    }
+
+    // Total pipeline timing: fused
+    for (int i = 0; i < warmup; i++) run_pipeline_fused();
+    CHECK_CU(cuCtxSynchronize());
+    float fused_total_ms;
+    {
+        BenchTimer timer;
+        timer.start();
+        for (int i = 0; i < bench_n; i++) run_pipeline_fused();
+        fused_total_ms = timer.stop_ms() / bench_n;
     }
 
     // Per-stage timing
@@ -483,7 +585,11 @@ int main(int argc, char **argv) {
         return ms;
     };
 
-    printf("  %-30s %7.3f ms  (100%%)\n\n", "TOTAL PIPELINE", total_ms);
+    printf("  %-30s %7.3f ms  (100%%)\n", "ORIGINAL PIPELINE (11 steps)", total_ms);
+    printf("  %-30s %7.3f ms  (%+.1f%%)\n\n",
+           "FUSED PIPELINE    (no transpose)",
+           fused_total_ms,
+           100.0 * (fused_total_ms - total_ms) / total_ms);
 
     time_stage("LayerNorm", [&]() {
         int num_rows = BS, row_width = D;
@@ -542,6 +648,29 @@ int main(int argc, char **argv) {
         CHECK_CU(cuLaunchKernel(fn_residual, ug, 1, 1, 256, 1, 1, 0, NULL, a, NULL));
     });
 
+    printf("\n  --- Fused pipeline stages (no transposes) ---\n\n");
+
+    time_stage("(fused) 3× fp32→fp16 Q,K,V", [&]() {
+        void *fq[] = { &d_qflat, &d_q_h, &n_bsd };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fq, NULL));
+        void *fk[] = { &d_kflat, &d_k_h, &n_bsd };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fk, NULL));
+        void *fv[] = { &d_vflat, &d_v_h, &n_bsd };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fv, NULL));
+    });
+
+    time_stage("(fused) Flash Attention BSHD", [&]() {
+        void *a[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_flat,
+                      &seq, &heads, &attn_scale };
+        CHECK_CU(cuLaunchKernel(fn_flash_fused, flash_gx, heads, batch, 128, 1, 1,
+                 (unsigned)flash_smem, NULL, a, NULL));
+    });
+
+    time_stage("(fused) fp32→fp16 (O)", [&]() {
+        void *a[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, a, NULL));
+    });
+
     printf("\n  Sum of stages may exceed total (per-stage warmup re-caches data).\n");
     printf("  Total pipeline time is the authoritative measurement.\n");
 
@@ -556,7 +685,7 @@ int main(int argc, char **argv) {
     cuMemFree(d_out);
 
     cuModuleUnload(mod_ln); cuModuleUnload(mod_hgemm);
-    cuModuleUnload(mod_flash); cuModuleUnload(mod_utils);
+    cuModuleUnload(mod_flash); cuModuleUnload(mod_fused); cuModuleUnload(mod_utils);
     cuCtxDestroy(ctx);
 
     free(h_X); free(h_gamma); free(h_beta);

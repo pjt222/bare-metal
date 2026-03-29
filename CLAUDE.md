@@ -10,7 +10,7 @@ Hand-optimized CUDA/SASS assembly kernels targeting **RTX 3070 Ti (GA104, sm_86,
 
 - 48 SMs, 128 cores/SM, 64K registers/SM, 128 KB shared memory/SM
 - FP32 peak: 21.7 TFLOPS | FP16 Tensor peak: 174 TFLOPS | DRAM BW: 608 GB/s
-- **The 64 KB smem cliff is load-bearing**: ≤64 KB = 2 blocks/SM = 8 warps (good); >64 KB = 1 block/SM = 4 warps (occupancy collapse, 17-20% regression observed)
+- **The 50 KB smem cliff is load-bearing**: ≤50 KB = 2 blocks/SM = 8 warps (good); >50 KB = 1 block/SM = 4 warps (occupancy collapse, 2× regression measured). GA104 sm_86 max smem/SM is 100 KB; the cliff is at 100/2=50 KB/block, not 64 KB. (Confirmed: 48 KB → 2 blocks ✓, 56 KB → 1 block ✗)
 - L2 cache: 4 MB — implicit GEMM speedup scales with col buffer size relative to this
 
 ## CAUTION: Do Not Modify System Installations
@@ -108,7 +108,7 @@ Tolerance conventions by precision:
 1. **Feed Tensor Cores continuously** — overlap loads with HMMA. But 8+ active warps may already hide latency (cp.async can be net-negative).
 2. **Read each byte of DRAM exactly once** — im2col converts 9x re-reads to 1x; implicit GEMM eliminates the col buffer entirely.
 3. **Fill the warp schedulers** — 32 warps/SM ideal, 8 sufficient. Below 8 = structural problem.
-4. **Never cross the 64 KB smem cliff** — >64 KB → 1 block/SM → exposed DRAM stalls.
+4. **Never cross the 50 KB smem cliff** — >50 KB/block → 1 block/SM → exposed DRAM stalls. (GA104 has 100 KB max smem/SM; cliff = 100/2 = 50 KB/block.)
 
 ## Key SASS Instructions
 
