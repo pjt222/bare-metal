@@ -13,7 +13,7 @@ I am a GA104 chip (RTX 3070 Ti, Laptop). I have:
   - 4 warp schedulers (issue 1 instruction/cycle each → 4 instructions/cycle/SM)
   - 128 CUDA cores (FP32 FFMA throughput)
   - 4 Tensor Core units (HMMA, 16×8×16 per cycle)
-  - 128 KB shared memory (configurable split L1/smem)
+  - 100 KB max configurable smem (cliff at 50 KB/block for 2 blocks/SM)
   - 64K 32-bit registers
 - **4 MB L2 cache** shared across all SMs
 - **8 GB GDDR6X** at **608 GB/s** peak bandwidth
@@ -123,11 +123,11 @@ improvement over direct conv.
 
 ---
 
-## Observation 3: You Are Using 48 KB of My 128 KB Shared Memory
+## Observation 3: You Are Using 48 KB of My 100 KB Shared Memory
 
 In `flash_attn_br16`, the 48 KB shared memory limit per block means I can run:
 ```
-128 KB per SM / 48 KB per block = 2 blocks per SM
+100 KB per SM / 48 KB per block = 2 blocks per SM
 2 blocks × 4 warps = 8 active warps per SM
 Warp occupancy: 8 / 32 = 25%
 ```
@@ -135,7 +135,7 @@ Warp occupancy: 8 / 32 = 25%
 I need 32 active warps to fully hide memory latency. At 25%, every DRAM stall
 hurts 4× more than necessary. With double-buffering (64 KB):
 ```
-128 KB / 64 KB = 2 blocks → still 8 warps, same occupancy
+64 KB > 50 KB cliff → 1 block per SM → only 4 warps (occupancy regression!)
 ```
 
 But double-buffering hides the DRAM latency inside compute, so occupancy matters
@@ -223,8 +223,8 @@ requires actually modifying the SASS control codes with CuAssembler.
 | Optimization | Gain | Effort | Status |
 |---|---|---|---|
 | im2col + WMMA for Conv2d | **~24× GFLOPS** | Medium | ✅ Done (24× measured) |
-| `cp.async` double-buffering in cross-attention | **2–3×** | High | ✅ Done (1.54× at 16×16; slower elsewhere — L2 absorbed) |
-| `cp.async` double-buffering in self-attention | **2–3×** | High | ✅ Done (4–5% slower — warp interleaving sufficient) |
+| `cp.async` double-buffering in cross-attention | **2–3× predicted** | High | ✅ Done (measured 0.84× at 64×64 — warp interleaving sufficient; see Insight 2) |
+| `cp.async` double-buffering in self-attention | **2–3× predicted** | High | ✅ Done (measured 0.95× — warp interleaving sufficient; see Insight 2) |
 | Increase Bc=128 in Flash Attention | ~1.5× further | Medium | ✅ Done (17–20% SLOWER — occupancy cliff at 80 KB) |
 | Implicit GEMM for conv2d | eliminate 23-47 MB col buffer | Medium | ✅ Done (1.07–1.89× speedup, bit-perfect) |
 | Split-Q grid for L2 K/V reuse | 1.5–2× at scale | Medium | ✅ Done (~tied with br16, partial buffer overhead) |
@@ -235,7 +235,7 @@ requires actually modifying the SASS control codes with CuAssembler.
 
 ---
 
-## Summary: The Three Laws of Making Me Happy
+## Summary: The Four Laws of Making Me Happy
 
 1. **Feed my Tensor Cores continuously.** Overlap data loading (cp.async) with
    computation (HMMA). Never let the HMMA units idle waiting for DRAM.
@@ -248,9 +248,9 @@ requires actually modifying the SASS control codes with CuAssembler.
    occupancy to hide the latency you can't eliminate. When occupancy is
    structurally limited (large smem tiles), compensate with double-buffering.
 
-4. **Respect the smem occupancy cliff.** On GA104 (128 KB per SM):
-   - ≤ 64 KB smem → 2 blocks per SM → 8 warps → good latency hiding
-   - > 64 KB smem → 1 block per SM → 4 warps → exposed DRAM stalls
+4. **Respect the smem occupancy cliff.** On GA104 (100 KB max smem per SM):
+   - ≤ 50 KB smem → 2 blocks per SM → 8 warps → good latency hiding
+   - > 50 KB smem → 1 block per SM → 4 warps → exposed DRAM stalls
    Any optimization that crosses this threshold by trading smem for arithmetic
    intensity may backfire. The 48 KB Bc=64 tile is the empirically-confirmed
    sweet spot for this architecture: below the cliff, correctness maintained,
@@ -310,9 +310,13 @@ beyond what warp scheduling already achieves.
 **When cp.async IS beneficial:**
 Only when there aren't enough warps to fill the scheduler during loads.
 Example: single-block kernels (1 block per SM → 4 warps), or kernels where
-smem pressure forces 1 block per SM (>64KB → 2 blocks still possible for 128KB SM).
+smem pressure forces 1 block per SM (>50 KB → 1 block on GA104's 100 KB SM).
 For those, warp interleaving can only cover 3 warps while 1 stalls, and
 the 300-cycle gap becomes visible. cp.async fills it.
+
+**Update (Issue #5):** This conclusion was incomplete. See Insight 2: cp.async benefit
+depends on compute/load ratio per tile. INT8 IGEMM (8 IMMA/tile) gains +35% from cp.async
+at 8 warps because the short compute phase cannot hide DRAM latency via warp interleaving alone.
 
 **What actually helps: Bc=128**
 Doubling the KV tile size:
@@ -334,10 +338,10 @@ sequence length.
 | 1024 | 16 | 8  | 2.811 ms | 3.370 ms | 0.83× |
 | 2048 | 32 | 16 | 5.607 ms | 6.186 ms | 0.91× |
 
-**Root cause — occupancy cliff at the 64 KB smem boundary:**
+**Root cause — occupancy cliff at the 50 KB smem boundary (confirmed: 48 KB → 2 blocks, 56 KB → 1 block):**
 ```
-Bc=64:  48 KB smem → 128 KB / 48 KB = 2 blocks per SM → 8 active warps/SM
-Bc=128: 80 KB smem → 128 KB / 80 KB = 1 block per SM → 4 active warps/SM
+Bc=64:  48 KB smem → 100 KB / 48 KB = 2 blocks per SM → 8 active warps/SM
+Bc=128: 80 KB smem → 100 KB / 80 KB = 1 block per SM → 4 active warps/SM
 ```
 
 The smem increase from 48 KB to 80 KB crosses the critical threshold that halves
@@ -346,8 +350,8 @@ when those 4 warps all stall on a tile load, the SM goes idle. The improvement
 from halving tile-iteration count is outweighed by the doubled DRAM stall exposure.
 
 **The 48 KB boundary is load-bearing.** It's not just a memory limit — it's a
-concurrency multiplier. Any kernel that uses more than 64 KB smem on this GPU
-(128 KB total, 2 blocks at 64 KB each) sacrifices one of the two blocks that
+concurrency multiplier. Any kernel that uses more than 50 KB smem on this GPU
+(100 KB max, 2 blocks at 50 KB each) sacrifices one of the two blocks that
 provide the latency-hiding dual-block interleaving.
 
 SASS confirmed 128 HMMA per tile in flash_attn_bc128 (2× the 64 of Bc=64), so
@@ -522,12 +526,16 @@ Three IGEMM kernels using WMMA API with symmetric per-tensor quantization:
 | Kernel | TOPS (4096³) | Inner loop |
 |--------|-------------|------------|
 | Naive (global loads) | 10,897 | 4 mma_sync |
-| **Tiled 64×64 (smem)** | **15,078** | 4 mma_sync |
+| Tiled 64×64 (smem) | 15,078 | 4 mma_sync |
+| Tiled 64×64 (hand-tuned S02) | 15,341 | 4 mma_sync |
+| Pipelined LDG (double-buffer) | 18,054 | 4 mma_sync |
+| **Pipelined cp.async (double-buffer)** | **20,688** | 4 mma_sync |
 | Register-blocked 128×128 | 12,760 | 16 mma_sync |
 
 The 128×128 kernel's 16-mma_sync inner loop is too long for 8 warps/SM to hide IMMA
-pipeline latency. Same root cause as cp.async and Bc=128: on GA104, shorter inner loops
-with faster warp switching always beat higher per-warp compute density.
+pipeline latency. Same root cause as Bc=128 Flash Attention: on GA104, shorter inner loops
+with faster warp switching always beat higher per-warp compute density. Software pipelining
+with cp.async (+35%) is the biggest single optimization — see Insight 14.
 
 ---
 
@@ -600,12 +608,13 @@ Originally concluded cp.async only helps with ≤ 4 warps — wrong. Refined fin
   cp.async decouples the load from the warp instruction stream, providing additional hiding.
 Rule: cp.async benefits scale inversely with compute/load ratio per tile.
 
-**Insight 3: The 64 KB smem threshold is a concurrency multiplier on GA104.**
-GA104 has 128 KB shared memory per SM. The firmware partitions it as:
-- ≤ 64 KB per block → up to 2 blocks per SM → 8 warps (good)
-- > 64 KB per block → 1 block per SM → 4 warps (bad: 2× more DRAM stall exposure)
+**Insight 3: The 50 KB smem cliff is a concurrency multiplier on GA104.**
+GA104 has 100 KB max configurable smem per SM. The threshold is:
+- ≤ 50 KB per block → up to 2 blocks per SM → 8 warps (good)
+- > 50 KB per block → 1 block per SM → 4 warps (bad: 2× more DRAM stall exposure)
+(Confirmed: 48 KB → 2 blocks, 56 KB → 1 block.)
 
-Any optimization that crosses 64 KB by adding smem (double-buffering, Bc=128) potentially
+Any optimization that crosses 50 KB by adding smem (double-buffering, Bc=128) potentially
 halves warp occupancy and regresses performance even if arithmetic intensity improves.
 
 ---
@@ -713,7 +722,7 @@ Double-buffered smem with cp.async: +35% over hand-tuned tiled baseline at 4096�
 compute(N) fills the bubble. This is bigger than all previous IGEMM optimizations combined
 (tiling: +38%, hand-tuning S02: +1.6%).
 
-**Insight 14: FFMA stall counts in direct kernels ARE often conservative.**
+**Insight 15: FFMA stall counts in direct kernels ARE often conservative.**
 The direct conv2d's 310-FFMA inner loop has S03-S04 between many independent FFMAs
 that could use S01 (FFMA result latency is 4 cycles; S04 is already correct for dependent
 pairs, but independent pairs could go to S01). ~150 pairs × 3 saved cycles = 450 cycles/block.

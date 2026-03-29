@@ -105,7 +105,7 @@ Tolerance conventions by precision:
 
 ## The Four Laws of Making GA104 Happy
 
-1. **Feed Tensor Cores continuously** — overlap loads with HMMA. But 8+ active warps may already hide latency (cp.async can be net-negative).
+1. **Feed Tensor Cores continuously** — overlap loads with HMMA/IMMA. At 8+ warps, cp.async benefit depends on compute/load ratio: helpful when short (8 IMMA/tile, +35%), harmful when long (64 HMMA/tile, -5%). See `gpu_reflections.md` Insights 2, 14.
 2. **Read each byte of DRAM exactly once** — im2col converts 9x re-reads to 1x; implicit GEMM eliminates the col buffer entirely.
 3. **Fill the warp schedulers** — 32 warps/SM ideal, 8 sufficient. Below 8 = structural problem.
 4. **Never cross the 50 KB smem cliff** — >50 KB/block → 1 block/SM → exposed DRAM stalls. (GA104 has 100 KB max smem/SM; cliff = 100/2 = 50 KB/block.)

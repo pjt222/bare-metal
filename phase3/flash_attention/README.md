@@ -143,7 +143,7 @@ This kernel re-reads K and V tiles from **global memory** on every KV iteration.
 The fix (next steps):
 1. **Larger `BLOCK_KV`**: reduces the number of K/V load passes — quadratic improvement since more queries also reuse each K/V load
 2. **WMMA Tensor Cores**: replace scalar dot products with HMMA.16816 — the QK^T computation is a matrix-matrix multiply, not just dot products
-3. **LDGSTS pipelining**: `cp.async` overlaps next tile load with current tile computation
+3. ~~**LDGSTS pipelining**~~: Implemented in Phase 5; measured 4-5% slower — warp interleaving at 8 warps already hides DRAM latency for Flash Attention's long compute phase (64 HMMA/tile). cp.async benefits only short compute phases (see IGEMM pipelining, +35%)
 
 ---
 

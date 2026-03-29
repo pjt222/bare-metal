@@ -386,7 +386,7 @@ For production ML training workloads, Linux bare-metal (not WSL) with the GPU in
 
 **The "ideal" bandwidth** (K/V cached) is printed separately — this represents what you'd achieve if K/V fit in L2. For our config it's ~1 GB/s, confirming we're compute-bound (the SHFL.BFLY + FFMA work is the bottleneck, not bandwidth), not bandwidth-limited as the raw number suggests.
 
-**Real fix**: Increase `BLOCK_KV` (larger tiles = more Q rows processed per K/V load) and use `LDGSTS` async pipelining. The WMMA version processes `Br=64` query rows per block, giving 2× more temporal reuse of each K/V tile.
+**Real fix**: Increase `BLOCK_KV` (larger tiles = more Q rows processed per K/V load). The WMMA version processes `Br=64` query rows per block, giving 2× more temporal reuse of each K/V tile. Note: `LDGSTS` async pipelining (cp.async) helps only when compute/load ratio per tile is low (e.g., IGEMM: +35%). For Flash Attention's long compute phase (64 HMMA/tile), cp.async was measured 4-5% slower — warp interleaving already hides latency. See `gpu_reflections.md` Insight 2.
 
 ---
 
@@ -528,8 +528,7 @@ Hardware peak is 608 GB/s. The gap (24 vs 608 = 4%) is because:
 - Online softmax requires per-row reductions (SHFL bound) between HMMA calls
 - `__syncthreads()` barriers between KV tiles create pipeline bubbles
 
-The path to closing the gap: async K/V prefetching with LDGSTS (cp.async),
-double-buffering K/V tiles, and warp-specialization (producer/consumer split).
+The path to closing the gap: double-buffering K/V tiles and warp-specialization (producer/consumer split). Note: LDGSTS (cp.async) was measured 4-5% slower for Flash Attention at 8 warps — the long compute phase (64 HMMA/tile) already hides DRAM latency via warp interleaving. cp.async helps only with short compute phases (see IGEMM pipelining, +35%). See `gpu_reflections.md` Insight 2.
 
 ---
 
