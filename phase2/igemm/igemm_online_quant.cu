@@ -60,10 +60,9 @@ using namespace nvcuda;
 #define QUANT_ELEMS_A  (BM * BK / BLOCK_SIZE)   // 4096/256 = 16
 #define QUANT_ELEMS_B  (BK * BN / BLOCK_SIZE)   // 4096/256 = 16
 
-// Macro: block-wide max_abs reduction + FP16→INT8 conversion
-// Reads from smem_a_fp16[BUF]/smem_b_fp16[BUF], writes smem_a_int8/smem_b_int8
-// Sets tile_scale = scale_a * scale_b
-// Requires: tid, warp_id, lane_id, reduce_max[] in scope
+// QUANTIZE_TILE: combined A/B max_abs reduction (1 sync instead of 2),
+// then FP16→INT8 conversion + 1 sync = 2 syncs total per tile.
+// Uses reduce_max[warp_id*2] for A, reduce_max[warp_id*2+1] for B.
 #define QUANTIZE_TILE(BUF)                                                     \
 do {                                                                           \
     float _max_a = 0.0f;                                                       \
@@ -84,22 +83,21 @@ do {                                                                           \
     for (int _off = WARP_SIZE/2; _off > 0; _off >>= 1)                        \
         _max_b = fmaxf(_max_b, __shfl_xor_sync(0xFFFFFFFF, _max_b, _off));    \
                                                                                \
-    if (lane_id == 0) reduce_max[warp_id] = _max_a;                           \
+    /* Combined A+B cross-warp reduction — one sync instead of two */          \
+    if (lane_id == 0) {                                                        \
+        reduce_max[warp_id * 2]     = _max_a;                                  \
+        reduce_max[warp_id * 2 + 1] = _max_b;                                 \
+    }                                                                          \
     __syncthreads();                                                           \
     float _bma = reduce_max[0];                                                \
-    for (int _w = 1; _w < NUM_WARPS; _w++)                                     \
-        _bma = fmaxf(_bma, reduce_max[_w]);                                    \
+    float _bmb = reduce_max[1];                                                \
+    for (int _w = 1; _w < NUM_WARPS; _w++) {                                   \
+        _bma = fmaxf(_bma, reduce_max[_w * 2]);                               \
+        _bmb = fmaxf(_bmb, reduce_max[_w * 2 + 1]);                           \
+    }                                                                          \
                                                                                \
-    if (lane_id == 0) reduce_max[warp_id] = _max_b;                           \
-    __syncthreads();                                                           \
-    float _bmb = reduce_max[0];                                                \
-    for (int _w = 1; _w < NUM_WARPS; _w++)                                     \
-        _bmb = fmaxf(_bmb, reduce_max[_w]);                                    \
-                                                                               \
-    float _sa = (_bma > 0.0f) ? (_bma / 127.0f) : 1.0f;                       \
-    float _sb = (_bmb > 0.0f) ? (_bmb / 127.0f) : 1.0f;                       \
-    float _inv_sa = 1.0f / _sa;                                                \
-    float _inv_sb = 1.0f / _sb;                                                \
+    float _inv_sa = (_bma > 0.0f) ? (127.0f / _bma) : 1.0f;                   \
+    float _inv_sb = (_bmb > 0.0f) ? (127.0f / _bmb) : 1.0f;                   \
                                                                                \
     for (int _i = 0; _i < QUANT_ELEMS_A; _i++) {                              \
         int _idx = tid + _i * BLOCK_SIZE;                                      \
@@ -116,7 +114,31 @@ do {                                                                           \
         smem_b_int8[_idx] = (signed char)_q;                                   \
     }                                                                          \
     __syncthreads();                                                           \
-    tile_scale = _sa * _sb;                                                    \
+    saved_inv_sa = _inv_sa;                                                    \
+    saved_inv_sb = _inv_sb;                                                    \
+    tile_scale = (_bma / 127.0f) * (_bmb / 127.0f);                           \
+} while(0)
+
+// QUANTIZE_TILE_FAST: skip max_abs reduction, reuse saved_inv_sa/saved_inv_sb.
+// Only FP16→INT8 conversion + 1 sync. Saves 1 sync + all reduction ops.
+// Safe when data distribution is similar across K-tiles.
+#define QUANTIZE_TILE_FAST(BUF)                                                \
+do {                                                                           \
+    for (int _i = 0; _i < QUANT_ELEMS_A; _i++) {                              \
+        int _idx = tid + _i * BLOCK_SIZE;                                      \
+        float _v = __half2float(smem_a_fp16[BUF][_idx]);                       \
+        int _q = __float2int_rn(_v * saved_inv_sa);                            \
+        _q = max(-128, min(127, _q));                                          \
+        smem_a_int8[_idx] = (signed char)_q;                                   \
+    }                                                                          \
+    for (int _i = 0; _i < QUANT_ELEMS_B; _i++) {                              \
+        int _idx = tid + _i * BLOCK_SIZE;                                      \
+        float _v = __half2float(smem_b_fp16[BUF][_idx]);                       \
+        int _q = __float2int_rn(_v * saved_inv_sb);                            \
+        _q = max(-128, min(127, _q));                                          \
+        smem_b_int8[_idx] = (signed char)_q;                                   \
+    }                                                                          \
+    __syncthreads();                                                           \
 } while(0)
 
 extern "C" __global__ __launch_bounds__(BLOCK_SIZE, 1)
@@ -165,8 +187,10 @@ void igemm_online_quant(
             for (int e = 0; e < 8; e++)
                 running[i][j][e] = 0.0f;
 
-    // tile_scale is set by the QUANTIZE_TILE macro
+    // tile_scale is set by QUANTIZE_TILE; saved_inv_s* reused by QUANTIZE_TILE_FAST
     float tile_scale = 0.0f;
+    float saved_inv_sa = 1.0f;
+    float saved_inv_sb = 1.0f;
 
     // ====================================================================
     // Prologue: cp.async FP16 tile 0 → buf 0, wait, quantize
@@ -326,7 +350,7 @@ void igemm_online_quant(
         __pipeline_wait_prior(0);
         __syncthreads();
 
-        QUANTIZE_TILE(next_buf);
+        QUANTIZE_TILE_FAST(next_buf);
     }
 
     // ====================================================================
