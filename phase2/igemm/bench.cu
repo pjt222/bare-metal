@@ -90,7 +90,15 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     CHECK_CU(cuModuleGetFunction(&igemm_func, igemm_module, "igemm_wmma"));
-    printf("IGEMM INT8 Tensor Core kernel loaded.\n\n");
+
+    // --- Load tiled IGEMM kernel ---
+    CUmodule   tiled_module = NULL;
+    CUfunction tiled_func   = NULL;
+    bool have_tiled = (cuModuleLoad(&tiled_module, "igemm_tiled.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_tiled) {
+        CHECK_CU(cuModuleGetFunction(&tiled_func, tiled_module, "igemm_tiled"));
+    }
+    printf("IGEMM kernels loaded: naive%s.\n\n", have_tiled ? " + tiled" : " (tiled cubin not found)");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -133,27 +141,40 @@ int main(int argc, char **argv) {
     CHECK_CU(cuMemcpyHtoD(dev_a_int8, host_a_int8, a_elems));
     CHECK_CU(cuMemcpyHtoD(dev_b_int8, host_b_int8, b_elems));
 
-    // --- Launch config (identical to hgemm) ---
-    int grid_x = (N + 31) / 32;
-    int grid_y = (M + 31) / 32;
+    // --- Launch configs ---
+    int grid_naive_x = (N + 31) / 32;  // naive: 32×32 per block
+    int grid_naive_y = (M + 31) / 32;
+    int grid_tiled_x = (N + 63) / 64;  // tiled: 64×64 per block
+    int grid_tiled_y = (M + 63) / 64;
 
     // --- Correctness check ---
     if (run_cpu_ref) {
         printf("\nCorrectness (INT8 input, INT32 accum, FP32 dequantized output):\n");
+
+        // Naive
         CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
         void *args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
         CHECK_CU(cuLaunchKernel(igemm_func,
-            grid_x, grid_y, 1,
-            64, 2, 1,
+            grid_naive_x, grid_naive_y, 1,   64, 2, 1,
             0, NULL, args, NULL));
         CHECK_CU(cuCtxSynchronize());
         CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+        auto r1 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+        print_check_result("igemm_wmma  (naive)", r1);
 
-        // INT8 quantization introduces meaningful error — use loose tolerance
-        // AND logic: fails only if BOTH abs > 0.5 AND rel > 0.1
-        auto result = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
-        print_check_result("igemm_wmma (INT8 Tensor Core)", result);
-        printf("  Note: quantization error is expected — symmetric per-tensor, scale=max_abs/127\n");
+        // Tiled
+        if (have_tiled) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_t[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(tiled_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_t, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r2 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_tiled (smem)", r2);
+        }
+        printf("  Note: quantization error expected — symmetric per-tensor, scale=max_abs/127\n");
     }
 
     // --- Performance benchmark ---
@@ -164,44 +185,56 @@ int main(int argc, char **argv) {
     double int8_peak_tops  = 696000.0;  // RTX 3070 Ti INT8 Tensor Core peak
     double fp16_peak_gflops = 174000.0;
 
-    void *args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+    void *bench_args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
 
-    // Warmup
-    for (int i = 0; i < warmup_iters; i++) {
-        CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
-        CHECK_CU(cuLaunchKernel(igemm_func, grid_x, grid_y, 1, 64, 2, 1, 0, NULL, args, NULL));
-    }
-    CHECK_CU(cuCtxSynchronize());
-
-    // Benchmark
-    float avg_ms;
-    {
-        BenchTimer timer;
-        timer.start();
-        for (int i = 0; i < bench_iters; i++) {
+    // Helper to benchmark a kernel
+    auto run_bench = [&](CUfunction fn, int gx, int gy, const char *label) {
+        for (int i = 0; i < warmup_iters; i++) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
-            CHECK_CU(cuLaunchKernel(igemm_func, grid_x, grid_y, 1, 64, 2, 1, 0, NULL, args, NULL));
+            CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, 64, 2, 1, 0, NULL, bench_args, NULL));
         }
-        avg_ms = timer.stop_ms() / bench_iters;
+        CHECK_CU(cuCtxSynchronize());
+
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, 64, 2, 1, 0, NULL, bench_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        double t = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f TOPS\n", label, ms, t);
+        return t;
+    };
+
+    double naive_tops = run_bench(igemm_func, grid_naive_x, grid_naive_y, "igemm_wmma  (naive)");
+    double tiled_tops = 0.0;
+    if (have_tiled) {
+        tiled_tops = run_bench(tiled_func, grid_tiled_x, grid_tiled_y, "igemm_tiled (smem)");
     }
 
-    double tops = compute_gflops_gemm(M, N, K, avg_ms);  // 2*M*N*K / time — same formula, TOPS=GFLOPS for integer
-    printf("  %-35s %7.3f ms   %8.2f TOPS\n", "igemm_wmma (INT8 Tensor Core)", avg_ms, tops);
     printf("  %-35s %7s      %8.0f TOPS  (theoretical)\n", "INT8 Tensor Core peak", "--", int8_peak_tops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
     printf("\n");
-    printf("  Achieved %.1f%% of INT8 Tensor Core peak\n", 100.0 * tops / int8_peak_tops);
-    printf("  %.1f× vs FP16 Tensor Core peak\n", tops / fp16_peak_gflops);
+    double best_tops = have_tiled ? fmax(naive_tops, tiled_tops) : naive_tops;
+    printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
+           100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
+    if (have_tiled && tiled_tops > 0)
+        printf("  Tiled vs naive: %.2f×\n", tiled_tops / naive_tops);
 
-    printf("\nTo inspect the INT8 Tensor Core SASS:\n");
-    printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA\n");
-    printf("  cuobjdump -sass igemm.sm_86.cubin | grep I2F   # int32→float dequantization\n");
+    printf("\nSASS inspection:\n");
+    printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA         # naive\n");
+    printf("  cuobjdump -sass igemm_tiled.sm_86.cubin | grep IMMA   # tiled\n");
 
     // --- Cleanup ---
     cuMemFree(dev_a_int8);
     cuMemFree(dev_b_int8);
     cuMemFree(dev_c);
     cuModuleUnload(igemm_module);
+    if (tiled_module) cuModuleUnload(tiled_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);
