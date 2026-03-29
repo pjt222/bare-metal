@@ -1,0 +1,1358 @@
+// --------------------- FileHeader --------------------------
+	// All file header info is kept as is (unless offset/size attributes)
+	// The original header flags is not complete, thus discarded. 
+	// 	.headerflags	@"EF_CUDA_TEXMODE_UNIFIED EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM86)"
+	// 	.elftype	@"ET_EXEC"
+	// 
+	// 
+	.__elf_ident_osabi      51
+	.__elf_ident_abiversion 7
+	.__elf_type             ET_EXEC
+	.__elf_machine          EM_CUDA
+	.__elf_version          128 		// CUDA toolkit version 
+	.__elf_entry            0 		// entry point address 
+	.__elf_phoff            0x2fc0 		// program header offset, maybe updated by assembler
+	.__elf_shoff            0x2c80 		// section header offset, maybe updated by assembler
+	.__elf_flags            0x560556 		// Flags, SM_86(0x56), COMPUTE_86(0x56) 
+	.__elf_ehsize           64 		// elf header size 
+	.__elf_phentsize        56 		// program entry size
+	.__elf_phnum            4 		// number of program entries
+	.__elf_shentsize        64 		// section entry size
+	.__elf_shnum            13 		// number of sections, currently no sections can be appended/removed
+	.__elf_shstrndx         1 		// Section name string table index 
+
+
+  //-------------------------------------------------
+  //------------ END of FileHeader ------------------
+  //-------------------------------------------------
+
+
+
+// ---------------------                                  --------------------------
+	// there will always be an empty section at index 0
+	.section  "", 0, SHT_NULL
+	.__section_name         0x0 	// offset in .shstrtab
+	.__section_type         SHT_NULL
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x0 	// maybe updated by assembler
+	.__section_size         0x0 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0x0
+	.__section_entsize      0
+	.align                0 	// equivalent to set sh_addralign
+
+// --------------------- .shstrtab                        --------------------------
+	.section  ".shstrtab", 0, SHT_STRTAB
+	// all strings in .shstrtab section will be kept as is.
+	.__section_name         0x1 	// offset in .shstrtab
+	.__section_type         SHT_STRTAB
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x40 	// maybe updated by assembler
+	.__section_size         0x103 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0x0
+	.__section_entsize      0
+	.align                1 	// equivalent to set sh_addralign
+    // .shstrtab[0] = b'\x00' 
+    /*0000*/ .byte 0x00
+
+    // .shstrtab[1] = b'.shstrtab\x00' 
+    /*0001*/ .byte 0x2e, 0x73, 0x68, 0x73, 0x74, 0x72, 0x74, 0x61
+    /*0009*/ .byte 0x62, 0x00
+
+    // .shstrtab[2] = b'.strtab\x00' 
+    /*000b*/ .byte 0x2e, 0x73, 0x74, 0x72, 0x74, 0x61, 0x62, 0x00
+
+    // .shstrtab[3] = b'.symtab\x00' 
+    /*0013*/ .byte 0x2e, 0x73, 0x79, 0x6d, 0x74, 0x61, 0x62, 0x00
+
+    // .shstrtab[4] = b'.symtab_shndx\x00' 
+    /*001b*/ .byte 0x2e, 0x73, 0x79, 0x6d, 0x74, 0x61, 0x62, 0x5f
+    /*0023*/ .byte 0x73, 0x68, 0x6e, 0x64, 0x78, 0x00
+
+    // .shstrtab[5] = b'.nv.info\x00' 
+    /*0029*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x69, 0x6e, 0x66, 0x6f
+    /*0031*/ .byte 0x00
+
+    // .shstrtab[6] = b'.text.igemm_tiled\x00' 
+    /*0032*/ .byte 0x2e, 0x74, 0x65, 0x78, 0x74, 0x2e, 0x69, 0x67
+    /*003a*/ .byte 0x65, 0x6d, 0x6d, 0x5f, 0x74, 0x69, 0x6c, 0x65
+    /*0042*/ .byte 0x64, 0x00
+
+    // .shstrtab[7] = b'.nv.info.igemm_tiled\x00' 
+    /*0044*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x69, 0x6e, 0x66, 0x6f
+    /*004c*/ .byte 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d, 0x5f, 0x74
+    /*0054*/ .byte 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .shstrtab[8] = b'.nv.shared.igemm_tiled\x00' 
+    /*0059*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x73, 0x68, 0x61, 0x72
+    /*0061*/ .byte 0x65, 0x64, 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d
+    /*0069*/ .byte 0x5f, 0x74, 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .shstrtab[9] = b'.nv.constant0.igemm_tiled\x00' 
+    /*0070*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x63, 0x6f, 0x6e, 0x73
+    /*0078*/ .byte 0x74, 0x61, 0x6e, 0x74, 0x30, 0x2e, 0x69, 0x67
+    /*0080*/ .byte 0x65, 0x6d, 0x6d, 0x5f, 0x74, 0x69, 0x6c, 0x65
+    /*0088*/ .byte 0x64, 0x00
+
+    // .shstrtab[10] = b'.rel.nv.constant0.igemm_tiled\x00' 
+    /*008a*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x2e, 0x6e, 0x76, 0x2e
+    /*0092*/ .byte 0x63, 0x6f, 0x6e, 0x73, 0x74, 0x61, 0x6e, 0x74
+    /*009a*/ .byte 0x30, 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d, 0x5f
+    /*00a2*/ .byte 0x74, 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .shstrtab[11] = b'.debug_frame\x00' 
+    /*00a8*/ .byte 0x2e, 0x64, 0x65, 0x62, 0x75, 0x67, 0x5f, 0x66
+    /*00b0*/ .byte 0x72, 0x61, 0x6d, 0x65, 0x00
+
+    // .shstrtab[12] = b'.rel.debug_frame\x00' 
+    /*00b5*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x2e, 0x64, 0x65, 0x62
+    /*00bd*/ .byte 0x75, 0x67, 0x5f, 0x66, 0x72, 0x61, 0x6d, 0x65
+    /*00c5*/ .byte 0x00
+
+    // .shstrtab[13] = b'.rela.debug_frame\x00' 
+    /*00c6*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x61, 0x2e, 0x64, 0x65
+    /*00ce*/ .byte 0x62, 0x75, 0x67, 0x5f, 0x66, 0x72, 0x61, 0x6d
+    /*00d6*/ .byte 0x65, 0x00
+
+    // .shstrtab[14] = b'.nv.callgraph\x00' 
+    /*00d8*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x63, 0x61, 0x6c, 0x6c
+    /*00e0*/ .byte 0x67, 0x72, 0x61, 0x70, 0x68, 0x00
+
+    // .shstrtab[15] = b'.nv.prototype\x00' 
+    /*00e6*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x70, 0x72, 0x6f, 0x74
+    /*00ee*/ .byte 0x6f, 0x74, 0x79, 0x70, 0x65, 0x00
+
+    // .shstrtab[16] = b'.nv.rel.action\x00' 
+    /*00f4*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x72, 0x65, 0x6c, 0x2e
+    /*00fc*/ .byte 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x00
+
+
+// --------------------- .strtab                          --------------------------
+	.section  ".strtab", 0, SHT_STRTAB
+	// all strings in .strtab section will be kept as is.
+	.__section_name         0xb 	// offset in .shstrtab
+	.__section_type         SHT_STRTAB
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x143 	// maybe updated by assembler
+	.__section_size         0x10f 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0x0
+	.__section_entsize      0
+	.align                1 	// equivalent to set sh_addralign
+    // .strtab[0] = b'\x00' 
+    /*0000*/ .byte 0x00
+
+    // .strtab[1] = b'.shstrtab\x00' 
+    /*0001*/ .byte 0x2e, 0x73, 0x68, 0x73, 0x74, 0x72, 0x74, 0x61
+    /*0009*/ .byte 0x62, 0x00
+
+    // .strtab[2] = b'.strtab\x00' 
+    /*000b*/ .byte 0x2e, 0x73, 0x74, 0x72, 0x74, 0x61, 0x62, 0x00
+
+    // .strtab[3] = b'.symtab\x00' 
+    /*0013*/ .byte 0x2e, 0x73, 0x79, 0x6d, 0x74, 0x61, 0x62, 0x00
+
+    // .strtab[4] = b'.symtab_shndx\x00' 
+    /*001b*/ .byte 0x2e, 0x73, 0x79, 0x6d, 0x74, 0x61, 0x62, 0x5f
+    /*0023*/ .byte 0x73, 0x68, 0x6e, 0x64, 0x78, 0x00
+
+    // .strtab[5] = b'.nv.info\x00' 
+    /*0029*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x69, 0x6e, 0x66, 0x6f
+    /*0031*/ .byte 0x00
+
+    // .strtab[6] = b'.text.igemm_tiled\x00' 
+    /*0032*/ .byte 0x2e, 0x74, 0x65, 0x78, 0x74, 0x2e, 0x69, 0x67
+    /*003a*/ .byte 0x65, 0x6d, 0x6d, 0x5f, 0x74, 0x69, 0x6c, 0x65
+    /*0042*/ .byte 0x64, 0x00
+
+    // .strtab[7] = b'.nv.info.igemm_tiled\x00' 
+    /*0044*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x69, 0x6e, 0x66, 0x6f
+    /*004c*/ .byte 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d, 0x5f, 0x74
+    /*0054*/ .byte 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .strtab[8] = b'.nv.shared.igemm_tiled\x00' 
+    /*0059*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x73, 0x68, 0x61, 0x72
+    /*0061*/ .byte 0x65, 0x64, 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d
+    /*0069*/ .byte 0x5f, 0x74, 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .strtab[9] = b'.rel.nv.constant0.igemm_tiled\x00' 
+    /*0070*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x2e, 0x6e, 0x76, 0x2e
+    /*0078*/ .byte 0x63, 0x6f, 0x6e, 0x73, 0x74, 0x61, 0x6e, 0x74
+    /*0080*/ .byte 0x30, 0x2e, 0x69, 0x67, 0x65, 0x6d, 0x6d, 0x5f
+    /*0088*/ .byte 0x74, 0x69, 0x6c, 0x65, 0x64, 0x00
+
+    // .strtab[10] = b'.nv.constant0.igemm_tiled\x00' 
+    /*008e*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x63, 0x6f, 0x6e, 0x73
+    /*0096*/ .byte 0x74, 0x61, 0x6e, 0x74, 0x30, 0x2e, 0x69, 0x67
+    /*009e*/ .byte 0x65, 0x6d, 0x6d, 0x5f, 0x74, 0x69, 0x6c, 0x65
+    /*00a6*/ .byte 0x64, 0x00
+
+    // .strtab[11] = b'.debug_frame\x00' 
+    /*00a8*/ .byte 0x2e, 0x64, 0x65, 0x62, 0x75, 0x67, 0x5f, 0x66
+    /*00b0*/ .byte 0x72, 0x61, 0x6d, 0x65, 0x00
+
+    // .strtab[12] = b'.rel.debug_frame\x00' 
+    /*00b5*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x2e, 0x64, 0x65, 0x62
+    /*00bd*/ .byte 0x75, 0x67, 0x5f, 0x66, 0x72, 0x61, 0x6d, 0x65
+    /*00c5*/ .byte 0x00
+
+    // .strtab[13] = b'.rela.debug_frame\x00' 
+    /*00c6*/ .byte 0x2e, 0x72, 0x65, 0x6c, 0x61, 0x2e, 0x64, 0x65
+    /*00ce*/ .byte 0x62, 0x75, 0x67, 0x5f, 0x66, 0x72, 0x61, 0x6d
+    /*00d6*/ .byte 0x65, 0x00
+
+    // .strtab[14] = b'.nv.callgraph\x00' 
+    /*00d8*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x63, 0x61, 0x6c, 0x6c
+    /*00e0*/ .byte 0x67, 0x72, 0x61, 0x70, 0x68, 0x00
+
+    // .strtab[15] = b'.nv.prototype\x00' 
+    /*00e6*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x70, 0x72, 0x6f, 0x74
+    /*00ee*/ .byte 0x6f, 0x74, 0x79, 0x70, 0x65, 0x00
+
+    // .strtab[16] = b'.nv.rel.action\x00' 
+    /*00f4*/ .byte 0x2e, 0x6e, 0x76, 0x2e, 0x72, 0x65, 0x6c, 0x2e
+    /*00fc*/ .byte 0x61, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x00
+
+    // .strtab[17] = b'igemm_tiled\x00' 
+    /*0103*/ .byte 0x69, 0x67, 0x65, 0x6d, 0x6d, 0x5f, 0x74, 0x69
+    /*010b*/ .byte 0x6c, 0x65, 0x64, 0x00
+
+
+// --------------------- .symtab                          --------------------------
+	.section  ".symtab", 0, SHT_SYMTAB
+	// all symbols in .symtab sections will be kept
+	// but the symbol size may be changed accordingly
+	.__section_name         0x13 	// offset in .shstrtab
+	.__section_type         SHT_SYMTAB
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x258 	// maybe updated by assembler
+	.__section_size         0xc0 	// maybe updated by assembler
+	.__section_link         2
+	.__section_info         0x7
+	.__section_entsize      24
+	.align                8 	// equivalent to set sh_addralign
+    // Symbol[0] "": Container({'st_name': 0, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_NOTYPE'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 'SHN_UNDEF', 'st_value': 0, 'st_size': 0})
+    /*0000*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0008*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0010*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[1] ".text.igemm_tiled": Container({'st_name': 50, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 11, 'st_value': 0, 'st_size': 0})
+    /*0018*/ .byte 0x32, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0b, 0x00
+    /*0020*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0028*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[2] ".nv.shared.igemm_tiled": Container({'st_name': 89, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 12, 'st_value': 0, 'st_size': 0})
+    /*0030*/ .byte 0x59, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0c, 0x00
+    /*0038*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0040*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[3] ".nv.constant0.igemm_tiled": Container({'st_name': 142, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 10, 'st_value': 0, 'st_size': 0})
+    /*0048*/ .byte 0x8e, 0x00, 0x00, 0x00, 0x03, 0x00, 0x0a, 0x00
+    /*0050*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0058*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[4] ".debug_frame": Container({'st_name': 168, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 4, 'st_value': 0, 'st_size': 0})
+    /*0060*/ .byte 0xa8, 0x00, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00
+    /*0068*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0070*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[5] ".nv.callgraph": Container({'st_name': 216, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 7, 'st_value': 0, 'st_size': 0})
+    /*0078*/ .byte 0xd8, 0x00, 0x00, 0x00, 0x03, 0x00, 0x07, 0x00
+    /*0080*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*0088*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[6] ".nv.rel.action": Container({'st_name': 244, 'st_info': Container({'bind': 'STB_LOCAL', 'type': 'STT_SECTION'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 8, 'st_value': 0, 'st_size': 0})
+    /*0090*/ .byte 0xf4, 0x00, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00
+    /*0098*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*00a0*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // Symbol[7] "igemm_tiled": Container({'st_name': 259, 'st_info': Container({'bind': 'STB_GLOBAL', 'type': 'STT_FUNC'}), 'st_other': Container({'local': 0, 'visibility': 'STV_DEFAULT'}), 'st_shndx': 11, 'st_value': 0, 'st_size': 9728})
+    /*00a8*/ .byte 0x03, 0x01, 0x00, 0x00, 0x12, 0x10, 0x0b, 0x00
+    /*00b0*/ .byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    /*00b8*/ .byte 0x00, 0x26, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+
+// --------------------- .debug_frame                     --------------------------
+	.section	.debug_frame,"",@progbits
+	.__section_name         0xa8 	// offset in .shstrtab
+	.__section_type         SHT_PROGBITS
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x318 	// maybe updated by assembler
+	.__section_size         0x70 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0x0
+	.__section_entsize      0
+	.align                1 	// equivalent to set sh_addralign
+  .debug_frame:
+          /*0000*/ 	.byte	0xff, 0xff, 0xff, 0xff, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff
+          /*0010*/ 	.byte	0xff, 0xff, 0xff, 0xff, 0x03, 0x00, 0x04, 0x7c, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x0c, 0x81, 0x80
+          /*0020*/ 	.byte	0x80, 0x28, 0x00, 0x08, 0xff, 0x81, 0x80, 0x28, 0x08, 0x81, 0x80, 0x80, 0x28, 0x00, 0x00, 0x00
+          /*0030*/ 	.byte	0xff, 0xff, 0xff, 0xff, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+          /*0040*/ 	.byte	0x00, 0x00, 0x00, 0x00
+          /*0044*/ 	.dword	igemm_tiled
+          /*004c*/ 	.byte	0x00, 0x26, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x00, 0x00, 0x00, 0x04, 0x44, 0x00
+          /*005c*/ 	.byte	0x00, 0x00, 0x0c, 0x81, 0x80, 0x80, 0x28, 0x00, 0x04, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00
+          /*006c*/ 	.byte	0x00, 0x00, 0x00, 0x00
+  
+  
+// --------------------- .nv.info                         --------------------------
+	.section	.nv.info,"",@"SHT_CUDA_INFO"
+	.__section_name         0x29 	// offset in .shstrtab
+	.__section_type         1879048192
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x388 	// maybe updated by assembler
+	.__section_size         0x24 	// maybe updated by assembler
+	.__section_link         3
+	.__section_info         0x0
+	.__section_entsize      0
+	.align                4 	// equivalent to set sh_addralign
+  	.align	4
+  
+  
+  	//----- nvinfo : EIATTR_REGCOUNT
+  	.align		4
+          /*0000*/ 	.byte	0x04, 0x2f
+          /*0002*/ 	.short	(.L_1 - .L_0)
+  	.align		4
+  .L_0:
+          /*0004*/ 	.word	index@(igemm_tiled)
+          /*0008*/ 	.word	0x00000040
+  
+  
+  	//----- nvinfo : EIATTR_FRAME_SIZE
+  	.align		4
+  .L_1:
+          /*000c*/ 	.byte	0x04, 0x11
+          /*000e*/ 	.short	(.L_3 - .L_2)
+  	.align		4
+  .L_2:
+          /*0010*/ 	.word	index@(igemm_tiled)
+          /*0014*/ 	.word	0x00000000
+  
+  
+  	//----- nvinfo : EIATTR_MIN_STACK_SIZE
+  	.align		4
+  .L_3:
+          /*0018*/ 	.byte	0x04, 0x12
+          /*001a*/ 	.short	(.L_5 - .L_4)
+  	.align		4
+  .L_4:
+          /*001c*/ 	.word	index@(igemm_tiled)
+          /*0020*/ 	.word	0x00000000
+  .L_5:
+  
+  
+// --------------------- .nv.info.igemm_tiled             --------------------------
+	.section	.nv.info.igemm_tiled,"",@"SHT_CUDA_INFO"
+	.__section_name         0x44 	// offset in .shstrtab
+	.__section_type         1879048192
+	.__section_flags        0x40
+	.__section_addr         0x0
+	.__section_offset       0x3ac 	// maybe updated by assembler
+	.__section_size         0xc8 	// maybe updated by assembler
+	.__section_link         3
+	.__section_info         0xb
+	.__section_entsize      0
+	.align                4 	// equivalent to set sh_addralign
+  	.sectionflags	@""
+  	.align	4
+  
+  
+  	//----- nvinfo : EIATTR_CUDA_API_VERSION
+  	.align		4
+          /*0000*/ 	.byte	0x04, 0x37
+          /*0002*/ 	.short	(.L_7 - .L_6)
+  .L_6:
+          /*0004*/ 	.word	0x00000080
+  
+  
+  	//----- nvinfo : EIATTR_SW2861232_WAR
+  	.align		4
+  .L_7:
+          /*0008*/ 	.byte	0x01, 0x35
+  	.zero		2
+  
+  
+  	//----- nvinfo : EIATTR_PARAM_CBANK
+  	.align		4
+          /*000c*/ 	.byte	0x04, 0x0a
+          /*000e*/ 	.short	(.L_9 - .L_8)
+  	.align		4
+  .L_8:
+          /*0010*/ 	.word	index@(.nv.constant0.igemm_tiled)
+          /*0014*/ 	.short	0x0160
+          /*0016*/ 	.short	0x002c
+  
+  
+  	//----- nvinfo : EIATTR_CBANK_PARAM_SIZE
+  	.align		4
+  .L_9:
+          /*0018*/ 	.byte	0x03, 0x19
+          /*001a*/ 	.short	0x002c
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+          /*001c*/ 	.byte	0x04, 0x17
+          /*001e*/ 	.short	(.L_11 - .L_10)
+  .L_10:
+          /*0020*/ 	.word	0x00000000
+          /*0024*/ 	.short	0x0007
+          /*0026*/ 	.short	0x0028
+          /*0028*/ 	.byte	0x00, 0xf0, 0x11, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_11:
+          /*002c*/ 	.byte	0x04, 0x17
+          /*002e*/ 	.short	(.L_13 - .L_12)
+  .L_12:
+          /*0030*/ 	.word	0x00000000
+          /*0034*/ 	.short	0x0006
+          /*0036*/ 	.short	0x0024
+          /*0038*/ 	.byte	0x00, 0xf0, 0x11, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_13:
+          /*003c*/ 	.byte	0x04, 0x17
+          /*003e*/ 	.short	(.L_15 - .L_14)
+  .L_14:
+          /*0040*/ 	.word	0x00000000
+          /*0044*/ 	.short	0x0005
+          /*0046*/ 	.short	0x0020
+          /*0048*/ 	.byte	0x00, 0xf0, 0x11, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_15:
+          /*004c*/ 	.byte	0x04, 0x17
+          /*004e*/ 	.short	(.L_17 - .L_16)
+  .L_16:
+          /*0050*/ 	.word	0x00000000
+          /*0054*/ 	.short	0x0004
+          /*0056*/ 	.short	0x001c
+          /*0058*/ 	.byte	0x00, 0xf0, 0x11, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_17:
+          /*005c*/ 	.byte	0x04, 0x17
+          /*005e*/ 	.short	(.L_19 - .L_18)
+  .L_18:
+          /*0060*/ 	.word	0x00000000
+          /*0064*/ 	.short	0x0003
+          /*0066*/ 	.short	0x0018
+          /*0068*/ 	.byte	0x00, 0xf0, 0x11, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_19:
+          /*006c*/ 	.byte	0x04, 0x17
+          /*006e*/ 	.short	(.L_21 - .L_20)
+  .L_20:
+          /*0070*/ 	.word	0x00000000
+          /*0074*/ 	.short	0x0002
+          /*0076*/ 	.short	0x0010
+          /*0078*/ 	.byte	0x00, 0xf0, 0x21, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_21:
+          /*007c*/ 	.byte	0x04, 0x17
+          /*007e*/ 	.short	(.L_23 - .L_22)
+  .L_22:
+          /*0080*/ 	.word	0x00000000
+          /*0084*/ 	.short	0x0001
+          /*0086*/ 	.short	0x0008
+          /*0088*/ 	.byte	0x00, 0xf0, 0x21, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_KPARAM_INFO
+  	.align		4
+  .L_23:
+          /*008c*/ 	.byte	0x04, 0x17
+          /*008e*/ 	.short	(.L_25 - .L_24)
+  .L_24:
+          /*0090*/ 	.word	0x00000000
+          /*0094*/ 	.short	0x0000
+          /*0096*/ 	.short	0x0000
+          /*0098*/ 	.byte	0x00, 0xf0, 0x21, 0x00
+  
+  
+  	//----- nvinfo : EIATTR_WMMA_USED
+  	.align		4
+  .L_25:
+          /*009c*/ 	.byte	0x01, 0x2b
+  	.zero		2
+  
+  
+  	//----- nvinfo : EIATTR_MAXREG_COUNT
+  	.align		4
+          /*00a0*/ 	.byte	0x03, 0x1b
+          /*00a2*/ 	.short	0x00ff
+  
+  
+  	//----- nvinfo : EIATTR_EXIT_INSTR_OFFSETS
+  	.align		4
+          /*00a4*/ 	.byte	0x04, 0x1c
+          /*00a6*/ 	.short	(.L_27 - .L_26)
+  
+  
+  	//   ....[0]....
+  .L_26:
+          /*00a8*/ 	.word	0x00002370
+  
+  
+  	//   ....[1]....
+          /*00ac*/ 	.word	0x00002520
+  
+  
+  	//----- nvinfo : EIATTR_MAX_THREADS
+  	.align		4
+  .L_27:
+          /*00b0*/ 	.byte	0x04, 0x05
+          /*00b2*/ 	.short	(.L_29 - .L_28)
+  .L_28:
+          /*00b4*/ 	.word	0x00000080
+          /*00b8*/ 	.word	0x00000001
+          /*00bc*/ 	.word	0x00000001
+  
+  
+  	//----- nvinfo : EIATTR_CRS_STACK_SIZE
+  	.align		4
+  .L_29:
+          /*00c0*/ 	.byte	0x04, 0x1e
+          /*00c2*/ 	.short	(.L_31 - .L_30)
+  .L_30:
+          /*00c4*/ 	.word	0x00000000
+  .L_31:
+  
+  
+// --------------------- .nv.callgraph                    --------------------------
+	.section	.nv.callgraph,"",@"SHT_CUDA_CALLGRAPH"
+	.__section_name         0xd8 	// offset in .shstrtab
+	.__section_type         1879048193
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x474 	// maybe updated by assembler
+	.__section_size         0x20 	// maybe updated by assembler
+	.__section_link         3
+	.__section_info         0x0
+	.__section_entsize      8
+	.align                4 	// equivalent to set sh_addralign
+  	.align	4
+  	.sectionentsize	8
+  	.align		4
+          /*0000*/ 	.word	0x00000000
+  	.align		4
+          /*0004*/ 	.word	0xffffffff
+  	.align		4
+          /*0008*/ 	.word	0x00000000
+  	.align		4
+          /*000c*/ 	.word	0xfffffffe
+  	.align		4
+          /*0010*/ 	.word	0x00000000
+  	.align		4
+          /*0014*/ 	.word	0xfffffffd
+  	.align		4
+          /*0018*/ 	.word	0x00000000
+  	.align		4
+          /*001c*/ 	.word	0xfffffffc
+  
+  
+// --------------------- .nv.rel.action                   --------------------------
+	.section	.nv.rel.action,"",@"SHT_CUDA_RELOCINFO"
+	.__section_name         0xf4 	// offset in .shstrtab
+	.__section_type         1879048203
+	.__section_flags        0x0
+	.__section_addr         0x0
+	.__section_offset       0x498 	// maybe updated by assembler
+	.__section_size         0x10 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0x0
+	.__section_entsize      8
+	.align                8 	// equivalent to set sh_addralign
+  	.align	8
+  	.sectionentsize	8
+          /*0000*/ 	.byte	0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x25, 0x00, 0x05, 0x36
+  
+  
+// --------------------- .rel.debug_frame                 --------------------------
+	.section  ".rel.debug_frame", 64, SHT_REL
+	// all relocation sections will be dynamically generated by assembler 
+	// but most of the section header will be kept as is.
+	.__section_name         0xb5 	// offset in .shstrtab
+	.__section_type         SHT_REL
+	.__section_flags        0x40
+	.__section_addr         0x0
+	.__section_offset       0x4a8 	// maybe updated by assembler
+	.__section_size         0x10 	// maybe updated by assembler
+	.__section_link         3
+	.__section_info         0x4
+	.__section_entsize      16
+	.align                8 	// equivalent to set sh_addralign
+    // Relocation[0] : igemm_tiled, Container({'r_offset': 68, 'r_info': 30064771074, 'r_info_sym': 7, 'r_info_type': 2})
+
+// --------------------- .nv.constant0.igemm_tiled        --------------------------
+	.section	.nv.constant0.igemm_tiled,"a",@progbits
+	.__section_name         0x70 	// offset in .shstrtab
+	.__section_type         SHT_PROGBITS
+	.__section_flags        0x42
+	.__section_addr         0x0
+	.__section_offset       0x4b8 	// maybe updated by assembler
+	.__section_size         0x18c 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0xb
+	.__section_entsize      0
+	.align                4 	// equivalent to set sh_addralign
+  	.sectionflags	@""
+  	.align	4
+  .nv.constant0.igemm_tiled:
+  	.zero		396
+  
+  
+// --------------------- .text.igemm_tiled                --------------------------
+	.section	.text.igemm_tiled,"ax",@progbits
+	.__section_name         0x32 	// offset in .shstrtab
+	.__section_type         SHT_PROGBITS
+	.__section_flags        0x100006
+	.__section_addr         0x0
+	.__section_offset       0x680 	// maybe updated by assembler
+	.__section_size         0x2600 	// maybe updated by assembler
+	.__section_link         3
+	.__section_info         0x40000007
+	.__section_entsize      0
+	.align                128 	// equivalent to set sh_addralign
+  	.sectionflags	@"SHF_BARRIERS=1"
+  	.sectioninfo	@"SHI_REGISTERS=64"
+  	.align	128
+          .global         igemm_tiled
+          .type           igemm_tiled,@function
+          .size           igemm_tiled,(.L_x_30 - igemm_tiled)
+          .other          igemm_tiled,@"STO_CUDA_ENTRY STV_DEFAULT"
+  igemm_tiled:
+  .text.igemm_tiled:
+      [B------:R-:W-:-:S02]         /*0000*/                   IMAD.MOV.U32 R1, RZ, RZ, c[0x0][0x28] ;
+      [B------:R-:W0:-:S01]         /*0010*/                   S2R R52, SR_TID.Y ;
+      [B------:R-:W1:-:S01]         /*0020*/                   S2UR UR4, SR_CTAID.Y ;
+      [B------:R-:W-:-:S02]         /*0030*/                   ISETP.LT.AND P0, PT, RZ, c[0x0][0x180], PT ;
+      [B------:R-:W0:-:S05]         /*0040*/                   S2R R3, SR_TID.X ;
+      [B------:R-:W2:-:S01]         /*0050*/                   S2UR UR5, SR_CTAID.X ;
+      [B-1----:R-:W-:-:S01]         /*0060*/                   USHF.L.U32 UR4, UR4, 0x6, URZ ;
+      [B0-----:R-:W-:Y:S05]         /*0070*/                   IMAD R52, R52, c[0x0][0x0], R3 ;
+      [B------:R-:W-:-:S01]         /*0080*/                   SHF.R.S32.HI R3, RZ, 0x1f, R52 ;
+      [B--2---:R-:W-:Y:S03]         /*0090*/                   USHF.L.U32 UR5, UR5, 0x6, URZ ;
+      [B------:R-:W-:-:S02]         /*00a0*/                   LEA.HI R0, R3.reuse, R52.reuse, RZ, 0x5 ;
+      [B------:R-:W-:-:S02]         /*00b0*/                   LEA.HI R3, R3, R52, RZ, 0x6 ;
+      [B------:R-:W-:-:S02]         /*00c0*/                   SHF.R.S32.HI R47, RZ, 0x5, R0 ;
+      [B------:R-:W-:-:S02]         /*00d0*/                   SHF.R.S32.HI R51, RZ, 0x6, R3 ;
+      [B------:R-:W-:Y:S04]         /*00e0*/                   LEA.HI R2, R0, R47, RZ, 0x1 ;
+      [B------:R-:W-:Y:S05]         /*00f0*/                   LOP3.LUT R2, R2, 0xfffffffe, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*0100*/                   IMAD.IADD R50, R47, 0x1, -R2 ;
+      [B------:R-:W-:-:S05]         /*0110*/               @P0 BRA `(.L_x_0) ;
+      [B------:R-:W-:-:S01]         /*0120*/                   CS2R R6, SRZ ;
+      [B------:R-:W-:-:S01]         /*0130*/                   IMAD.MOV.U32 R36, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*0140*/                   CS2R R14, SRZ ;
+      [B------:R-:W-:-:S01]         /*0150*/                   IMAD.MOV.U32 R0, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*0160*/                   CS2R R12, SRZ ;
+      [B------:R-:W-:-:S01]         /*0170*/                   CS2R R10, SRZ ;
+      [B------:R-:W-:-:S01]         /*0180*/                   CS2R R8, SRZ ;
+      [B------:R-:W-:-:S01]         /*0190*/                   CS2R R18, SRZ ;
+      [B------:R-:W-:-:S01]         /*01a0*/                   CS2R R16, SRZ ;
+      [B------:R-:W-:-:S01]         /*01b0*/                   CS2R R22, SRZ ;
+      [B------:R-:W-:-:S01]         /*01c0*/                   CS2R R20, SRZ ;
+      [B------:R-:W-:-:S01]         /*01d0*/                   CS2R R26, SRZ ;
+      [B------:R-:W-:-:S01]         /*01e0*/                   CS2R R24, SRZ ;
+      [B------:R-:W-:-:S01]         /*01f0*/                   CS2R R28, SRZ ;
+      [B------:R-:W-:-:S01]         /*0200*/                   CS2R R30, SRZ ;
+      [B------:R-:W-:-:S01]         /*0210*/                   CS2R R32, SRZ ;
+      [B------:R-:W-:-:S01]         /*0220*/                   CS2R R34, SRZ ;
+      [B------:R-:W-:-:S05]         /*0230*/                   BRA `(.L_x_1) ;
+  .L_x_0:
+      [B------:R-:W-:-:S01]         /*0240*/                   IADD3 R42, R52.reuse, 0x80, RZ ;
+      [B------:R-:W-:-:S01]         /*0250*/                   CS2R R14, SRZ ;
+      [B------:R-:W-:-:S01]         /*0260*/                   IADD3 R38, R52, 0x100, RZ ;
+      [B------:R-:W-:-:S01]         /*0270*/                   CS2R R12, SRZ ;
+      [B------:R-:W-:-:S01]         /*0280*/                   SHF.R.S32.HI R43, RZ, 0x1f, R42 ;
+      [B------:R-:W-:-:S01]         /*0290*/                   CS2R R10, SRZ ;
+      [B------:R-:W-:-:S01]         /*02a0*/                   SHF.R.S32.HI R39, RZ, 0x1f, R38 ;
+      [B------:R-:W-:-:S01]         /*02b0*/                   CS2R R8, SRZ ;
+      [B------:R-:W-:-:S01]         /*02c0*/                   LEA.HI R44, R43, R42, RZ, 0x5 ;
+      [B------:R-:W-:-:S01]         /*02d0*/                   CS2R R18, SRZ ;
+      [B------:R-:W-:-:S01]         /*02e0*/                   LEA.HI R40, R39, R38, RZ, 0x5 ;
+      [B------:R-:W-:-:S01]         /*02f0*/                   CS2R R16, SRZ ;
+      [B------:R-:W-:-:S01]         /*0300*/                   LEA.HI R43, R43, R42, RZ, 0x6 ;
+      [B------:R-:W-:-:S01]         /*0310*/                   CS2R R22, SRZ ;
+      [B------:R-:W-:-:S01]         /*0320*/                   LEA.HI R39, R39, R38, RZ, 0x6 ;
+      [B------:R-:W-:-:S01]         /*0330*/                   CS2R R20, SRZ ;
+      [B------:R-:W-:-:S01]         /*0340*/                   LOP3.LUT R45, R44, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*0350*/                   CS2R R26, SRZ ;
+      [B------:R-:W-:-:S01]         /*0360*/                   LOP3.LUT R41, R40, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*0370*/                   CS2R R24, SRZ ;
+      [B------:R-:W-:-:S01]         /*0380*/                   LOP3.LUT R5, R43, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*0390*/                   IMAD.IADD R45, R42, 0x1, -R45 ;
+      [B------:R-:W-:-:S01]         /*03a0*/                   LOP3.LUT R7, R39, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*03b0*/                   IMAD.IADD R41, R38, 0x1, -R41 ;
+      [B------:R-:W-:-:S01]         /*03c0*/                   LOP3.LUT R49, R0, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*03d0*/                   IMAD.MOV.U32 R0, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*03e0*/                   LOP3.LUT R37, R3, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*03f0*/                   CS2R R28, SRZ ;
+      [B------:R-:W-:-:S01]         /*0400*/                   IMNMX R3, R52, 0x780, !PT ;
+      [B------:R-:W-:-:S01]         /*0410*/                   CS2R R30, SRZ ;
+      [B------:R-:W-:-:S01]         /*0420*/                   IADD3 R42, R42, UR5, -R5 ;
+      [B------:R-:W-:-:S01]         /*0430*/                   CS2R R32, SRZ ;
+      [B------:R-:W-:-:S01]         /*0440*/                   IADD3 R38, R38, UR5, -R7 ;
+      [B------:R-:W-:-:S01]         /*0450*/                   CS2R R4, SRZ ;
+      [B------:R-:W-:-:S01]         /*0460*/                   IADD3 R47, R47, UR4, RZ ;
+      [B------:R-:W-:-:S01]         /*0470*/                   CS2R R6, SRZ ;
+      [B------:R-:W-:-:S01]         /*0480*/                   CS2R R34, SRZ ;
+      [B------:R-:W-:-:S01]         /*0490*/                   IMAD.IADD R49, R52.reuse, 0x1, -R49 ;
+      [B------:R-:W-:Y:S02]         /*04a0*/                   IADD3 R46, R52, UR5, -R37 ;
+      [B------:R-:W-:-:S02]         /*04b0*/                   IADD3 R48, -R52, 0x7f, R3 ;
+      [B------:R-:W-:-:S02]         /*04c0*/                   LEA.HI.SX32 R44, R44, UR4, 0x1b ;
+      [B------:R-:W-:-:S02]         /*04d0*/                   LEA.HI.SX32 R40, R40, UR4, 0x1b ;
+  .L_x_25:
+      [B------:R-:W-:-:S01]         /*04e0*/                   ISETP.GT.AND P0, PT, R52, 0x7ff, PT ;
+      [B------:R-:W-:Y:S12]         /*04f0*/                   BSSY B0, `(.L_x_2) ;
+      [B------:R-:W-:-:S05]         /*0500*/               @P0 BRA `(.L_x_3) ;
+      [B------:R-:W-:-:S01]         /*0510*/                   LEA.HI R55, R48, 0x1, RZ, 0x19 ;
+      [B------:R-:W0:-:S01]         /*0520*/                   S2R R53, SR_TID.X ;
+      [B------:R-:W-:-:S01]         /*0530*/                   BSSY B1, `(.L_x_4) ;
+      [B------:R-:W-:-:S01]         /*0540*/                   IMAD.MOV.U32 R57, RZ, RZ, R52 ;
+      [B------:R-:W-:-:S01]         /*0550*/                   LOP3.LUT R55, R55, 0x3, RZ, 0xc0, !PT ;
+      [B------:R-:W1:-:S03]         /*0560*/                   S2R R54, SR_TID.Y ;
+      [B------:R-:W-:Y:S13]         /*0570*/                   ISETP.NE.AND P0, PT, R55, RZ, PT ;
+      [B------:R-:W-:-:S05]         /*0580*/              @!P0 BRA `(.L_x_5) ;
+      [B------:R-:W-:-:S01]         /*0590*/                   IMAD.IADD R2, R49, 0x1, R0 ;
+      [B------:R-:W-:-:S01]         /*05a0*/                   BSSY B2, `(.L_x_6) ;
+      [B01----:R-:W-:-:S01]         /*05b0*/                   IMAD R52, R54, c[0x0][0x0], R53 ;
+      [B------:R-:W-:-:S02]         /*05c0*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S04]         /*05d0*/                   ISETP.GE.AND P0, PT, R2, c[0x0][0x180], PT ;
+      [B------:R-:W-:Y:S13]         /*05e0*/                   ISETP.GE.OR P0, PT, R47, c[0x0][0x178], P0 ;
+      [B------:R-:W-:-:S05]         /*05f0*/               @P0 BRA `(.L_x_7) ;
+      [B------:R-:W-:-:S01]         /*0600*/                   IMAD R3, R47, c[0x0][0x180], R2 ;
+      [B------:R-:W-:Y:S04]         /*0610*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B------:R-:W-:Y:S04]         /*0620*/                   IADD3 R2, P0, R3, c[0x0][0x160], RZ ;
+      [B------:R-:W-:Y:S06]         /*0630*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0640*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_7:
+      [B------:R-:W-:-:S05]         /*0650*/                   BSYNC B2 ;
+  .L_x_6:
+      [B-----5:R1:W-:-:S01]         /*0660*/                   STS.U8 [R52], R3 ;
+      [B------:R-:W-:-:S02]         /*0670*/                   ISETP.NE.AND P0, PT, R55, 0x1, PT ;
+      [B------:R-:W-:Y:S11]         /*0680*/                   IADD3 R57, R52, 0x80, RZ ;
+      [B------:R-:W-:-:S05]         /*0690*/              @!P0 BRA `(.L_x_5) ;
+      [B-1----:R-:W-:-:S01]         /*06a0*/                   IMAD.IADD R37, R45, 0x1, R0 ;
+      [B------:R-:W-:-:S01]         /*06b0*/                   BSSY B2, `(.L_x_8) ;
+      [B------:R-:W-:Y:S03]         /*06c0*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S04]         /*06d0*/                   ISETP.GE.AND P0, PT, R37, c[0x0][0x180], PT ;
+      [B------:R-:W-:Y:S13]         /*06e0*/                   ISETP.GE.OR P0, PT, R44, c[0x0][0x178], P0 ;
+      [B------:R-:W-:-:S05]         /*06f0*/               @P0 BRA `(.L_x_9) ;
+      [B------:R-:W-:-:S01]         /*0700*/                   IMAD R3, R44, c[0x0][0x180], R37 ;
+      [B------:R-:W-:Y:S04]         /*0710*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B0-----:R-:W-:Y:S04]         /*0720*/                   IADD3 R2, P0, R3, c[0x0][0x160], RZ ;
+      [B------:R-:W-:Y:S06]         /*0730*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0740*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_9:
+      [B------:R-:W-:-:S05]         /*0750*/                   BSYNC B2 ;
+  .L_x_8:
+      [B-----5:R1:W-:-:S01]         /*0760*/                   STS.U8 [R52+0x80], R3 ;
+      [B------:R-:W-:-:S02]         /*0770*/                   ISETP.NE.AND P0, PT, R55, 0x2, PT ;
+      [B------:R-:W-:Y:S11]         /*0780*/                   IADD3 R57, R52, 0x100, RZ ;
+      [B------:R-:W-:-:S05]         /*0790*/              @!P0 BRA `(.L_x_5) ;
+      [B-1----:R-:W-:-:S01]         /*07a0*/                   IMAD.IADD R37, R41, 0x1, R0 ;
+      [B------:R-:W-:-:S01]         /*07b0*/                   BSSY B2, `(.L_x_10) ;
+      [B------:R-:W-:Y:S03]         /*07c0*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S04]         /*07d0*/                   ISETP.GE.AND P0, PT, R37, c[0x0][0x180], PT ;
+      [B------:R-:W-:Y:S13]         /*07e0*/                   ISETP.GE.OR P0, PT, R40, c[0x0][0x178], P0 ;
+      [B------:R-:W-:-:S05]         /*07f0*/               @P0 BRA `(.L_x_11) ;
+      [B------:R-:W-:-:S01]         /*0800*/                   IMAD R3, R40, c[0x0][0x180], R37 ;
+      [B------:R-:W-:Y:S04]         /*0810*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B0-----:R-:W-:Y:S04]         /*0820*/                   IADD3 R2, P0, R3, c[0x0][0x160], RZ ;
+      [B------:R-:W-:Y:S06]         /*0830*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0840*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_11:
+      [B------:R-:W-:-:S05]         /*0850*/                   BSYNC B2 ;
+  .L_x_10:
+      [B-----5:R1:W-:-:S01]         /*0860*/                   STS.U8 [R52+0x100], R3 ;
+      [B------:R-:W-:Y:S03]         /*0870*/                   IADD3 R57, R52, 0x180, RZ ;
+  .L_x_5:
+      [B-1----:R-:W-:-:S05]         /*0880*/                   BSYNC B1 ;
+  .L_x_4:
+      [B------:R-:W-:-:S01]         /*0890*/                   ISETP.GE.U32.AND P0, PT, R48, 0x180, PT ;
+      [B------:R-:W-:-:S01]         /*08a0*/                   BSSY B1, `(.L_x_12) ;
+      [B------:R-:W-:Y:S11]         /*08b0*/                   ISETP.NE.AND P1, PT, R55, RZ, PT ;
+      [B------:R-:W-:-:S05]         /*08c0*/              @!P0 BRA `(.L_x_13) ;
+      [B------:R-:W-:-:S02]         /*08d0*/                   IMAD.MOV.U32 R56, RZ, RZ, R57 ;
+  .L_x_14:
+      [B0-----:R-:W-:-:S01]         /*08e0*/                   SHF.R.S32.HI R2, RZ, 0x1f, R57 ;
+      [B------:R-:W-:-:S01]         /*08f0*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B------:R-:W-:-:S02]         /*0900*/                   PRMT R61, RZ, 0x7610, R61 ;
+      [B------:R-:W-:Y:S04]         /*0910*/                   LEA.HI R2, R2, R57, RZ, 0x5 ;
+      [B------:R-:W-:-:S02]         /*0920*/                   LOP3.LUT R3, R2.reuse, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*0930*/                   LEA.HI.SX32 R2, R2, UR4, 0x1b ;
+      [B------:R-:W-:Y:S04]         /*0940*/                   IADD3 R3, R0, R57, -R3 ;
+      [B------:R-:W-:Y:S04]         /*0950*/                   ISETP.GE.AND P0, PT, R3, c[0x0][0x180], PT ;
+      [B------:R-:W-:-:S02]         /*0960*/                   ISETP.GE.OR P0, PT, R2, c[0x0][0x178], P0 ;
+      [B------:R-:W-:Y:S04]         /*0970*/                   IADD3 R37, R57, 0x80, RZ ;
+      [B------:R-:W-:Y:S04]         /*0980*/                   SHF.R.S32.HI R36, RZ, 0x1f, R37 ;
+      [B------:R-:W-:Y:S03]         /*0990*/                   LEA.HI R36, R36, R37, RZ, 0x5 ;
+      [B------:R-:W-:-:S01]         /*09a0*/              @!P0 IMAD R3, R2, c[0x0][0x180], R3 ;
+      [B------:R-:W-:Y:S04]         /*09b0*/                   LOP3.LUT R58, R36, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*09c0*/              @!P0 IADD3 R2, P2, R3.reuse, c[0x0][0x160], RZ ;
+      [B------:R-:W-:-:S02]         /*09d0*/                   IADD3 R37, R0, R37, -R58 ;
+      [B------:R-:W-:-:S02]         /*09e0*/              @!P0 LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P2 ;
+      [B------:R-:W-:Y:S03]         /*09f0*/                   LEA.HI.SX32 R36, R36, UR4, 0x1b ;
+      [B------:R0:W2:-:S01]         /*0a00*/              @!P0 LDG.E.U8.CONSTANT R61, desc[UR6][R2.64] ;
+      [B------:R-:W-:-:S02]         /*0a10*/                   ISETP.GE.AND P0, PT, R37, c[0x0][0x180], PT ;
+      [B------:R-:W-:-:S02]         /*0a20*/                   PRMT R59, RZ, 0x7610, R59 ;
+      [B------:R-:W-:-:S02]         /*0a30*/                   ISETP.GE.OR P0, PT, R36, c[0x0][0x178], P0 ;
+      [B0-----:R-:W-:Y:S04]         /*0a40*/                   IADD3 R3, R57, 0x100, RZ ;
+      [B------:R-:W-:Y:S07]         /*0a50*/                   SHF.R.S32.HI R2, RZ, 0x1f, R3 ;
+      [B------:R-:W-:-:S01]         /*0a60*/              @!P0 IMAD R37, R36, c[0x0][0x180], R37 ;
+      [B------:R-:W-:Y:S04]         /*0a70*/                   LEA.HI R2, R2, R3, RZ, 0x5 ;
+      [B------:R-:W-:-:S02]         /*0a80*/              @!P0 IADD3 R36, P2, R37.reuse, c[0x0][0x160], RZ ;
+      [B------:R-:W-:-:S02]         /*0a90*/                   LOP3.LUT R58, R2, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*0aa0*/              @!P0 LEA.HI.X.SX32 R37, R37, c[0x0][0x164], 0x1, P2 ;
+      [B------:R-:W-:-:S02]         /*0ab0*/                   IADD3 R3, R0, R3, -R58 ;
+      [B------:R-:W-:-:S01]         /*0ac0*/                   LEA.HI.SX32 R2, R2, UR4, 0x1b ;
+      [B------:R0:W3:-:S01]         /*0ad0*/              @!P0 LDG.E.U8.CONSTANT R59, desc[UR6][R36.64] ;
+      [B------:R-:W-:Y:S04]         /*0ae0*/                   ISETP.GE.AND P0, PT, R3, c[0x0][0x180], PT ;
+      [B------:R-:W-:-:S02]         /*0af0*/                   ISETP.GE.OR P0, PT, R2, c[0x0][0x178], P0 ;
+      [B0-----:R-:W-:-:S02]         /*0b00*/                   IADD3 R36, R57, 0x180, RZ ;
+      [B------:R-:W-:-:S02]         /*0b10*/                   PRMT R37, RZ, 0x7610, R37 ;
+      [B------:R-:W-:Y:S07]         /*0b20*/                   SHF.R.S32.HI R58, RZ, 0x1f, R36 ;
+      [B------:R-:W-:-:S01]         /*0b30*/              @!P0 IMAD R3, R2, c[0x0][0x180], R3 ;
+      [B------:R-:W-:Y:S04]         /*0b40*/                   LEA.HI R58, R58, R36, RZ, 0x5 ;
+      [B------:R-:W-:-:S02]         /*0b50*/              @!P0 IADD3 R2, P2, R3.reuse, c[0x0][0x160], RZ ;
+      [B------:R-:W-:-:S02]         /*0b60*/                   LOP3.LUT R60, R58, 0xffffffe0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*0b70*/              @!P0 LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P2 ;
+      [B------:R-:W-:-:S02]         /*0b80*/                   IADD3 R60, R0, R36, -R60 ;
+      [B------:R-:W-:-:S01]         /*0b90*/                   LEA.HI.SX32 R36, R58, UR4, 0x1b ;
+      [B------:R0:W4:-:S01]         /*0ba0*/              @!P0 LDG.E.U8.CONSTANT R37, desc[UR6][R2.64] ;
+      [B------:R-:W-:Y:S04]         /*0bb0*/                   ISETP.GE.AND P0, PT, R60, c[0x0][0x180], PT ;
+      [B------:R-:W-:Y:S13]         /*0bc0*/                   ISETP.GE.OR P0, PT, R36, c[0x0][0x178], P0 ;
+      [B------:R-:W-:Y:S05]         /*0bd0*/              @!P0 IMAD R36, R36, c[0x0][0x180], R60 ;
+      [B0-----:R-:W-:Y:S04]         /*0be0*/              @!P0 IADD3 R2, P2, R36, c[0x0][0x160], RZ ;
+      [B------:R-:W-:-:S02]         /*0bf0*/              @!P0 LEA.HI.X.SX32 R3, R36, c[0x0][0x164], 0x1, P2 ;
+      [B------:R-:W-:Y:S06]         /*0c00*/                   PRMT R36, RZ, 0x7610, R36 ;
+      [B------:R-:W5:-:S01]         /*0c10*/              @!P0 LDG.E.U8.CONSTANT R36, desc[UR6][R2.64] ;
+      [B------:R-:W-:-:S02]         /*0c20*/                   ISETP.GE.AND P0, PT, R57.reuse, 0x600, PT ;
+      [B------:R-:W-:-:S02]         /*0c30*/                   IADD3 R58, R56, 0x200, RZ ;
+      [B------:R-:W-:-:S01]         /*0c40*/                   IADD3 R57, R57, 0x200, RZ ;
+      [B--2---:R-:W-:-:S04]         /*0c50*/                   STS.U8 [R56], R61 ;
+      [B---3--:R-:W-:-:S04]         /*0c60*/                   STS.U8 [R56+0x80], R59 ;
+      [B----4-:R-:W-:-:S04]         /*0c70*/                   STS.U8 [R56+0x100], R37 ;
+      [B-----5:R0:W-:-:S02]         /*0c80*/                   STS.U8 [R56+0x180], R36 ;
+      [B0-----:R-:W-:-:S01]         /*0c90*/                   IMAD.MOV.U32 R56, RZ, RZ, R58 ;
+      [B------:R-:W-:-:S05]         /*0ca0*/              @!P0 BRA `(.L_x_14) ;
+  .L_x_13:
+      [B------:R-:W-:-:S05]         /*0cb0*/                   BSYNC B1 ;
+  .L_x_12:
+      [B------:R-:W-:-:S01]         /*0cc0*/                   BSSY B1, `(.L_x_15) ;
+      [B------:R-:W-:-:S01]         /*0cd0*/                   IMAD.MOV.U32 R56, RZ, RZ, R52 ;
+      [B------:R-:W-:-:S05]         /*0ce0*/              @!P1 BRA `(.L_x_16) ;
+      [B------:R-:W-:-:S01]         /*0cf0*/                   IMAD.IADD R37, R51, 0x1, R0 ;
+      [B------:R-:W-:-:S01]         /*0d00*/                   ISETP.GE.AND P0, PT, R46, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S01]         /*0d10*/                   BSSY B2, `(.L_x_17) ;
+      [B0-----:R-:W-:-:S01]         /*0d20*/                   IMAD R52, R54, c[0x0][0x0], R53 ;
+      [B------:R-:W-:Y:S02]         /*0d30*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S13]         /*0d40*/                   ISETP.GE.OR P0, PT, R37, c[0x0][0x180], P0 ;
+      [B------:R-:W-:-:S05]         /*0d50*/               @P0 BRA `(.L_x_18) ;
+      [B------:R-:W-:-:S01]         /*0d60*/                   IMAD R3, R37, c[0x0][0x17c], R46 ;
+      [B------:R-:W-:Y:S04]         /*0d70*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B------:R-:W-:Y:S04]         /*0d80*/                   IADD3 R2, P0, R3, c[0x0][0x168], RZ ;
+      [B------:R-:W-:Y:S06]         /*0d90*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x16c], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0da0*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_18:
+      [B------:R-:W-:-:S05]         /*0db0*/                   BSYNC B2 ;
+  .L_x_17:
+      [B-----5:R1:W-:-:S01]         /*0dc0*/                   STS.U8 [R52+0x800], R3 ;
+      [B------:R-:W-:-:S02]         /*0dd0*/                   ISETP.NE.AND P0, PT, R55, 0x1, PT ;
+      [B------:R-:W-:Y:S11]         /*0de0*/                   IADD3 R56, R52, 0x80, RZ ;
+      [B------:R-:W-:-:S05]         /*0df0*/              @!P0 BRA `(.L_x_16) ;
+      [B-1----:R-:W-:-:S01]         /*0e00*/                   ISETP.GE.AND P0, PT, R42, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S01]         /*0e10*/                   BSSY B2, `(.L_x_19) ;
+      [B------:R-:W-:-:S02]         /*0e20*/                   LEA.HI.SX32 R37, R43, R0, 0x1a ;
+      [B------:R-:W-:-:S02]         /*0e30*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S13]         /*0e40*/                   ISETP.GE.OR P0, PT, R37, c[0x0][0x180], P0 ;
+      [B------:R-:W-:-:S05]         /*0e50*/               @P0 BRA `(.L_x_20) ;
+      [B------:R-:W-:-:S01]         /*0e60*/                   IMAD R3, R37, c[0x0][0x17c], R42 ;
+      [B------:R-:W-:Y:S04]         /*0e70*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B0-----:R-:W-:Y:S04]         /*0e80*/                   IADD3 R2, P0, R3, c[0x0][0x168], RZ ;
+      [B------:R-:W-:Y:S06]         /*0e90*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x16c], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0ea0*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_20:
+      [B------:R-:W-:-:S05]         /*0eb0*/                   BSYNC B2 ;
+  .L_x_19:
+      [B-----5:R1:W-:-:S01]         /*0ec0*/                   STS.U8 [R52+0x880], R3 ;
+      [B------:R-:W-:-:S02]         /*0ed0*/                   ISETP.NE.AND P0, PT, R55, 0x2, PT ;
+      [B------:R-:W-:Y:S11]         /*0ee0*/                   IADD3 R56, R52, 0x100, RZ ;
+      [B------:R-:W-:-:S05]         /*0ef0*/              @!P0 BRA `(.L_x_16) ;
+      [B-1----:R-:W-:-:S01]         /*0f00*/                   ISETP.GE.AND P0, PT, R38, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S01]         /*0f10*/                   BSSY B2, `(.L_x_21) ;
+      [B------:R-:W-:-:S02]         /*0f20*/                   LEA.HI.SX32 R37, R39, R0, 0x1a ;
+      [B------:R-:W-:-:S02]         /*0f30*/                   PRMT R3, RZ, 0x7610, R3 ;
+      [B------:R-:W-:Y:S13]         /*0f40*/                   ISETP.GE.OR P0, PT, R37, c[0x0][0x180], P0 ;
+      [B------:R-:W-:-:S05]         /*0f50*/               @P0 BRA `(.L_x_22) ;
+      [B------:R-:W-:-:S01]         /*0f60*/                   IMAD R3, R37, c[0x0][0x17c], R38 ;
+      [B------:R-:W-:Y:S04]         /*0f70*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B0-----:R-:W-:Y:S04]         /*0f80*/                   IADD3 R2, P0, R3, c[0x0][0x168], RZ ;
+      [B------:R-:W-:Y:S06]         /*0f90*/                   LEA.HI.X.SX32 R3, R3, c[0x0][0x16c], 0x1, P0 ;
+      [B------:R0:W5:-:S03]         /*0fa0*/                   LDG.E.U8.CONSTANT R3, desc[UR6][R2.64] ;
+  .L_x_22:
+      [B------:R-:W-:-:S05]         /*0fb0*/                   BSYNC B2 ;
+  .L_x_21:
+      [B-----5:R1:W-:-:S01]         /*0fc0*/                   STS.U8 [R52+0x900], R3 ;
+      [B------:R-:W-:Y:S03]         /*0fd0*/                   IADD3 R56, R52, 0x180, RZ ;
+  .L_x_16:
+      [B-1----:R-:W-:-:S05]         /*0fe0*/                   BSYNC B1 ;
+  .L_x_15:
+      [B------:R-:W-:Y:S13]         /*0ff0*/                   ISETP.GE.U32.AND P0, PT, R48, 0x180, PT ;
+      [B------:R-:W-:-:S05]         /*1000*/              @!P0 BRA `(.L_x_3) ;
+      [B0-----:R-:W-:-:S02]         /*1010*/                   IADD3 R53, R56, 0x800, RZ ;
+  .L_x_23:
+      [B------:R-:W-:-:S01]         /*1020*/                   SHF.R.S32.HI R3, RZ, 0x1f, R56 ;
+      [B------:R-:W-:-:S01]         /*1030*/                   ULDC.64 UR6, c[0x0][0x118] ;
+      [B------:R-:W-:-:S02]         /*1040*/                   IADD3 R36, R56, 0x80, RZ ;
+      [B------:R-:W-:-:S02]         /*1050*/                   LEA.HI R3, R3, R56, RZ, 0x6 ;
+      [B------:R-:W-:-:S02]         /*1060*/                   PRMT R58, RZ, 0x7610, R58 ;
+      [B------:R-:W-:-:S02]         /*1070*/                   LOP3.LUT R37, R3.reuse, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S02]         /*1080*/                   LEA.HI.SX32 R3, R3, R0, 0x1a ;
+      [B------:R-:W-:Y:S04]         /*1090*/                   IADD3 R2, R56, UR5, -R37 ;
+      [B------:R-:W-:Y:S04]         /*10a0*/                   ISETP.GE.AND P0, PT, R2, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S02]         /*10b0*/                   ISETP.GE.OR P0, PT, R3, c[0x0][0x180], P0 ;
+      [B------:R-:W-:-:S02]         /*10c0*/                   SHF.R.S32.HI R37, RZ, 0x1f, R36 ;
+      [B------:R-:W-:-:S02]         /*10d0*/                   IADD3 R54, R56, 0x100, RZ ;
+      [B------:R-:W-:Y:S07]         /*10e0*/                   LEA.HI R55, R37, R36, RZ, 0x6 ;
+      [B------:R-:W-:-:S01]         /*10f0*/              @!P0 IMAD R3, R3, c[0x0][0x17c], R2 ;
+      [B------:R-:W-:Y:S04]         /*1100*/                   SHF.R.S32.HI R57, RZ, 0x1f, R54 ;
+      [B------:R-:W-:-:S02]         /*1110*/              @!P0 IADD3 R2, P1, R3, c[0x0][0x168], RZ ;
+      [B------:R-:W-:-:S02]         /*1120*/                   LOP3.LUT R37, R55, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*1130*/              @!P0 LEA.HI.X.SX32 R3, R3, c[0x0][0x16c], 0x1, P1 ;
+      [B------:R-:W-:-:S02]         /*1140*/                   LEA.HI R57, R57, R54, RZ, 0x6 ;
+      [B------:R-:W-:-:S01]         /*1150*/                   IADD3 R36, R36, UR5, -R37 ;
+      [B------:R0:W2:-:S01]         /*1160*/              @!P0 LDG.E.U8.CONSTANT R58, desc[UR6][R2.64] ;
+      [B------:R-:W-:Y:S02]         /*1170*/                   LOP3.LUT R37, R57, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S02]         /*1180*/                   LEA.HI.SX32 R59, R55, R0.reuse, 0x1a ;
+      [B------:R-:W-:-:S02]         /*1190*/                   IADD3 R37, R54, UR5, -R37 ;
+      [B------:R-:W-:-:S02]         /*11a0*/                   ISETP.GE.AND P0, PT, R36, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S02]         /*11b0*/                   LEA.HI.SX32 R54, R57, R0, 0x1a ;
+      [B0-----:R-:W-:-:S02]         /*11c0*/                   IADD3 R2, R56, 0x180, RZ ;
+      [B------:R-:W-:Y:S02]         /*11d0*/                   ISETP.GE.OR P0, PT, R59, c[0x0][0x180], P0 ;
+      [B------:R-:W-:-:S02]         /*11e0*/                   SHF.R.S32.HI R3, RZ, 0x1f, R2 ;
+      [B------:R-:W-:-:S02]         /*11f0*/                   ISETP.GE.AND P1, PT, R37, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S02]         /*1200*/                   LEA.HI R3, R3, R2, RZ, 0x6 ;
+      [B------:R-:W-:-:S02]         /*1210*/                   ISETP.GE.OR P1, PT, R54, c[0x0][0x180], P1 ;
+      [B------:R-:W-:-:S02]         /*1220*/                   LOP3.LUT R55, R3.reuse, 0xffffffc0, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*1230*/                   LEA.HI.SX32 R3, R3, R0, 0x1a ;
+      [B------:R-:W-:-:S01]         /*1240*/              @!P0 IMAD R36, R59, c[0x0][0x17c], R36 ;
+      [B------:R-:W-:Y:S02]         /*1250*/                   IADD3 R2, R2, UR5, -R55 ;
+      [B------:R-:W-:-:S02]         /*1260*/                   PRMT R60, RZ, 0x7610, R60 ;
+      [B------:R-:W-:Y:S03]         /*1270*/                   ISETP.GE.AND P2, PT, R2, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S01]         /*1280*/              @!P1 IMAD R37, R54, c[0x0][0x17c], R37 ;
+      [B------:R-:W-:-:S02]         /*1290*/                   ISETP.GE.OR P2, PT, R3, c[0x0][0x180], P2 ;
+      [B------:R-:W-:Y:S04]         /*12a0*/              @!P0 IADD3 R54, P3, R36, c[0x0][0x168], RZ ;
+      [B------:R-:W-:Y:S05]         /*12b0*/              @!P0 LEA.HI.X.SX32 R55, R36, c[0x0][0x16c], 0x1, P3 ;
+      [B------:R-:W3:-:S01]         /*12c0*/              @!P0 LDG.E.U8.CONSTANT R60, desc[UR6][R54.64] ;
+      [B------:R-:W-:-:S01]         /*12d0*/              @!P1 IADD3 R36, P0, R37, c[0x0][0x168], RZ ;
+      [B------:R-:W-:-:S01]         /*12e0*/              @!P2 IMAD R3, R3, c[0x0][0x17c], R2 ;
+      [B------:R-:W-:-:S02]         /*12f0*/                   PRMT R59, RZ, 0x7610, R59 ;
+      [B------:R-:W-:-:S02]         /*1300*/              @!P1 LEA.HI.X.SX32 R37, R37, c[0x0][0x16c], 0x1, P0 ;
+      [B------:R-:W-:-:S02]         /*1310*/              @!P2 IADD3 R2, P0, R3.reuse, c[0x0][0x168], RZ ;
+      [B------:R-:W-:-:S01]         /*1320*/                   PRMT R57, RZ, 0x7610, R57 ;
+      [B------:R0:W4:-:S01]         /*1330*/              @!P1 LDG.E.U8.CONSTANT R59, desc[UR6][R36.64] ;
+      [B------:R-:W-:Y:S05]         /*1340*/              @!P2 LEA.HI.X.SX32 R3, R3, c[0x0][0x16c], 0x1, P0 ;
+      [B------:R-:W5:-:S01]         /*1350*/              @!P2 LDG.E.U8.CONSTANT R57, desc[UR6][R2.64] ;
+      [B------:R-:W-:-:S02]         /*1360*/                   ISETP.GE.AND P0, PT, R56.reuse, 0x600, PT ;
+      [B------:R-:W-:-:S02]         /*1370*/                   IADD3 R56, R56, 0x200, RZ ;
+      [B0-----:R-:W-:-:S01]         /*1380*/                   IADD3 R36, R53, 0x200, RZ ;
+      [B--2---:R-:W-:-:S04]         /*1390*/                   STS.U8 [R53], R58 ;
+      [B---3--:R-:W-:-:S04]         /*13a0*/                   STS.U8 [R53+0x80], R60 ;
+      [B----4-:R-:W-:-:S04]         /*13b0*/                   STS.U8 [R53+0x100], R59 ;
+      [B-----5:R0:W-:-:S02]         /*13c0*/                   STS.U8 [R53+0x180], R57 ;
+      [B0-----:R-:W-:-:S01]         /*13d0*/                   IMAD.MOV.U32 R53, RZ, RZ, R36 ;
+      [B------:R-:W-:-:S05]         /*13e0*/              @!P0 BRA `(.L_x_23) ;
+  .L_x_3:
+      [B------:R-:W-:-:S05]         /*13f0*/                   BSYNC B0 ;
+  .L_x_2:
+      [B------:R-:W1:-:S01]         /*1400*/                   S2R R56, SR_LANEID ;
+      [B0-----:R-:W-:Y:S02]         /*1410*/                   LEA R2, R50, 0x800, 0x5 ;
+      [B------:R-:W-:-:S01]         /*1420*/                   IADD3 R0, R0, 0x20, RZ ;
+      [B------:R-:W-:-:S03]         /*1430*/                   BAR.SYNC.DEFER_BLOCKING 0x0 ;
+      [B------:R-:W-:-:S01]         /*1440*/                   ISETP.GE.AND P0, PT, R0, c[0x0][0x180], PT ;
+      [B-1----:R-:W-:-:S01]         /*1450*/                   IMAD.SHL.U32 R36, R56.reuse, 0x4, RZ ;
+      [B------:R-:W-:-:S02]         /*1460*/                   SHF.R.U32.HI R53, RZ, 0x2, R56 ;
+      [B------:R-:W-:-:S02]         /*1470*/                   LOP3.LUT R56, R56, 0xf, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S02]         /*1480*/                   LOP3.LUT R36, R36, 0xc, RZ, 0xe2, !PT ;
+      [B------:R-:W-:Y:S03]         /*1490*/                   LOP3.LUT R59, R56, 0x7, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S04]         /*14a0*/                   IMAD R53, R36, 0x40, R53 ;
+      [B------:R-:W-:Y:S05]         /*14b0*/                   IMAD.IADD R60, R2, 0x1, R53 ;
+      [B------:R-:W-:-:S04]         /*14c0*/                   LDS.U8 R57, [R60] ;
+      [B------:R-:W0:-:S04]         /*14d0*/                   LDS.U8 R58, [R60+0x40] ;
+      [B------:R-:W-:-:S04]         /*14e0*/                   LDS.U8 R2, [R60+0x80] ;
+      [B------:R-:W1:-:S04]         /*14f0*/                   LDS.U8 R55, [R60+0xc0] ;
+      [B------:R-:W-:-:S04]         /*1500*/                   LDS.U8 R3, [R60+0x8] ;
+      [B------:R-:W2:-:S04]         /*1510*/                   LDS.U8 R54, [R60+0x48] ;
+      [B------:R-:W-:-:S04]         /*1520*/                   LDS.U8 R36, [R60+0x88] ;
+      [B------:R-:W3:-:S01]         /*1530*/                   LDS.U8 R37, [R60+0xc8] ;
+      [B0-----:R-:W-:-:S01]         /*1540*/                   IMAD R57, R58, 0x100, R57 ;
+      [B------:R-:W-:Y:S05]         /*1550*/                   SHF.R.U32.HI R58, RZ, 0x3, R56 ;
+      [B------:R-:W-:-:S02]         /*1560*/                   IMAD R56, R58, 0x8, R59 ;
+      [B------:R-:W-:-:S02]         /*1570*/                   IMAD.SHL.U32 R59, R51, 0x400, RZ ;
+      [B-1----:R-:W-:Y:S03]         /*1580*/                   IMAD R58, R55, 0x100, R2 ;
+      [B------:R-:W-:-:S01]         /*1590*/                   IADD3 R2, R59, 0x200, RZ ;
+      [B------:R-:W-:-:S01]         /*15a0*/                   IMAD R59, R56, 0x20, R59 ;
+      [B------:R-:W-:-:S01]         /*15b0*/                   PRMT R57, R57, 0x5410, R58 ;
+      [B--2---:R-:W-:-:S02]         /*15c0*/                   IMAD R54, R54, 0x100, R3 ;
+      [B------:R-:W-:-:S01]         /*15d0*/                   IMAD R2, R56, 0x20, R2 ;
+      [B------:R-:W-:Y:S04]         /*15e0*/                   LEA R56, R50, 0x800, 0x5 ;
+      [B------:R-:W-:-:S01]         /*15f0*/                   IADD3 R56, R53, 0x10, R56 ;
+      [B---3--:R-:W-:-:S01]         /*1600*/                   IMAD R37, R37, 0x100, R36 ;
+      [B------:R-:W0:-:S04]         /*1610*/                   LDSM.16.M88.2 R2, [R2] ;
+      [B------:R-:W-:-:S01]         /*1620*/                   PRMT R54, R54, 0x5410, R37 ;
+      [B------:R-:W-:-:S04]         /*1630*/                   LDS.U8 R58, [R56] ;
+      [B------:R-:W1:-:S04]         /*1640*/                   LDSM.16.M88.2 R36, [R59] ;
+      [B------:R-:W2:-:S04]         /*1650*/                   LDS.U8 R55, [R56+0x40] ;
+      [B------:R-:W-:-:S01]         /*1660*/                   LDS.U8 R59, [R56+0xc8] ;
+      [B0-----:R-:W-:-:S02]         /*1670*/                   IMMA.16816.S8.S8 R12, R2.reuse.ROW, R57.COL, R12 ;
+      [B------:R-:W-:-:S02]         /*1680*/                   IMMA.16816.S8.S8 R4, R2.ROW, R54.COL, R4 ;
+      [B-1----:R-:W-:-:S01]         /*1690*/                   IMMA.16816.S8.S8 R24, R36.ROW, R57.COL, R24 ;
+      [B--2---:R-:W-:Y:S03]         /*16a0*/                   IMAD R57, R55, 0x100, R58 ;
+      [B------:R-:W-:-:S01]         /*16b0*/                   IMMA.16816.S8.S8 R20, R36.ROW, R54.COL, R20 ;
+      [B------:R-:W-:-:S04]         /*16c0*/                   LDS.U8 R55, [R56+0x80] ;
+      [B------:R-:W0:-:S02]         /*16d0*/                   LDS.U8 R58, [R56+0xc0] ;
+      [B0-----:R-:W-:Y:S05]         /*16e0*/                   IMAD R58, R58, 0x100, R55 ;
+      [B------:R-:W-:-:S02]         /*16f0*/                   PRMT R55, R57, 0x5410, R58 ;
+      [B------:R-:W-:-:S04]         /*1700*/                   LDS.U8 R57, [R56+0x8] ;
+      [B------:R-:W0:-:S01]         /*1710*/                   LDS.U8 R58, [R56+0x48] ;
+      [B------:R-:W-:-:S02]         /*1720*/                   IMMA.16816.S8.S8 R16, R36.ROW, R55.reuse.COL, R16 ;
+      [B------:R-:W-:-:S01]         /*1730*/                   IMMA.16816.S8.S8 R28, R2.ROW, R55.COL, R28 ;
+      [B0-----:R-:W-:Y:S02]         /*1740*/                   IMAD R57, R58, 0x100, R57 ;
+      [B------:R-:W0:-:S02]         /*1750*/                   LDS.U8 R58, [R56+0x88] ;
+      [B0-----:R-:W-:Y:S05]         /*1760*/                   IMAD R58, R59, 0x100, R58 ;
+      [B------:R-:W-:Y:S07]         /*1770*/                   PRMT R56, R57, 0x5410, R58 ;
+      [B------:R-:W-:-:S01]         /*1780*/                   IMMA.16816.S8.S8 R8, R36.ROW, R56.COL, R8 ;
+      [B------:R-:W-:Y:S03]         /*1790*/                   LEA R36, R50, 0x800, 0x5 ;
+      [B------:R-:W-:-:S01]         /*17a0*/                   IMMA.16816.S8.S8 R32, R2.ROW, R56.COL, R32 ;
+      [B------:R-:W-:-:S02]         /*17b0*/                   IADD3 R37, R53.reuse, 0x400, R36.reuse ;
+      [B------:R-:W-:-:S02]         /*17c0*/                   IADD3 R53, R53, 0x410, R36 ;
+      [B------:R-:W0:-:S04]         /*17d0*/                   S2R R36, SR_LANEID ;
+      [B------:R-:W-:-:S04]         /*17e0*/                   LDS.U8 R58, [R37] ;
+      [B------:R-:W1:-:S04]         /*17f0*/                   LDS.U8 R57, [R37+0x40] ;
+      [B------:R-:W-:-:S04]         /*1800*/                   LDS.U8 R54, [R37+0x80] ;
+      [B------:R-:W2:-:S04]         /*1810*/                   LDS.U8 R55, [R37+0xc0] ;
+      [B------:R-:W-:-:S04]         /*1820*/                   LDS.U8 R3, [R37+0x8] ;
+      [B------:R-:W3:-:S01]         /*1830*/                   LDS.U8 R56, [R37+0x48] ;
+      [B0-----:R-:W-:Y:S03]         /*1840*/                   LOP3.LUT R36, R36, 0xf, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*1850*/                   LDS.U8 R2, [R37+0x88] ;
+      [B------:R-:W-:Y:S03]         /*1860*/                   LOP3.LUT R61, R36, 0x7, RZ, 0xc0, !PT ;
+      [B------:R0:W4:-:S01]         /*1870*/                   LDS.U8 R59, [R37+0xc8] ;
+      [B-1----:R-:W-:-:S02]         /*1880*/                   IMAD R58, R57, 0x100, R58 ;
+      [B--2---:R-:W-:-:S02]         /*1890*/                   IMAD R57, R55, 0x100, R54 ;
+      [B------:R-:W-:-:S03]         /*18a0*/                   LDS.U8 R54, [R53] ;
+      [B------:R-:W-:-:S01]         /*18b0*/                   PRMT R58, R58, 0x5410, R57 ;
+      [B------:R-:W1:-:S01]         /*18c0*/                   LDS.U8 R55, [R53+0x40] ;
+      [B---3--:R-:W-:-:S01]         /*18d0*/                   IMAD R3, R56, 0x100, R3 ;
+      [B------:R-:W-:Y:S05]         /*18e0*/                   SHF.R.U32.HI R56, RZ, 0x3, R36 ;
+      [B0-----:R-:W-:-:S02]         /*18f0*/                   IMAD R37, R56, 0x8, R61 ;
+      [B----4-:R-:W-:-:S02]         /*1900*/                   IMAD R36, R59, 0x100, R2 ;
+      [B------:R-:W-:Y:S03]         /*1910*/                   IMAD.SHL.U32 R2, R51, 0x400, RZ ;
+      [B------:R-:W-:-:S02]         /*1920*/                   PRMT R57, R3, 0x5410, R36 ;
+      [B------:R-:W-:-:S02]         /*1930*/                   IADD3 R56, R2.reuse, 0x10, RZ ;
+      [B------:R-:W-:Y:S03]         /*1940*/                   IADD3 R2, R2, 0x210, RZ ;
+      [B------:R-:W-:-:S02]         /*1950*/                   IMAD R59, R37.reuse, 0x20, R56 ;
+      [B------:R-:W-:-:S01]         /*1960*/                   IMAD R2, R37, 0x20, R2 ;
+      [B------:R-:W-:-:S04]         /*1970*/                   LDS.U8 R56, [R53+0x80] ;
+      [B------:R-:W0:-:S04]         /*1980*/                   LDSM.16.M88.2 R36, [R59] ;
+      [B------:R-:W2:-:S01]         /*1990*/                   LDSM.16.M88.2 R2, [R2] ;
+      [B-1----:R-:W-:Y:S03]         /*19a0*/                   IMAD R54, R55, 0x100, R54 ;
+      [B------:R-:W1:-:S01]         /*19b0*/                   LDS.U8 R55, [R53+0xc0] ;
+      [B0-----:R-:W-:-:S02]         /*19c0*/                   IMMA.16816.S8.S8 R24, R36.ROW, R58.reuse.COL, R24 ;
+      [B--2---:R-:W-:-:S01]         /*19d0*/                   IMMA.16816.S8.S8 R12, R2.ROW, R58.COL, R12 ;
+      [B------:R-:W-:-:S03]         /*19e0*/                   LDS.U8 R58, [R53+0xc8] ;
+      [B------:R-:W-:-:S02]         /*19f0*/                   IMMA.16816.S8.S8 R20, R36.ROW, R57.reuse.COL, R20 ;
+      [B------:R-:W-:-:S01]         /*1a00*/                   IMMA.16816.S8.S8 R4, R2.ROW, R57.COL, R4 ;
+      [B-1----:R-:W-:-:S01]         /*1a10*/                   IMAD R61, R55, 0x100, R56 ;
+      [B------:R-:W0:-:S04]         /*1a20*/                   LDS.U8 R57, [R53+0x88] ;
+      [B------:R-:W-:-:S04]         /*1a30*/                   LDS.U8 R55, [R53+0x8] ;
+      [B------:R1:W2:-:S02]         /*1a40*/                   LDS.U8 R56, [R53+0x48] ;
+      [B-1----:R-:W-:Y:S07]         /*1a50*/                   PRMT R53, R54, 0x5410, R61 ;
+      [B------:R-:W-:-:S02]         /*1a60*/                   IMMA.16816.S8.S8 R16, R36.ROW, R53.reuse.COL, R16 ;
+      [B------:R-:W-:-:S01]         /*1a70*/                   IMMA.16816.S8.S8 R28, R2.ROW, R53.COL, R28 ;
+      [B0-----:R-:W-:-:S02]         /*1a80*/                   IMAD R54, R58, 0x100, R57 ;
+      [B--2---:R-:W-:Y:S05]         /*1a90*/                   IMAD R55, R56, 0x100, R55 ;
+      [B------:R-:W-:Y:S07]         /*1aa0*/                   PRMT R54, R55, 0x5410, R54 ;
+      [B------:R-:W-:-:S02]         /*1ab0*/                   IMMA.16816.S8.S8 R8, R36.ROW, R54.reuse.COL, R8 ;
+      [B------:R-:W-:-:S01]         /*1ac0*/                   IMMA.16816.S8.S8 R32, R2.ROW, R54.COL, R32 ;
+      [B------:R-:W-:-:S06]         /*1ad0*/                   BAR.SYNC.DEFER_BLOCKING 0x0 ;
+      [B------:R-:W-:-:S01]         /*1ae0*/               @P0 CALL.REL.NOINC `(.L_x_24) ;
+      [B------:R-:W-:-:S05]         /*1af0*/                   BRA `(.L_x_25) ;
+  .L_x_24:
+      [B------:R-:W-:-:S02]         /*1b00*/                   I2FP.F32.S32 R24, R24 ;
+      [B------:R-:W-:Y:S02]         /*1b10*/                   I2FP.F32.S32 R25, R25 ;
+      [B------:R-:W-:-:S02]         /*1b20*/                   I2FP.F32.S32 R26, R26 ;
+      [B------:R-:W-:-:S02]         /*1b30*/                   I2FP.F32.S32 R27, R27 ;
+      [B------:R-:W-:-:S02]         /*1b40*/                   I2FP.F32.S32 R20, R20 ;
+      [B------:R-:W-:-:S02]         /*1b50*/                   I2FP.F32.S32 R21, R21 ;
+      [B------:R-:W-:-:S02]         /*1b60*/                   I2FP.F32.S32 R22, R22 ;
+      [B------:R-:W-:Y:S02]         /*1b70*/                   I2FP.F32.S32 R23, R23 ;
+      [B------:R-:W-:-:S02]         /*1b80*/                   I2FP.F32.S32 R16, R16 ;
+      [B------:R-:W-:-:S02]         /*1b90*/                   I2FP.F32.S32 R17, R17 ;
+      [B------:R-:W-:-:S02]         /*1ba0*/                   I2FP.F32.S32 R18, R18 ;
+      [B------:R-:W-:-:S02]         /*1bb0*/                   I2FP.F32.S32 R19, R19 ;
+      [B------:R-:W-:-:S02]         /*1bc0*/                   I2FP.F32.S32 R8, R8 ;
+      [B------:R-:W-:Y:S02]         /*1bd0*/                   I2FP.F32.S32 R9, R9 ;
+      [B------:R-:W-:-:S02]         /*1be0*/                   I2FP.F32.S32 R10, R10 ;
+      [B------:R-:W-:-:S02]         /*1bf0*/                   I2FP.F32.S32 R11, R11 ;
+      [B------:R-:W-:-:S02]         /*1c00*/                   I2FP.F32.S32 R12, R12 ;
+      [B------:R-:W-:-:S02]         /*1c10*/                   I2FP.F32.S32 R13, R13 ;
+      [B------:R-:W-:-:S02]         /*1c20*/                   I2FP.F32.S32 R14, R14 ;
+      [B------:R-:W-:Y:S02]         /*1c30*/                   I2FP.F32.S32 R15, R15 ;
+      [B------:R-:W-:-:S02]         /*1c40*/                   I2FP.F32.S32 R0, R4 ;
+      [B------:R-:W-:-:S02]         /*1c50*/                   I2FP.F32.S32 R36, R5 ;
+      [B------:R-:W-:-:S02]         /*1c60*/                   I2FP.F32.S32 R6, R6 ;
+      [B------:R-:W-:-:S02]         /*1c70*/                   I2FP.F32.S32 R7, R7 ;
+      [B------:R-:W-:-:S02]         /*1c80*/                   I2FP.F32.S32 R28, R28 ;
+      [B------:R-:W-:Y:S02]         /*1c90*/                   I2FP.F32.S32 R29, R29 ;
+      [B------:R-:W-:-:S02]         /*1ca0*/                   I2FP.F32.S32 R30, R30 ;
+      [B------:R-:W-:-:S02]         /*1cb0*/                   I2FP.F32.S32 R31, R31 ;
+      [B------:R-:W-:-:S02]         /*1cc0*/                   I2FP.F32.S32 R32, R32 ;
+      [B------:R-:W-:-:S02]         /*1cd0*/                   I2FP.F32.S32 R33, R33 ;
+      [B------:R-:W-:-:S02]         /*1ce0*/                   I2FP.F32.S32 R34, R34 ;
+      [B------:R-:W-:Y:S02]         /*1cf0*/                   I2FP.F32.S32 R35, R35 ;
+  .L_x_1:
+      [B------:R-:W-:-:S01]         /*1d00*/                   LEA R50, R50, UR5, 0x5 ;
+      [B------:R-:W-:-:S01]         /*1d10*/                   IMAD.MOV.U32 R39, RZ, RZ, c[0x0][0x184] ;
+      [B------:R-:W-:-:S01]         /*1d20*/                   LEA R43, R51, UR4, 0x5 ;
+      [B------:R-:W-:-:S01]         /*1d30*/                   IMAD.MOV.U32 R38, RZ, RZ, c[0x0][0x17c] ;
+      [B------:R-:W-:-:S01]         /*1d40*/                   IADD3 R37, R50, 0x10, RZ ;
+      [B------:R-:W-:-:S01]         /*1d50*/                   ULDC.64 UR4, c[0x0][0x118] ;
+      [B------:R-:W-:-:S01]         /*1d60*/                   IADD3 R2, R43, 0x10, RZ ;
+      [B------:R-:W-:-:S01]         /*1d70*/                   FMUL R39, R39, c[0x0][0x188] ;
+      [B------:R-:W-:Y:S02]         /*1d80*/                   ISETP.GT.AND P0, PT, R37, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S02]         /*1d90*/                   IADD3 R3, R50, 0x20, RZ ;
+      [B------:R-:W-:-:S02]         /*1da0*/                   ISETP.GT.OR P3, PT, R2.reuse, c[0x0][0x178], P0 ;
+      [B------:R-:W-:-:S02]         /*1db0*/                   ISETP.GT.AND P1, PT, R3, c[0x0][0x17c], PT ;
+      [B------:R-:W-:-:S01]         /*1dc0*/                   IADD3 R3, R43.reuse, 0x20, RZ ;
+      [B------:R-:W-:-:S01]         /*1dd0*/                   IMAD R43, R43, c[0x0][0x17c], RZ ;
+      [B------:R-:W-:-:S02]         /*1de0*/                   ISETP.GT.OR P2, PT, R2, c[0x0][0x178], P1 ;
+      [B------:R-:W-:-:S01]         /*1df0*/                   ISETP.GT.OR P0, PT, R3.reuse, c[0x0][0x178], P0 ;
+      [B------:R-:W-:-:S01]         /*1e00*/                   IMAD R40, R38, 0x10, R43 ;
+      [B------:R-:W-:Y:S02]         /*1e10*/                   ISETP.GT.OR P1, PT, R3, c[0x0][0x178], P1 ;
+      [B------:R-:W-:-:S01]         /*1e20*/                   SHF.R.S32.HI R41, RZ, 0x1f, R43 ;
+      [B------:R-:W-:-:S06]         /*1e30*/               @P3 BRA `(.L_x_26) ;
+      [B------:R-:W0:-:S01]         /*1e40*/                   S2R R4, SR_LANEID ;
+      [B------:R-:W-:-:S01]         /*1e50*/                   IMAD.MOV.U32 R45, RZ, RZ, c[0x0][0x17c] ;
+      [B------:R-:W-:-:S01]         /*1e60*/                   IADD3 R47, P3, R50.reuse, R43, RZ ;
+      [B------:R-:W-:-:S01]         /*1e70*/                   IMAD.MOV.U32 R5, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*1e80*/                   FMUL R24, R39.reuse, R24 ;
+      [B------:R-:W-:-:S01]         /*1e90*/                   FMUL R25, R39.reuse, R25 ;
+      [B------:R-:W-:-:S01]         /*1ea0*/                   SHF.R.U32.HI R45, RZ, 0x1, R45 ;
+      [B------:R-:W-:-:S01]         /*1eb0*/                   FMUL R27, R39.reuse, R27 ;
+      [B------:R-:W-:-:S01]         /*1ec0*/                   LEA.HI.X.SX32 R2, R50, R41, 0x1, P3 ;
+      [B------:R-:W-:-:S01]         /*1ed0*/                   FMUL R26, R39, R26 ;
+      [B------:R-:W-:-:S01]         /*1ee0*/                   LEA R3, P3, R47, c[0x0][0x170], 0x2 ;
+      [B------:R-:W-:-:S01]         /*1ef0*/                   FMUL R21, R39.reuse, R21 ;
+      [B------:R-:W-:-:S01]         /*1f00*/                   FMUL R20, R39.reuse, R20 ;
+      [B------:R-:W-:-:S01]         /*1f10*/                   FMUL R23, R39, R23 ;
+      [B------:R-:W-:-:S01]         /*1f20*/                   LEA.HI.X R47, R47, c[0x0][0x174], R2, 0x2, P3 ;
+      [B------:R-:W-:-:S01]         /*1f30*/                   FMUL R22, R39, R22 ;
+      [B------:R-:W-:-:S01]         /*1f40*/                   WARPSYNC 0xffffffff ;
+      [B0-----:R-:W-:Y:S02]         /*1f50*/                   SHF.R.U32.HI R42, RZ, 0x2, R4 ;
+      [B------:R-:W-:Y:S05]         /*1f60*/                   LOP3.LUT R4, R4, 0x3, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S05]         /*1f70*/                   IMAD.WIDE.U32 R4, R42, R45, R4 ;
+      [B------:R-:W-:Y:S04]         /*1f80*/                   LEA R2, P3, R4, R3, 0x3 ;
+      [B------:R-:W-:Y:S05]         /*1f90*/                   LEA.HI.X R3, R4, R47, R5, 0x3, P3 ;
+      [B------:R-:W-:-:S01]         /*1fa0*/                   IMAD.WIDE.U32 R4, R45, 0x40, R2 ;
+      [B------:R0:W-:-:S04]         /*1fb0*/                   STG.E.64 desc[UR4][R2.64], R24 ;
+      [B------:R0:W-:-:S04]         /*1fc0*/                   STG.E.64 desc[UR4][R4.64], R26 ;
+      [B------:R0:W-:-:S04]         /*1fd0*/                   STG.E.64 desc[UR4][R2.64+0x20], R20 ;
+      [B------:R0:W-:-:S02]         /*1fe0*/                   STG.E.64 desc[UR4][R4.64+0x20], R22 ;
+  .L_x_26:
+      [B------:R-:W-:-:S05]         /*1ff0*/               @P2 BRA `(.L_x_27) ;
+      [B0-----:R-:W0:-:S01]         /*2000*/                   S2R R2, SR_LANEID ;
+      [B------:R-:W-:-:S01]         /*2010*/                   IMAD.MOV.U32 R3, RZ, RZ, c[0x0][0x17c] ;
+      [B------:R-:W-:-:S01]         /*2020*/                   IADD3 R21, P2, R43, R37, RZ ;
+      [B------:R-:W-:-:S01]         /*2030*/                   FMUL R16, R39.reuse, R16 ;
+      [B------:R-:W-:-:S01]         /*2040*/                   FMUL R17, R39.reuse, R17 ;
+      [B------:R-:W-:-:S01]         /*2050*/                   FMUL R19, R39, R19 ;
+      [B------:R-:W-:-:S01]         /*2060*/                   SHF.R.U32.HI R25, RZ, 0x1, R3 ;
+      [B------:R-:W-:-:S01]         /*2070*/                   IMAD.MOV.U32 R3, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*2080*/                   LEA.HI.X.SX32 R4, R37, R41, 0x1, P2 ;
+      [B------:R-:W-:-:S01]         /*2090*/                   FMUL R18, R39, R18 ;
+      [B------:R-:W-:-:S01]         /*20a0*/                   LEA R5, P2, R21, c[0x0][0x170], 0x2 ;
+      [B------:R-:W-:-:S01]         /*20b0*/                   FMUL R9, R39.reuse, R9 ;
+      [B------:R-:W-:-:S01]         /*20c0*/                   FMUL R8, R39.reuse, R8 ;
+      [B------:R-:W-:-:S01]         /*20d0*/                   FMUL R11, R39, R11 ;
+      [B------:R-:W-:-:S01]         /*20e0*/                   LEA.HI.X R21, R21, c[0x0][0x174], R4, 0x2, P2 ;
+      [B------:R-:W-:-:S01]         /*20f0*/                   FMUL R10, R39, R10 ;
+      [B------:R-:W-:-:S01]         /*2100*/                   WARPSYNC 0xffffffff ;
+      [B0-----:R-:W-:Y:S02]         /*2110*/                   SHF.R.U32.HI R23, RZ, 0x2, R2 ;
+      [B------:R-:W-:Y:S05]         /*2120*/                   LOP3.LUT R2, R2, 0x3, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S05]         /*2130*/                   IMAD.WIDE.U32 R2, R23, R25, R2 ;
+      [B------:R-:W-:Y:S04]         /*2140*/                   LEA R4, P2, R2, R5, 0x3 ;
+      [B------:R-:W-:Y:S05]         /*2150*/                   LEA.HI.X R5, R2, R21, R3, 0x3, P2 ;
+      [B------:R-:W-:-:S01]         /*2160*/                   IMAD.WIDE.U32 R2, R25, 0x40, R4 ;
+      [B------:R0:W-:-:S04]         /*2170*/                   STG.E.64 desc[UR4][R4.64], R16 ;
+      [B------:R0:W-:-:S04]         /*2180*/                   STG.E.64 desc[UR4][R2.64], R18 ;
+      [B------:R0:W-:-:S04]         /*2190*/                   STG.E.64 desc[UR4][R4.64+0x20], R8 ;
+      [B------:R0:W-:-:S02]         /*21a0*/                   STG.E.64 desc[UR4][R2.64+0x20], R10 ;
+  .L_x_27:
+      [B0-----:R-:W-:-:S01]         /*21b0*/                   SHF.R.S32.HI R10, RZ, 0x1f, R40 ;
+      [B------:R-:W-:-:S05]         /*21c0*/               @P0 BRA `(.L_x_28) ;
+      [B------:R-:W0:-:S01]         /*21d0*/                   S2R R3, SR_LANEID ;
+      [B------:R-:W-:-:S01]         /*21e0*/                   IADD3 R8, P0, R50.reuse, R40, RZ ;
+      [B------:R-:W-:-:S01]         /*21f0*/                   FMUL R12, R39.reuse, R12 ;
+      [B------:R-:W-:-:S01]         /*2200*/                   SHF.R.U32.HI R17, RZ, 0x1, R38 ;
+      [B------:R-:W-:-:S01]         /*2210*/                   FMUL R13, R39.reuse, R13 ;
+      [B------:R-:W-:-:S01]         /*2220*/                   LEA.HI.X.SX32 R11, R50, R10, 0x1, P0 ;
+      [B------:R-:W-:-:S01]         /*2230*/                   FMUL R15, R39.reuse, R15 ;
+      [B------:R-:W-:-:S01]         /*2240*/                   LEA R9, P0, R8, c[0x0][0x170], 0x2 ;
+      [B------:R-:W-:-:S01]         /*2250*/                   FMUL R14, R39.reuse, R14 ;
+      [B------:R-:W-:-:S01]         /*2260*/                   FMUL R7, R39.reuse, R7 ;
+      [B------:R-:W-:-:S01]         /*2270*/                   FMUL R6, R39, R6 ;
+      [B------:R-:W-:-:S01]         /*2280*/                   WARPSYNC 0xffffffff ;
+      [B0-----:R-:W-:Y:S02]         /*2290*/                   LOP3.LUT R2, R3, 0x3, RZ, 0xc0, !PT ;
+      [B------:R-:W-:-:S01]         /*22a0*/                   SHF.R.U32.HI R5, RZ, 0x2, R3 ;
+      [B------:R-:W-:Y:S04]         /*22b0*/                   IMAD.MOV.U32 R3, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*22c0*/                   IMAD.WIDE.U32 R4, R5, R17, R2 ;
+      [B------:R-:W-:-:S01]         /*22d0*/                   LEA.HI.X R3, R8, c[0x0][0x174], R11, 0x2, P0 ;
+      [B------:R-:W-:Y:S03]         /*22e0*/                   FMUL R8, R39, R0 ;
+      [B------:R-:W-:-:S01]         /*22f0*/                   LEA R2, P0, R4, R9, 0x3 ;
+      [B------:R-:W-:Y:S03]         /*2300*/                   FMUL R9, R39, R36 ;
+      [B------:R-:W-:Y:S05]         /*2310*/                   LEA.HI.X R3, R4, R3, R5, 0x3, P0 ;
+      [B------:R-:W-:-:S01]         /*2320*/                   IMAD.WIDE.U32 R4, R17, 0x40, R2 ;
+      [B------:R0:W-:-:S04]         /*2330*/                   STG.E.64 desc[UR4][R2.64], R12 ;
+      [B------:R0:W-:-:S04]         /*2340*/                   STG.E.64 desc[UR4][R4.64], R14 ;
+      [B------:R0:W-:-:S04]         /*2350*/                   STG.E.64 desc[UR4][R2.64+0x20], R8 ;
+      [B------:R0:W-:-:S02]         /*2360*/                   STG.E.64 desc[UR4][R4.64+0x20], R6 ;
+  .L_x_28:
+      [B------:R-:W-:-:S05]         /*2370*/               @P1 EXIT ;
+      [B------:R-:W1:-:S01]         /*2380*/                   S2R R0, SR_LANEID ;
+      [B------:R-:W-:-:S01]         /*2390*/                   IADD3 R40, P0, R37, R40, RZ ;
+      [B0-----:R-:W-:-:S01]         /*23a0*/                   IMAD.MOV.U32 R3, RZ, RZ, RZ ;
+      [B------:R-:W-:-:S01]         /*23b0*/                   SHF.R.U32.HI R9, RZ, 0x1, R38 ;
+      [B------:R-:W-:-:S01]         /*23c0*/                   FMUL R28, R39, R28 ;
+      [B------:R-:W-:-:S01]         /*23d0*/                   LEA.HI.X.SX32 R37, R37, R10, 0x1, P0 ;
+      [B------:R-:W-:-:S01]         /*23e0*/                   FMUL R29, R39.reuse, R29 ;
+      [B------:R-:W-:-:S01]         /*23f0*/                   LEA R7, P0, R40, c[0x0][0x170], 0x2 ;
+      [B------:R-:W-:-:S01]         /*2400*/                   FMUL R31, R39.reuse, R31 ;
+      [B------:R-:W-:-:S01]         /*2410*/                   FMUL R30, R39.reuse, R30 ;
+      [B------:R-:W-:-:S01]         /*2420*/                   FMUL R33, R39.reuse, R33 ;
+      [B------:R-:W-:-:S01]         /*2430*/                   FMUL R32, R39.reuse, R32 ;
+      [B------:R-:W-:-:S01]         /*2440*/                   FMUL R35, R39.reuse, R35 ;
+      [B------:R-:W-:-:S01]         /*2450*/                   FMUL R34, R39, R34 ;
+      [B------:R-:W-:-:S01]         /*2460*/                   WARPSYNC 0xffffffff ;
+      [B-1----:R-:W-:Y:S02]         /*2470*/                   LOP3.LUT R2, R0, 0x3, RZ, 0xc0, !PT ;
+      [B------:R-:W-:Y:S05]         /*2480*/                   SHF.R.U32.HI R5, RZ, 0x2, R0 ;
+      [B------:R-:W-:-:S01]         /*2490*/                   IMAD.WIDE.U32 R4, R5, R9, R2 ;
+      [B------:R-:W-:Y:S04]         /*24a0*/                   LEA.HI.X R3, R40, c[0x0][0x174], R37, 0x2, P0 ;
+      [B------:R-:W-:Y:S04]         /*24b0*/                   LEA R2, P0, R4, R7, 0x3 ;
+      [B------:R-:W-:Y:S05]         /*24c0*/                   LEA.HI.X R3, R4, R3, R5, 0x3, P0 ;
+      [B------:R-:W-:-:S01]         /*24d0*/                   IMAD.WIDE.U32 R4, R9, 0x40, R2 ;
+      [B------:R-:W-:-:S04]         /*24e0*/                   STG.E.64 desc[UR4][R2.64], R28 ;
+      [B------:R-:W-:-:S04]         /*24f0*/                   STG.E.64 desc[UR4][R4.64], R30 ;
+      [B------:R-:W-:-:S04]         /*2500*/                   STG.E.64 desc[UR4][R2.64+0x20], R32 ;
+      [B------:R-:W-:-:S01]         /*2510*/                   STG.E.64 desc[UR4][R4.64+0x20], R34 ;
+      [B------:R-:W-:-:S05]         /*2520*/                   EXIT ;
+  .L_x_29:
+      [B------:R-:W-:Y:S00]         /*2530*/                   BRA `(.L_x_29);
+      [B------:R-:W-:Y:S00]         /*2540*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*2550*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*2560*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*2570*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*2580*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*2590*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25a0*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25b0*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25c0*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25d0*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25e0*/                   NOP;
+      [B------:R-:W-:Y:S00]         /*25f0*/                   NOP;
+  .L_x_30:
+  
+  
+
+// --------------------- .nv.shared.igemm_tiled           --------------------------
+	.section	.nv.shared.igemm_tiled,"aw",@nobits
+	.__section_name         0x59 	// offset in .shstrtab
+	.__section_type         SHT_NOBITS
+	.__section_flags        0x43
+	.__section_addr         0x0
+	.__section_offset       0x2c80 	// maybe updated by assembler
+	.__section_size         0x1000 	// maybe updated by assembler
+	.__section_link         0
+	.__section_info         0xb
+	.__section_entsize      0
+	.align                1 	// equivalent to set sh_addralign
+  	.sectionflags	@""
+  .nv.shared.igemm_tiled:
+  	.zero		4096
+  //-------------------------------------------------
+  //---------------- END of sections ----------------
+  //-------------------------------------------------
+
+
+// Program segment PT_PHDR, 5 
+  .__segment  "PT_PHDR", 5 
+  .__segment_offset  0x2fc0   		// maybe updated by assembler 
+  .__segment_vaddr   0x0   		// Seems always 0? 
+  .__segment_paddr   0x0   		// ??? 
+  .__segment_filesz  0xe0   		// file size, maybe updated by assembler 
+  .__segment_memsz   0xe0   		// file size + nobits sections, maybe updated by assembler 
+  .__segment_align     8   		//  
+
+// Program segment PT_LOAD, 5 
+  .__segment  "PT_LOAD", 5 
+  .__segment_offset  0x4b8   		// maybe updated by assembler 
+  .__segment_vaddr   0x0   		// Seems always 0? 
+  .__segment_paddr   0x0   		// ??? 
+  .__segment_filesz  0x27c8   		// file size, maybe updated by assembler 
+  .__segment_memsz   0x27c8   		// file size + nobits sections, maybe updated by assembler 
+  .__segment_align     8   		//  
+  .__segment_startsection    ".nv.constant0.igemm_tiled"  		// first section in this segment 
+  .__segment_endsection      ".text.igemm_tiled"  		// last  section in this segment 
+
+// Program segment PT_LOAD, 6 
+  .__segment  "PT_LOAD", 6 
+  .__segment_offset  0x2c80   		// maybe updated by assembler 
+  .__segment_vaddr   0x0   		// Seems always 0? 
+  .__segment_paddr   0x0   		// ??? 
+  .__segment_filesz  0x0   		// file size, maybe updated by assembler 
+  .__segment_memsz   0x1000   		// file size + nobits sections, maybe updated by assembler 
+  .__segment_align     8   		//  
+  .__segment_startsection    ".nv.shared.igemm_tiled"  		// first section in this segment 
+  .__segment_endsection      ".nv.shared.igemm_tiled"  		// last  section in this segment 
+
+// Program segment PT_LOAD, 5 
+  .__segment  "PT_LOAD", 5 
+  .__segment_offset  0x2fc0   		// maybe updated by assembler 
+  .__segment_vaddr   0x0   		// Seems always 0? 
+  .__segment_paddr   0x0   		// ??? 
+  .__segment_filesz  0xe0   		// file size, maybe updated by assembler 
+  .__segment_memsz   0xe0   		// file size + nobits sections, maybe updated by assembler 
+  .__segment_align     8   		//  
+  .__segment_startsection    "@PROGRAM_HEADER"  		// first section in this segment 
+  .__segment_endsection      "@PROGRAM_HEADER"  		// last  section in this segment 
+
+
+  //-------------------------------------------------
+  //---------------- END of segments ----------------
+  //-------------------------------------------------
+
+

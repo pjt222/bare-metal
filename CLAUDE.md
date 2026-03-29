@@ -116,7 +116,7 @@ Tolerance conventions by precision:
 - **SHFL.BFLY** — Warp butterfly reduction (5 instructions for 32-lane reduce)
 - **MUFU.EX2/RCP/RSQ/SIN/COS** — Special function unit (~16 cycle latency). `exp(x) = 2^(x * log2(e))` requires FMUL + MUFU.EX2.
 - **FFMA** — FP32 fused multiply-add (core of non-tensor GEMM)
-- **IMMA.16816.S8.S8** — INT8 Tensor Core (16x8x16 sub-tile, INT8→INT32). Two per PTX mma.sync, four per WMMA mma_sync call. Dequantized via I2FP.F32.S32 + FMUL.
+- **IMMA.16816.S8.S8** — INT8 Tensor Core (16x8x16 sub-tile, INT8→INT32). Two per PTX mma.sync, four per WMMA mma_sync call. Dequantized via I2FP.F32.S32 + FMUL. Unlike HMMA's S08, IMMA sustains S01 throughput when operands are ready — S04 stalls from compiler are conservative (S02 is optimal).
 - **LDGSTS** (cp.async) — Async global→shared copy, bypasses register file
 
 ## Current State and Next Steps

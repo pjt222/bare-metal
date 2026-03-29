@@ -105,9 +105,25 @@ int main(int argc, char **argv) {
     if (have_regblk) {
         CHECK_CU(cuModuleGetFunction(&regblk_func, regblk_module, "igemm_register_blocked"));
     }
-    printf("IGEMM kernels loaded: naive%s%s.\n\n",
+    // --- Load hand-tuned tiled IGEMM kernel ---
+    CUmodule   handtuned_module = NULL;
+    CUfunction handtuned_func   = NULL;
+    bool have_handtuned = (cuModuleLoad(&handtuned_module, "igemm_tiled_handtuned.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_handtuned) {
+        CHECK_CU(cuModuleGetFunction(&handtuned_func, handtuned_module, "igemm_tiled"));
+    }
+    // --- Load aggressive hand-tuned IGEMM kernel ---
+    CUmodule   aggressive_module = NULL;
+    CUfunction aggressive_func   = NULL;
+    bool have_aggressive = (cuModuleLoad(&aggressive_module, "igemm_tiled_aggressive.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_aggressive) {
+        CHECK_CU(cuModuleGetFunction(&aggressive_func, aggressive_module, "igemm_tiled"));
+    }
+    printf("IGEMM kernels loaded: naive%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
-           have_regblk ? " + register-blocked" : "");
+           have_regblk ? " + register-blocked" : "",
+           have_handtuned ? " + handtuned" : "",
+           have_aggressive ? " + aggressive" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -185,6 +201,30 @@ int main(int argc, char **argv) {
             auto r2 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_tiled (smem)", r2);
         }
+        // Hand-tuned tiled
+        if (have_handtuned) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_h[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(handtuned_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_h, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ht = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_handtuned (S04->S02)", r_ht);
+        }
+        // Aggressive hand-tuned
+        if (have_aggressive) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_ag[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(aggressive_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_ag, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ag = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_aggressive (S04->S01)", r_ag);
+        }
         // Register-blocked
         if (have_regblk) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -244,11 +284,20 @@ int main(int argc, char **argv) {
     if (have_regblk)
         regblk_tops = run_bench(regblk_func, grid_regblk_x, grid_regblk_y, 128, 1,
                                 "igemm_regblk (128x128)");
+    double handtuned_tops = 0.0;
+    if (have_handtuned)
+        handtuned_tops = run_bench(handtuned_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                                   "igemm_handtuned (S04->S02)");
+    double aggressive_tops = 0.0;
+    if (have_aggressive)
+        aggressive_tops = run_bench(aggressive_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                                    "igemm_aggressive (S04->S01)");
 
     printf("  %-35s %7s      %8.0f TOPS  (theoretical)\n", "INT8 Tensor Core peak", "--", int8_peak_tops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
     printf("\n");
-    double best_tops = fmax(naive_tops, fmax(tiled_tops, regblk_tops));
+    double best_tops = fmax(naive_tops, fmax(tiled_tops, fmax(regblk_tops,
+                        fmax(handtuned_tops, aggressive_tops))));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
     if (tiled_tops > 0)
@@ -257,6 +306,14 @@ int main(int argc, char **argv) {
         printf("  RegBlk vs naive: %.2f×   RegBlk vs tiled: %.2f×\n",
                regblk_tops / naive_tops,
                tiled_tops > 0 ? regblk_tops / tiled_tops : 0.0);
+    if (handtuned_tops > 0 && tiled_tops > 0)
+        printf("  Handtuned vs tiled: %.4f×  (%+.2f%%)\n",
+               handtuned_tops / tiled_tops,
+               100.0 * (handtuned_tops - tiled_tops) / tiled_tops);
+    if (aggressive_tops > 0 && tiled_tops > 0)
+        printf("  Aggressive vs tiled: %.4f×  (%+.2f%%)\n",
+               aggressive_tops / tiled_tops,
+               100.0 * (aggressive_tops - tiled_tops) / tiled_tops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -270,6 +327,8 @@ int main(int argc, char **argv) {
     cuModuleUnload(igemm_module);
     if (tiled_module) cuModuleUnload(tiled_module);
     if (regblk_module) cuModuleUnload(regblk_module);
+    if (handtuned_module) cuModuleUnload(handtuned_module);
+    if (aggressive_module) cuModuleUnload(aggressive_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);

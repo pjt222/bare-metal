@@ -1,8 +1,9 @@
 # Compiled CUDA binaries
 *.cubin
 
-# Generated SASS disassembly
+# Generated SASS disassembly (keep hand-tuned variants)
 *.cuasm
+!*_handtuned.cuasm
 
 # Compiled executables (not source files)
 bench

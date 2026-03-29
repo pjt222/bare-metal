@@ -1,272 +1,71 @@
-# CONTINUE_HERE.md — Bare-Metal GPU Project
+# Continue Here
 
-*Created after Phase 5 optimization session. Read this first at the start of the next session.*
+> Last updated: 2026-03-29T22:00:00Z | Branch: main
 
----
+## Objective
 
-## Where We Are
+Build hand-optimized CUDA/SASS kernels for ML inference on RTX 3070 Ti (GA104, sm_86). The project progresses from basic primitives through full pipeline integration. The immediate next task is **CuAssembler hand-tuning of the tiled INT8 IGEMM inner loop** (GitHub issue #2).
 
-**All of Phase 5 is complete.** Five optimization hypotheses from `docs/gpu_reflections.md`
-were implemented and benchmarked. Each one taught something important.
+## Completed
 
-### Quick Status Table
+- [x] **Git repo initialized**, pushed to https://github.com/pjt222/bare-metal
+- [x] **CLAUDE.md** created with build commands, architecture, conventions, Four Laws
+- [x] **running_sum bug fix** — `running_sum[row] *= rescale_factor` was missing in 4 kernels (br16, bc128, pipeline, cross_attn). 1000× correctness improvement (max_abs 1.88e-02 → 2.19e-05). The correct online softmax recurrence is `l = l * exp(m_old - m_new) + sum(exp(s - m_new))`
+- [x] **Split-Q Flash Attention** — `phase3/flash_attention/flash_attn_split_q.cu` + `bench_split_q.cu`. Two-kernel pipeline (main + reduce). Roughly tied with br16 at splits=4 (1.05×). Partial buffer overhead prevents larger gains
+- [x] **INT8 IMMA GEMM** — 3 kernels in `phase2/igemm/`:
+  - `igemm.cu` (naive): 10,897 TOPS at 4096³, IMMA.16816.S8.S8 confirmed
+  - `igemm_tiled.cu` (64×64 smem): **15,145 TOPS** — best, 1.39× over naive
+  - `igemm_register_blocked.cu` (128×128): 12,760 TOPS — 0.84× of tiled (longer inner loop hurts at 8 warps/SM)
+- [x] **End-to-end attention layer pipeline** — `phase5/attention_layer/bench.cu` + `utils.cu`. Chains LayerNorm → 3×HGEMM → transpose → Flash Attention → transpose → HGEMM → residual add. **6.75 ms total at batch=8 seq=1024**. Flash Attention dominates at large batch (42%), format conversions dominate at small batch (46%). Issue #1 closed
+- [x] **.gitignore fix** — `bench_*` was excluding `.cu` source files; added `!bench_*.cu` negation. Removed accidentally tracked `phase1/host` binary
 
-| Phase | Status | Highlight |
-|-------|--------|-----------|
-| 0 | ✅ Done | Environment, CuAssembler, nvcc, WSL |
-| 1 | ✅ Done | Vector add: FADD→FMUL in SASS |
-| 2 | ✅ Done | SGEMM, HGEMM, Softmax, LayerNorm, Activations |
-| 3 | ✅ Done | Flash Attention: scalar → 4-warp → Br=16 HMMA (19× speedup) |
-| 4 | ✅ Done | Diffusion primitives: Conv2d, GroupNorm, ResBlock, Cross-Attn |
-| 5 | ✅ Done | 5 optimization experiments, all documented with postmortems |
-| 6 | ✅ Done | running_sum bug fix (4 kernels) + split-Q implementation |
+## In Progress
 
----
+- [ ] Nothing partially complete — all work committed and pushed
 
-## Phase 5 Findings — What We Learned
+## Next Steps
 
-### ✅ Step 1 — im2col + WMMA Conv2d
-**24× speedup over direct conv2d.** The definitive win of this project.
-- File: `phase4/conv2d/conv2d_im2col.cu`
-- SASS: LDGSTS.E.BYPASS.128 + HMMA.16816.F32 confirmed
-- GFLOPS: 9,355 GEMM alone / 7,379 combined
+1. ~~**CuAssembler hand-tuning of tiled IGEMM** (GitHub issue #2)~~ — **DONE.** IMMA is NOT S08-constrained like HMMA. Compiler S04→S02 gives +1.6%. S01 is correct but too aggressive at scale. See `phase2/igemm/README.md`.
+2. **Persistent kernel grid** (GitHub issue #3) — for small-batch Flash Attention where many SMs are idle
+3. Consider updating `docs/gpu_reflections.md` with the Phase 6 findings (running_sum bug, split-Q postmortem, IGEMM register-blocking lesson, IMMA vs HMMA pipeline finding)
 
-### ✅ Step 2 — cp.async Double-Buffering (cross-attn + self-attn)
-**Mixed/negative results — warp interleaving already hides latency.**
-- Cross-attn pipelined: 1.54× faster at 16×16 (cold L2, 2 KV iters), SLOWER at larger sizes
-- Self-attn pipelined: consistently 4–5% SLOWER at all seq_len
-- Root cause: 2 blocks/SM × 4 warps = 8 warps. When block 0's warps stall on DRAM,
-  block 1's warps execute HMMA. cp.async adds commit/wait overhead with no net gain.
-- Files: `phase3/flash_attention/flash_attn_br16_pipeline.cu`, `phase4/cross_attention/cross_attn_pipelined.cu`
+## Context
 
-### ✅ Step 3 — Bc=128 Flash Attention
-**17–20% SLOWER.** The occupancy cliff killed it.
-- 80 KB smem → 1 block/SM → 4 warps (vs 2 blocks → 8 warps at 48 KB)
-- 128 HMMA/tile confirmed in SASS (2× the 64 of Bc=64) — arithmetic worked, occupancy didn't
-- **The 48 KB / 64 KB boundary is load-bearing on GA104** (128 KB per SM → 2× 64 KB)
-- File: `phase3/flash_attention/flash_attn_br16_bc128.cu`
+### The GA104 Optimization Pattern (confirmed across 4 experiments)
+On GA104 with 8 warps/SM, **shorter inner loops beat higher per-warp compute density**:
+- cp.async: 4-5% slower (warp interleaving already hides latency)
+- Bc=128 Flash Attention: 17-20% slower (occupancy cliff at >64 KB smem)
+- Split-Q: partial buffer I/O overhead wipes out KV DRAM savings
+- WMMA register-blocking 128×128: 16-mma_sync inner loop too long for 8 warps
 
-### ✅ Step 4 — CuAssembler HMMA Stall Analysis
-**S08 between HMMAs is hardware-constrained, not conservative.**
-- Disassembled flash_br16 and conv2d_im2col via CuAssembler
-- S08 reflects the Ampere TC pipeline depth (1 HMMA per 8 cycles per warp)
-- Cannot reduce to S01 between consecutive HMMAs — structural hazard on TC unit
-- The S01 pairs in the WMMA GEMM (LDSM-interleaved) use independent register groups
-  and are already the tightest schedulable arrangement
-- CuAssembler editing not applicable to these kernels; FFMA-heavy kernels are obsolete
-- `.cuasm` files: `phase3/flash_attention/flash_br16.cuasm`, `phase4/conv2d/wmma_gemm.cuasm`
+This is the project's central finding. The 64 KB smem cliff and 8-warp minimum are the load-bearing constraints on GA104.
 
-### ✅ Step 5 — Implicit GEMM (no col buffer)
-**1.07–1.89× speedup over explicit im2col+GEMM. Bit-perfect.**
-- Eliminates 23–47 MB col buffer DRAM traffic by computing indices on-the-fly
-- Key insight: precomputed coordinate tables in shared memory (+960 bytes)
-  reduce per-element arithmetic from 6 integer divisions to 2 adds + 2 compares
-- Speedup scales with col buffer size vs L2 (4 MB):
+### Pipeline Correctness Note
+The end-to-end pipeline has 0.4% element failures at abs=0.5 tolerance. This is FP16 precision loss amplified by softmax — small score differences shift attention weights. It's structural (inherent to mixed FP16/FP32), not a bug.
 
-  | Config | col buf | Speedup |
-  |--------|---------|---------|
-  | 64×64, Cin=Cout=320   | 23.6 MB | 1.07× |
-  | 32×32, Cin=Cout=640   | 11.8 MB | 1.77× |
-  | 128×128, Cin=Cout=160 | 47.2 MB | **1.89×** |
-  | 64×64, Cin=Cout=64    |  4.7 MB | 1.34× |
+### CuAssembler for Issue #2
+- The CuAssembler roundtrip workflow: `build.py compile` → `build.py disasm` → hand-edit `.cuasm` → `build.py assemble`
+- Phase 5 Step 4 found HMMA S08 stalls are hardware-constrained on Ampere TC pipeline
+- IMMA may behave similarly — this is what issue #2 tests
+- Key files: `scripts/build.py`, `tools/CuAssembler/`, `phase2/igemm/igemm_tiled.cu`
+- The `.cuasm` files from Phase 5: `phase3/flash_attention/flash_br16.cuasm`, `phase4/conv2d/wmma_gemm.cuasm`
 
-- Files: `phase4/conv2d/conv2d_implicit_gemm.cu`, `phase4/conv2d/bench_implicit_gemm.cu`
+### Reading Order for Next Session
+1. This file
+2. `CLAUDE.md` — project conventions, build commands, Four Laws
+3. `phase2/igemm/igemm_tiled.cu` — the kernel to hand-tune
+4. `phase2/igemm/README.md` — current results table
+5. GitHub issue #2 — acceptance criteria
+6. `docs/ampere_sass_reference.md` — IMMA.16816.S8.S8 instruction reference
 
----
+### Key Benchmark Results
 
-## The Four Laws of Making GA104 Happy (Updated from Three)
-
-1. **Feed the Tensor Cores continuously.** Overlap data loading (cp.async) with
-   HMMA. But check first — 8+ active warps may already do this for free.
-
-2. **Read each byte of DRAM exactly once.** Every re-read multiplies effective
-   traffic. im2col converts 9× re-reads into 1×; implicit GEMM eliminates the
-   col buffer round-trip entirely.
-
-3. **Fill the warp schedulers.** 32 warps/SM is ideal; 8 is sufficient for latency
-   hiding. When you can't reach 8, you have a structural problem — fix smem or grid.
-
-4. **Never cross the 64 KB smem cliff.** On GA104 (128 KB/SM):
-   - ≤ 64 KB → 2 blocks/SM → 8 warps → warp interleaving works
-   - > 64 KB → 1 block/SM → 4 warps → DRAM stalls exposed, performance regresses
-
----
-
-## Key Pitfalls Discovered
-
-```
-Bc=128 flash attn: 80 KB smem → 1 block/SM → 4 warps → 17-20% SLOWER than Bc=64
-HMMA S08 stall: hardware TC pipeline constraint, cannot reduce to S01 (structural hazard)
-Implicit GEMM naive: 6 divs/element × 1024 elements = 6144 divs/K-tile → 94× overhead vs precomputed
-Implicit GEMM with tables: 64 K-dim divs + 256 M-dim divs (amortized) → fast enough to beat explicit
-cp.async self-attn: always slower than baseline when 2 blocks/SM are present (warp interleaving wins)
-running_sum rescale bug: online softmax requires l *= exp(m_old - m_new) BEFORE l += new_sum
-Split-Q partial buffers: 69-277 MB I/O overhead wipes out KV DRAM savings on GA104 (4 MB L2)
-WMMA register blocking 128×128: 16 mma_sync inner loop too long for 8 warps/SM → 0.84× vs 64×64 tiled
-```
-
----
-
-## Phase 6 Findings
-
-### ✅ Step 1 — running_sum Rescale Bug Fix
-**1000× correctness improvement across 4 kernels.**
-- Bug: `running_sum[row] += partial_sum` was missing `running_sum[row] *= rescale_factor` before accumulation.
-  The correct online softmax recurrence is: `l_new = l_old * exp(m_old - m_new) + sum(exp(s_k - m_new))`.
-- Affected: `flash_attn_br16.cu`, `flash_attn_br16_bc128.cu`, `flash_attn_br16_pipeline.cu`, `cross_attn.cu`
-- Not affected: `flash_attn.cu` (1-warp scalar), `flash_attn_wmma.cu` (4-warp), `cross_attn_pipelined.cu` — these already had the rescale.
-- br16 max_abs improved from 1.88e-02 to 2.19e-05 (matching FP16 precision floor).
-- Bug was masked in testing because random data rarely shifts the running max significantly between tiles.
-
-### ✅ Step 2 — Split-Q Flash Attention
-**Implemented and benchmarked. Roughly tied with br16 (0.71–1.05× depending on config).**
-- Files: `flash_attn_split_q.cu` (both kernels), `bench_split_q.cu`
-- Grid: `(num_splits, heads, batch)` — each block handles a KV chunk, iterates over ALL Q tiles.
-- Two-kernel pipeline: main kernel outputs partial `{m, l, O_unnorm}`, reduce kernel merges.
-- Correctness: max_abs ~2e-5 at all split counts (matches br16 post-fix).
-
-**Benchmark results (seq=1024, batch=8, heads=8, D=64):**
-
-| Kernel | Time | GFLOPS | vs br16 |
-|--------|------|--------|---------|
-| br16 (post-fix) | 3.59 ms | 4,876 | 1.00× |
-| split-Q splits=2 | 4.36 ms | 4,022 | 0.77× |
-| split-Q splits=4 | 3.42 ms | 5,129 | **1.05×** |
-| split-Q splits=8 | 3.51 ms | 4,988 | 0.96× |
-| split-Q splits=16 | 3.82 ms | 4,589 | 0.88× |
-
-**Why split-Q doesn't win big on GA104:**
-1. **Partial buffer overhead dominates.** At splits=16, the partial_O buffer alone is 277 MB — writing
-   and reading it costs ~0.9 ms at 608 GB/s, wiping out all KV DRAM savings.
-2. **br16 already has decent L2 reuse.** With batch×heads=64, many blocks from the same head/batch
-   are co-resident. L2 (4 MB) holds KV tiles (512 KB per head/batch) well enough to amortize
-   some of the 16× redundant loads.
-3. **Sweet spot is splits=4**, where partial buffer (69 MB) is small and KV reuse is meaningful.
-   Larger split counts pay too much in buffer I/O; smaller counts don't reduce KV traffic enough.
-
-**Potential further optimizations (not implemented):**
-- FP16 partial_O to halve buffer traffic
-- Fused reduction via atomics (eliminates second kernel launch)
-- Persistent-grid split-Q to avoid partial buffer entirely
-
----
-
-## Next Steps (Prioritized)
-
-### ✅ INT8 IMMA Path — Done (3 kernels)
-Implemented INT8 Tensor Core GEMM using WMMA API with symmetric per-tensor quantization.
-- SASS: `IMMA.16816.S8.S8` confirmed, zero HMMA, zero register spills
-- Correctness: all 3 kernels PASS at 512³ (max_abs=0.19)
-- Files: `phase2/igemm/{igemm.cu, igemm_tiled.cu, igemm_register_blocked.cu, bench.cu}`
-
-**Performance at 4096³:**
-
-| Kernel | TOPS | vs Naive | SASS IMMA count |
-|--------|------|----------|-----------------|
-| Naive (global loads) | 10,897 | 1.00× | 10 |
-| **Tiled 64×64 (smem)** | **15,145** | **1.39×** | 16 |
-| Register-blocked 128×128 | 12,760 | 1.17× | 64 |
-
-**Key finding:** Register-blocking (128×128, 4×4 WMMA tiles/warp) is SLOWER than tiled 64×64.
-The 16-mma_sync inner loop is too long for 8 warps/SM to hide IMMA pipeline latency.
-Same root cause as cp.async and Bc=128: on GA104, shorter inner loops + more warp switching wins.
-
----
-
-### 🧪 Exploratory — Persistent Kernel Grid
-For flash attention at small batch sizes (batch=1, heads=8):
-- Many SMs are underutilized (only 8 blocks = 8/48 SM utilization at seq=256)
-- Persistent kernel: fewer blocks, each block processes multiple KV tiles in sequence
-- Reduces kernel launch overhead and improves SM utilization
-- Pairs well with split-Q (reduces number of reduction passes needed)
-
----
-
-## File Structure — New Files
-
-```
-phase3/flash_attention/
-  flash_attn_br16_pipeline.cu   ← cp.async self-attn (4-5% SLOWER — documented)
-  bench_pipeline.cu              ← baseline vs pipeline comparison
-  flash_attn_br16_bc128.cu      ← Bc=128 kernel (17-20% SLOWER — documents occupancy cliff)
-  bench_bc128.cu                 ← Bc=64 vs Bc=128 comparison
-  flash_br16.cuasm               ← CuAssembler disassembly (S08 analysis done)
-  flash_attn_split_q.cu         ← Split-Q: 2 kernels (main + reduce), ~tied with br16
-  bench_split_q.cu               ← br16 vs split-Q comparison across split counts
-
-phase4/conv2d/
-  conv2d_implicit_gemm.cu       ← implicit GEMM (no col buffer, 1.07-1.89× faster)
-  bench_implicit_gemm.cu         ← explicit vs implicit comparison across 4 configs
-  wmma_gemm.cuasm                ← CuAssembler disassembly (inner loop already tight)
-  conv2d_direct.cuasm            ← CuAssembler disassembly (FFMA loop — obsolete kernel)
-
-docs/
-  gpu_reflections.md             ← Updated with Steps 2-5 postmortems + 4th Law
-```
-
----
-
-## Build Commands Cheat Sheet
-
-```bash
-# WSL prefix for all CUDA commands:
-wsl -e bash -c 'export PATH=/usr/local/cuda/bin:$PATH && cd /mnt/d/dev/p/bare-metal/... && ...'
-
-# Compile kernel to cubin:
-nvcc --cubin -arch=sm_86 -O2 -o kernel.sm_86.cubin kernel.cu
-
-# Compile benchmark executable:
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
-
-# Count HMMA instructions:
-cuobjdump -sass kernel.sm_86.cubin | grep HMMA | wc -l
-
-# Disassemble to cuasm (for CuAssembler analysis):
-cd /mnt/d/dev/p/bare-metal
-PATH=/usr/local/cuda/bin:$PATH python3 -c "
-import sys
-sys.path.insert(0, 'tools/CuAssembler')
-from CuAsm.CubinFile import CubinFile
-CubinFile('path/to/kernel.cubin').saveAsCuAsm('kernel.cuasm')
-"
-```
-
----
-
-## Benchmark Results Summary (All Kernels)
-
-### Flash Attention (seq=1024, batch=8, heads=8, D=64)
-| Kernel | Time | GFLOPS | Notes |
-|--------|------|--------|-------|
-| flash_attn scalar (1-warp) | 53 ms | ~330 | Baseline |
-| flash_attn_4warp | 19 ms | ~920 | 2.8× |
-| flash_attn_br16 (Bc=64) | 2.81 ms | 6,112 | **19× — current best** |
-| flash_attn_br16_pipeline | 2.96 ms | 5,795 | 4-5% slower (cp.async overhead) |
-| flash_attn_bc128 (Bc=128) | 3.37 ms | 5,098 | 17-20% slower (occupancy cliff) |
-
-### Conv2d (N=1, H=W=64, Cin=Cout=320, 3×3 same pad)
-| Kernel | Time | GFLOPS | Notes |
-|--------|------|--------|-------|
-| conv2d_nhwc (direct) | ~25 ms | ~300 | Baseline |
-| conv2d_im2col (explicit) | 1.21 ms | 6,262 | 24× over direct |
-| conv2d_implicit_gemm | 1.13 ms | 6,687 | **1.07× over explicit = 25× over direct** |
-
-### Cross-Attention (SD 64×64 spatial, seq_q=4096, seq_kv=77, heads=8)
-| Kernel | Time | GFLOPS | Notes |
-|--------|------|--------|-------|
-| cross_attn_br16 (baseline) | 0.246 ms | 2,624 | Current best for large spatial |
-| cross_attn_pipelined | 0.293 ms | 2,202 | 19% slower at this config |
-
----
-
-## Reading Order for Next Session
-
-1. **This file** (you're reading it)
-2. `docs/gpu_reflections.md` — full story, all postmortems, 4 laws
-3. `phase3/flash_attention/flash_attn_br16.cu` — the best attention kernel (now with correct online softmax)
-4. `phase3/flash_attention/flash_attn_split_q.cu` — split-Q experiment (2 kernels, ~tied with br16)
-
----
-
-*Last updated: end of Phase 6 session, 2026-03-29.*
-*All experiments ran on RTX 3070 Ti Laptop (GA104, sm_86, CUDA 12.8, WSL Ubuntu).*
+| Kernel | Config | Result |
+|--------|--------|--------|
+| Flash Attention br16 | seq=1024 batch=8 heads=8 | 2.81 ms, 6,112 GFLOPS |
+| IGEMM tiled (compiler) | 4096³ | 15,078 TOPS (2.2% of 696 TOPS peak) |
+| IGEMM tiled (hand-tuned S02) | 4096³ | 15,320 TOPS (+1.6% vs compiler) |
+| IGEMM register-blocked | 4096³ | 12,760 TOPS (0.84× tiled — lesson learned) |
+| Attention pipeline | batch=8 seq=1024 | 6.75 ms total, Flash Attn 42% |
+| Conv2d implicit GEMM | 64×64 Cin=Cout=320 | 25× over direct conv |
+| HGEMM | 4096³ | 7,853 GFLOPS (4.5% of FP16 peak) |
