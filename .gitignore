@@ -1,0 +1,16 @@
+# Compiled CUDA binaries
+*.cubin
+
+# Generated SASS disassembly
+*.cuasm
+
+# Benchmark executables
+bench
+bench_*
+
+# Python
+__pycache__/
+*.pyc
+
+# Third-party tools (clone separately)
+tools/CuAssembler/
