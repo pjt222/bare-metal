@@ -168,6 +168,20 @@ int main(int argc, char **argv) {
     if (have_tribuf) {
         CHECK_CU(cuModuleGetFunction(&tribuf_func, tribuf_module, "igemm_8warp_tribuf"));
     }
+    // --- Load online-quant FP16→INT8 IGEMM kernel ---
+    CUmodule   onlinequant_module = NULL;
+    CUfunction onlinequant_func   = NULL;
+    bool have_onlinequant = (cuModuleLoad(&onlinequant_module, "igemm_online_quant.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_onlinequant) {
+        CHECK_CU(cuModuleGetFunction(&onlinequant_func, onlinequant_module, "igemm_online_quant"));
+    }
+    // --- Load HGEMM baseline for FP16 comparison ---
+    CUmodule   hgemm_module = NULL;
+    CUfunction hgemm_func   = NULL;
+    bool have_hgemm = (cuModuleLoad(&hgemm_module, "../hgemm/hgemm.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_hgemm) {
+        CHECK_CU(cuModuleGetFunction(&hgemm_func, hgemm_module, "hgemm_wmma"));
+    }
     // --- Load persistent IGEMM kernel ---
     CUmodule   persistent_module = NULL;
     CUfunction persistent_func   = NULL;
@@ -182,7 +196,7 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -194,7 +208,9 @@ int main(int argc, char **argv) {
            have_warp8 ? " + 8warp" : "",
            have_warp8_256 ? " + 8warp256" : "",
            have_tribuf ? " + tribuf" : "",
-           have_persistent ? " + persistent" : "");
+           have_persistent ? " + persistent" : "",
+           have_onlinequant ? " + online-quant" : "",
+           have_hgemm ? " + hgemm" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -254,6 +270,41 @@ int main(int argc, char **argv) {
     CHECK_CU(cuMemAlloc(&dev_pc_zp_bench,    N * sizeof(int)));
     CHECK_CU(cuMemcpyHtoD(dev_pc_scale_bench, host_pc_scale, N * sizeof(float)));
     CHECK_CU(cuMemcpyHtoD(dev_pc_zp_bench,    host_pc_zp,    N * sizeof(int)));
+
+    // --- FP16 device memory for online-quant and HGEMM ---
+    CUdeviceptr dev_a_fp16 = 0, dev_b_fp16 = 0;
+    if (have_onlinequant || have_hgemm) {
+        // Convert FP32 host data to FP16 and upload
+        unsigned short *host_a_fp16 = (unsigned short *)malloc(a_elems * sizeof(unsigned short));
+        unsigned short *host_b_fp16 = (unsigned short *)malloc(b_elems * sizeof(unsigned short));
+        for (size_t i = 0; i < a_elems; i++) {
+            // Simple FP32→FP16 via half intrinsics at runtime
+            float v = host_a_fp32[i];
+            unsigned int f = *(unsigned int*)&v;
+            unsigned int sign = (f >> 16) & 0x8000;
+            int exp = ((f >> 23) & 0xFF) - 127 + 15;
+            unsigned int mant = (f >> 13) & 0x03FF;
+            if (exp <= 0) host_a_fp16[i] = sign;
+            else if (exp >= 31) host_a_fp16[i] = sign | 0x7C00;
+            else host_a_fp16[i] = sign | (exp << 10) | mant;
+        }
+        for (size_t i = 0; i < b_elems; i++) {
+            float v = host_b_fp32[i];
+            unsigned int f = *(unsigned int*)&v;
+            unsigned int sign = (f >> 16) & 0x8000;
+            int exp = ((f >> 23) & 0xFF) - 127 + 15;
+            unsigned int mant = (f >> 13) & 0x03FF;
+            if (exp <= 0) host_b_fp16[i] = sign;
+            else if (exp >= 31) host_b_fp16[i] = sign | 0x7C00;
+            else host_b_fp16[i] = sign | (exp << 10) | mant;
+        }
+        CHECK_CU(cuMemAlloc(&dev_a_fp16, a_elems * sizeof(unsigned short)));
+        CHECK_CU(cuMemAlloc(&dev_b_fp16, b_elems * sizeof(unsigned short)));
+        CHECK_CU(cuMemcpyHtoD(dev_a_fp16, host_a_fp16, a_elems * sizeof(unsigned short)));
+        CHECK_CU(cuMemcpyHtoD(dev_b_fp16, host_b_fp16, b_elems * sizeof(unsigned short)));
+        free(host_a_fp16);
+        free(host_b_fp16);
+    }
 
     // --- Persistent kernel: tile counter + config ---
     CUdeviceptr dev_tile_counter = 0;
@@ -433,6 +484,35 @@ int main(int argc, char **argv) {
             auto r_ps = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_persistent (128x256)", r_ps);
         }
+        // Online-quant FP16→INT8 128×128
+        if (have_onlinequant) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_oq[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_oq_x = (N + 127) / 128;
+            int grid_oq_y = (M + 127) / 128;
+            CHECK_CU(cuLaunchKernel(onlinequant_func,
+                grid_oq_x, grid_oq_y, 1,   256, 1, 1,
+                0, NULL, args_oq, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            // Wider tolerance: FP16 input + per-tile INT8 quantization
+            auto r_oq = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_online_quant (FP16→INT8)", r_oq);
+        }
+        // HGEMM baseline (FP16)
+        if (have_hgemm) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_hg[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_hg_x = (N + 31) / 32;
+            int grid_hg_y = (M + 31) / 32;
+            CHECK_CU(cuLaunchKernel(hgemm_func,
+                grid_hg_x, grid_hg_y, 1,   64, 2, 1,
+                0, NULL, args_hg, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_hg = check_fp32(host_c_fp32, host_ref, c_elems, 1e-2f, 1e-2f);
+            print_check_result("hgemm_wmma (FP16 baseline)", r_hg);
+        }
         // 8-warp triple-buffer 128×128
         if (have_tribuf) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -565,6 +645,58 @@ int main(int argc, char **argv) {
         persistent_tops = compute_gflops_gemm(M, N, K, ms);
         printf("  %-35s %7.3f ms   %8.2f TOPS\n", "igemm_persistent (128x256 L2)", ms, persistent_tops);
     }
+    double onlinequant_gflops = 0.0;
+    if (have_onlinequant) {
+        int grid_oq_x = (N + 127) / 128;
+        int grid_oq_y = (M + 127) / 128;
+        void *oq_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(onlinequant_func,
+                grid_oq_x, grid_oq_y, 1, 256, 1, 1, 0, NULL, oq_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(onlinequant_func,
+                    grid_oq_x, grid_oq_y, 1, 256, 1, 1, 0, NULL, oq_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        onlinequant_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in)\n",
+               "igemm_online_quant (FP16→INT8)", ms, onlinequant_gflops);
+    }
+    double hgemm_gflops = 0.0;
+    if (have_hgemm) {
+        int grid_hg_x = (N + 31) / 32;
+        int grid_hg_y = (M + 31) / 32;
+        void *hg_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(hgemm_func,
+                grid_hg_x, grid_hg_y, 1, 64, 2, 1, 0, NULL, hg_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(hgemm_func,
+                    grid_hg_x, grid_hg_y, 1, 64, 2, 1, 0, NULL, hg_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        hgemm_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 baseline)\n",
+               "hgemm_wmma (FP16)", ms, hgemm_gflops);
+    }
     double cpasync_bk64_tops = 0.0;
     if (have_cpasync_bk64)
         cpasync_bk64_tops = run_bench(cpasync_bk64_func, grid_tiled_x, grid_tiled_y, 64, 2,
@@ -660,6 +792,10 @@ int main(int argc, char **argv) {
         printf("  Persistent vs grid-launch (128x256): %.4f×  (%+.2f%%)\n",
                persistent_tops / warp8_256_tops,
                100.0 * (persistent_tops - warp8_256_tops) / warp8_256_tops);
+    if (onlinequant_gflops > 0 && hgemm_gflops > 0)
+        printf("  Online-quant IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
+               onlinequant_gflops / hgemm_gflops,
+               100.0 * (onlinequant_gflops - hgemm_gflops) / hgemm_gflops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -673,6 +809,8 @@ int main(int argc, char **argv) {
     cuMemFree(dev_pc_scale_bench);
     cuMemFree(dev_pc_zp_bench);
     if (dev_tile_counter) cuMemFree(dev_tile_counter);
+    if (dev_a_fp16) cuMemFree(dev_a_fp16);
+    if (dev_b_fp16) cuMemFree(dev_b_fp16);
     free(host_pc_scale);
     free(host_pc_zp);
     cuModuleUnload(igemm_module);
@@ -683,6 +821,8 @@ int main(int argc, char **argv) {
     if (pipelined_module) cuModuleUnload(pipelined_module);
     if (cpasync_module) cuModuleUnload(cpasync_module);
     if (persistent_module) cuModuleUnload(persistent_module);
+    if (onlinequant_module) cuModuleUnload(onlinequant_module);
+    if (hgemm_module) cuModuleUnload(hgemm_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);

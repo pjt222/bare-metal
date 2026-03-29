@@ -778,6 +778,25 @@ standard grid launch at 4096³ (27,383 vs 27,588 TOPS). Three reasons:
 **Where persistent GEMM WOULD help**: Stream-K (splitting K across CTAs with inter-CTA
 reduction), or GPUs with L2 << K-tile working set. Column-first ordering is not enough.
 
+**Insight 21: Online FP16→INT8 quantization makes IMMA a transparent FP16 accelerator.**
+Read FP16 from DRAM → per-tile INT8 quantization in smem → IMMA → FP32 running
+accumulator (separate per-tile scales). Result: 11,104 effective GFLOPS vs HGEMM baseline
+7,831 GFLOPS = **+42% (1.42×)**. INT8 Tensor Cores beat FP16 Tensor Cores for FP16
+matrix multiply despite the quantization overhead.
+Key design decisions:
+1. **Per-tile scales with FP32 running accumulator**: Since scales differ per K-tile,
+   INT32 IMMA accumulators are dequantized to FP32 after each tile. This requires
+   both INT32 WMMA fragments (64 regs) and FP32 running arrays (64 regs) = 128 regs
+   for accumulators alone. Forces 128×128 tiles (not 128×256) to stay under 255 regs.
+2. **Block-wide max_abs reduction**: 3 extra __syncthreads per K-tile (2 for separate
+   A/B reductions, 1 after quantization). ~200 cycles overhead per tile vs ~500 cycles
+   IMMA = ~40% overhead. The 4× theoretical INT8/FP16 ratio absorbs this easily.
+3. **Smem layout**: FP16 double-buffer (32 KB) + INT8 working (8 KB) + epilogue (8 KB)
+   = 48 KB exactly (aliased reduction scratch into epilogue to fit under static limit).
+**The HGEMM baseline is naive (no tiling, no pipelining). A tiled HGEMM would narrow
+the gap, but the online-quant kernel is also using only 128×128 tiles — both have room
+to grow. The architectural advantage (4× INT8 throughput) is fundamental.**
+
 ---
 
 ### The Complete Performance Hierarchy (RTX 3070 Ti, SD UNet params)
@@ -813,4 +832,8 @@ INT8 IGEMM (M=N=K=4096, symmetric quantization):
   8-warp 128×256 (1 blk/SM): 5.0 ms  27,591 TOPS   2.49×  ← best (4.0% of peak)
   8-warp 256×256:           11.3 ms  12,114 TOPS   1.09×  (reg spill, -56%)
   Persistent 128×256 (L2):   5.0 ms  27,383 TOPS   2.47×  (L2 reuse: -0.7%, +22 regs)
+
+FP16 GEMM via online INT8 quantization (M=N=K=4096):
+  HGEMM (naive, FP16→FP32):  17.5 ms  7,831 GFLOPS  1×
+  Online-quant IMMA (128×128):12.4 ms  11,104 GFLOPS 1.42×  ← IMMA beats HMMA for FP16!
 ```
