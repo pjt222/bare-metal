@@ -797,6 +797,27 @@ Key design decisions:
 the gap, but the online-quant kernel is also using only 128×128 tiles — both have room
 to grow. The architectural advantage (4× INT8 throughput) is fundamental.**
 
+**Insight 22: In-place FP16→INT8 quantization saves registers, not just smem.**
+The original online-quant kernel used separate INT8 buffers (8 KB smem, 239 regs).
+Eliminating them and writing INT8 in-place to the FP16 double-buffer saves 8 KB smem
+(48→40 KB) but more importantly drops registers from 239 to 213 — the compiler found
+a tighter allocation without the separate buffer pointers and addressing.
+Result: 16,646 GFLOPS = **+31% over separate-buffer (12,707)**, **+112% over HGEMM (7,849)**.
+
+Root cause of the original in-place failure (Issue #15): **cross-warp WAR hazard**.
+Thread T writes INT8 at byte `idx`, corrupting FP16 element `idx/2`. Within a warp,
+SIMT lockstep ensures read-before-write. Across warps, warp scheduling is nondeterministic
+— warp 1 can write byte 32 (corrupting FP16[16]) before warp 0 reads FP16[16].
+Fix: two-phase quantize (read ALL FP16 to registers, `__syncthreads()`, write ALL INT8).
+Cost: 1 extra sync per K-tile × 127 tiles = ~3 μs on 8.3 ms kernel = 0.04%. 8 extra
+registers for the INT8 temp buffer, absorbed by the 26-register savings elsewhere.
+
+Key takeaway: **smem layout changes affect register pressure indirectly.** The compiler
+allocates registers based on the full program graph. Removing smem buffers can eliminate
+addressing computations, pointer arithmetic, and liveness ranges that consume registers —
+even when the smem savings themselves don't change occupancy. Always check `cuobjdump
+-res-usage` after smem layout changes; the register delta matters more than the smem delta.
+
 ---
 
 ### The Complete Performance Hierarchy (RTX 3070 Ti, SD UNet params)
@@ -834,6 +855,7 @@ INT8 IGEMM (M=N=K=4096, symmetric quantization):
   Persistent 128×256 (L2):   5.0 ms  27,383 TOPS   2.47×  (L2 reuse: -0.7%, +22 regs)
 
 FP16 GEMM via online INT8 quantization (M=N=K=4096):
-  HGEMM (naive, FP16→FP32):  17.5 ms  7,831 GFLOPS  1×
-  Online-quant IMMA (128×128):12.4 ms  11,104 GFLOPS 1.42×  ← IMMA beats HMMA for FP16!
+  HGEMM (naive, FP16→FP32):     17.5 ms  7,849 GFLOPS  1×
+  Online-quant v2 (sep bufs):   10.8 ms 12,707 GFLOPS  1.62×  (239 regs, 48 KB smem)
+  Online-quant in-place:         8.3 ms 16,646 GFLOPS  2.12×  ← (213 regs, 40 KB smem)
 ```

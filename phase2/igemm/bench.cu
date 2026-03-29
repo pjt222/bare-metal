@@ -175,6 +175,13 @@ int main(int argc, char **argv) {
     if (have_onlinequant) {
         CHECK_CU(cuModuleGetFunction(&onlinequant_func, onlinequant_module, "igemm_online_quant"));
     }
+    // --- Load in-place online-quant FP16→INT8 IGEMM kernel ---
+    CUmodule   inplace_module = NULL;
+    CUfunction inplace_func   = NULL;
+    bool have_inplace = (cuModuleLoad(&inplace_module, "igemm_online_quant_inplace.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_inplace) {
+        CHECK_CU(cuModuleGetFunction(&inplace_func, inplace_module, "igemm_online_quant_inplace"));
+    }
     // --- Load HGEMM baseline for FP16 comparison ---
     CUmodule   hgemm_module = NULL;
     CUfunction hgemm_func   = NULL;
@@ -196,7 +203,7 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -210,6 +217,7 @@ int main(int argc, char **argv) {
            have_tribuf ? " + tribuf" : "",
            have_persistent ? " + persistent" : "",
            have_onlinequant ? " + online-quant" : "",
+           have_inplace ? " + inplace" : "",
            have_hgemm ? " + hgemm" : "");
 
     // --- Allocate host memory ---
@@ -499,6 +507,20 @@ int main(int argc, char **argv) {
             auto r_oq = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_online_quant (FP16→INT8)", r_oq);
         }
+        // In-place online-quant FP16→INT8 128×128
+        if (have_inplace) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_ip[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_ip_x = (N + 127) / 128;
+            int grid_ip_y = (M + 127) / 128;
+            CHECK_CU(cuLaunchKernel(inplace_func,
+                grid_ip_x, grid_ip_y, 1,   256, 1, 1,
+                0, NULL, args_ip, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ip = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_inplace (FP16→INT8 in-place)", r_ip);
+        }
         // HGEMM baseline (FP16)
         if (have_hgemm) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -670,6 +692,32 @@ int main(int argc, char **argv) {
         onlinequant_gflops = compute_gflops_gemm(M, N, K, ms);
         printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in)\n",
                "igemm_online_quant (FP16→INT8)", ms, onlinequant_gflops);
+    }
+    double inplace_gflops = 0.0;
+    if (have_inplace) {
+        int grid_ip_x = (N + 127) / 128;
+        int grid_ip_y = (M + 127) / 128;
+        void *ip_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(inplace_func,
+                grid_ip_x, grid_ip_y, 1, 256, 1, 1, 0, NULL, ip_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(inplace_func,
+                    grid_ip_x, grid_ip_y, 1, 256, 1, 1, 0, NULL, ip_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        inplace_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in, in-place)\n",
+               "igemm_inplace (FP16→INT8)", ms, inplace_gflops);
     }
     double hgemm_gflops = 0.0;
     if (have_hgemm) {
