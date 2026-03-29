@@ -140,6 +140,13 @@ int main(int argc, char **argv) {
     if (have_cpasync_bk64) {
         CHECK_CU(cuModuleGetFunction(&cpasync_bk64_func, cpasync_bk64_module, "igemm_pipelined_cpasync_bk64"));
     }
+    // --- Load 8-warp 128×128 IGEMM kernel ---
+    CUmodule   warp8_module = NULL;
+    CUfunction warp8_func   = NULL;
+    bool have_warp8 = (cuModuleLoad(&warp8_module, "igemm_8warp.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_warp8) {
+        CHECK_CU(cuModuleGetFunction(&warp8_func, warp8_module, "igemm_8warp"));
+    }
     // --- Load per-channel asymmetric IGEMM kernel ---
     CUmodule   perchannel_module = NULL;
     CUfunction perchannel_func   = NULL;
@@ -147,7 +154,7 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -155,7 +162,8 @@ int main(int argc, char **argv) {
            have_pipelined ? " + pipelined" : "",
            have_cpasync ? " + cpasync" : "",
            have_cpasync_bk64 ? " + cpasync_bk64" : "",
-           have_perchannel ? " + perchannel" : "");
+           have_perchannel ? " + perchannel" : "",
+           have_warp8 ? " + 8warp" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -223,6 +231,8 @@ int main(int argc, char **argv) {
     int grid_tiled_y = (M + 63) / 64;
     int grid_regblk_x = (N + 127) / 128; // register-blocked: 128×128 per block
     int grid_regblk_y = (M + 127) / 128;
+    int grid_8warp_x  = (N + 127) / 128; // 8-warp: 128×128 per block
+    int grid_8warp_y  = (M + 127) / 128;
 
     // --- Correctness check ---
     if (run_cpu_ref) {
@@ -345,6 +355,18 @@ int main(int argc, char **argv) {
             cuMemFree(dev_pc_zp);
             free(host_ref_pc);
         }
+        // 8-warp 128×128
+        if (have_warp8) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_w8[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(warp8_func,
+                grid_8warp_x, grid_8warp_y, 1,   256, 1, 1,
+                0, NULL, args_w8, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_w8 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_8warp (128x128)", r_w8);
+        }
         // Pipelined cp.async BK=64
         if (have_cpasync_bk64) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -420,6 +442,10 @@ int main(int argc, char **argv) {
     if (have_cpasync)
         cpasync_tops = run_bench(cpasync_func, grid_tiled_x, grid_tiled_y, 64, 2,
                                  "igemm_cpasync (LDGSTS dbuf)");
+    double warp8_tops = 0.0;
+    if (have_warp8)
+        warp8_tops = run_bench(warp8_func, grid_8warp_x, grid_8warp_y, 256, 1,
+                               "igemm_8warp (128x128 cp.async)");
     double cpasync_bk64_tops = 0.0;
     if (have_cpasync_bk64)
         cpasync_bk64_tops = run_bench(cpasync_bk64_func, grid_tiled_x, grid_tiled_y, 64, 2,
@@ -456,7 +482,8 @@ int main(int argc, char **argv) {
     double best_tops = fmax(naive_tops, fmax(tiled_tops, fmax(regblk_tops,
                         fmax(handtuned_tops, fmax(aggressive_tops,
                         fmax(pipelined_tops, fmax(cpasync_tops,
-                        fmax(cpasync_bk64_tops, perchannel_tops))))))));
+                        fmax(cpasync_bk64_tops, fmax(perchannel_tops,
+                        warp8_tops)))))))));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
     if (tiled_tops > 0)
@@ -493,6 +520,10 @@ int main(int argc, char **argv) {
         printf("  Per-channel vs symmetric: %.4f×  (%+.2f%%)\n",
                perchannel_tops / cpasync_tops,
                100.0 * (perchannel_tops - cpasync_tops) / cpasync_tops);
+    if (warp8_tops > 0 && cpasync_tops > 0)
+        printf("  8-warp 128x128 vs 4-warp 64x64: %.4f×  (%+.2f%%)\n",
+               warp8_tops / cpasync_tops,
+               100.0 * (warp8_tops - cpasync_tops) / cpasync_tops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
