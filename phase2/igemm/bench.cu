@@ -133,13 +133,29 @@ int main(int argc, char **argv) {
     if (have_cpasync) {
         CHECK_CU(cuModuleGetFunction(&cpasync_func, cpasync_module, "igemm_pipelined_cpasync"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s.\n\n",
+    // --- Load cp.async BK=64 IGEMM kernel ---
+    CUmodule   cpasync_bk64_module = NULL;
+    CUfunction cpasync_bk64_func   = NULL;
+    bool have_cpasync_bk64 = (cuModuleLoad(&cpasync_bk64_module, "igemm_pipelined_cpasync_bk64.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_cpasync_bk64) {
+        CHECK_CU(cuModuleGetFunction(&cpasync_bk64_func, cpasync_bk64_module, "igemm_pipelined_cpasync_bk64"));
+    }
+    // --- Load per-channel asymmetric IGEMM kernel ---
+    CUmodule   perchannel_module = NULL;
+    CUfunction perchannel_func   = NULL;
+    bool have_perchannel = (cuModuleLoad(&perchannel_module, "igemm_pipelined_cpasync_perchannel.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_perchannel) {
+        CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
+    }
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
            have_aggressive ? " + aggressive" : "",
            have_pipelined ? " + pipelined" : "",
-           have_cpasync ? " + cpasync" : "");
+           have_cpasync ? " + cpasync" : "",
+           have_cpasync_bk64 ? " + cpasync_bk64" : "",
+           have_perchannel ? " + perchannel" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -164,6 +180,18 @@ int main(int argc, char **argv) {
     quantize_symmetric(host_b_fp32, host_b_int8, b_elems, scale_b);
     printf("Quantization: scale_a=%.6f  scale_b=%.6f\n", scale_a, scale_b);
 
+    // --- Per-channel quantization parameters ---
+    float *host_pc_scale = (float *)malloc(N * sizeof(float));
+    int   *host_pc_zp    = (int *)  malloc(N * sizeof(int));
+    float dequant_scale_sym = scale_a * scale_b;
+    srand(123);
+    for (int n = 0; n < N; n++) {
+        // Vary per-channel scale around the symmetric value (±20%)
+        host_pc_scale[n] = dequant_scale_sym * (0.8f + 0.4f * ((float)rand() / RAND_MAX));
+        // Small random zero-points
+        host_pc_zp[n] = (rand() % 5) - 2;  // range [-2, 2]
+    }
+
     // CPU FP32 reference (only for small matrices)
     bool run_cpu_ref = (M <= 512);
     if (run_cpu_ref) {
@@ -181,6 +209,12 @@ int main(int argc, char **argv) {
 
     CHECK_CU(cuMemcpyHtoD(dev_a_int8, host_a_int8, a_elems));
     CHECK_CU(cuMemcpyHtoD(dev_b_int8, host_b_int8, b_elems));
+
+    CUdeviceptr dev_pc_scale_bench, dev_pc_zp_bench;
+    CHECK_CU(cuMemAlloc(&dev_pc_scale_bench, N * sizeof(float)));
+    CHECK_CU(cuMemAlloc(&dev_pc_zp_bench,    N * sizeof(int)));
+    CHECK_CU(cuMemcpyHtoD(dev_pc_scale_bench, host_pc_scale, N * sizeof(float)));
+    CHECK_CU(cuMemcpyHtoD(dev_pc_zp_bench,    host_pc_zp,    N * sizeof(int)));
 
     // --- Launch configs ---
     int grid_naive_x = (N + 31) / 32;  // naive: 32×32 per block
@@ -277,6 +311,52 @@ int main(int argc, char **argv) {
             auto r_ca = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_cpasync (LDGSTS)", r_ca);
         }
+        // Per-channel asymmetric
+        if (have_perchannel) {
+            // CPU reference for per-channel dequantization
+            float *host_ref_pc = (float *)malloc(c_elems * sizeof(float));
+            for (int m = 0; m < M; m++) {
+                for (int n = 0; n < N; n++) {
+                    int acc_val = 0;
+                    for (int k = 0; k < K; k++)
+                        acc_val += (int)host_a_int8[m * K + k] * (int)host_b_int8[k * N + n];
+                    host_ref_pc[m * N + n] = ((float)acc_val - (float)host_pc_zp[n]) * host_pc_scale[n];
+                }
+            }
+
+            CUdeviceptr dev_pc_scale, dev_pc_zp;
+            CHECK_CU(cuMemAlloc(&dev_pc_scale, N * sizeof(float)));
+            CHECK_CU(cuMemAlloc(&dev_pc_zp,    N * sizeof(int)));
+            CHECK_CU(cuMemcpyHtoD(dev_pc_scale, host_pc_scale, N * sizeof(float)));
+            CHECK_CU(cuMemcpyHtoD(dev_pc_zp,    host_pc_zp,    N * sizeof(int)));
+
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_pc[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K,
+                                &dev_pc_scale, &dev_pc_zp };
+            CHECK_CU(cuLaunchKernel(perchannel_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_pc, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_pc = check_fp32(host_c_fp32, host_ref_pc, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_perchannel (asym)", r_pc);
+
+            cuMemFree(dev_pc_scale);
+            cuMemFree(dev_pc_zp);
+            free(host_ref_pc);
+        }
+        // Pipelined cp.async BK=64
+        if (have_cpasync_bk64) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_bk64[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(cpasync_bk64_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_bk64, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_bk64 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_cpasync_bk64 (LDGSTS)", r_bk64);
+        }
         printf("  Note: quantization error expected — symmetric per-tensor, scale=max_abs/127\n");
     }
 
@@ -340,13 +420,43 @@ int main(int argc, char **argv) {
     if (have_cpasync)
         cpasync_tops = run_bench(cpasync_func, grid_tiled_x, grid_tiled_y, 64, 2,
                                  "igemm_cpasync (LDGSTS dbuf)");
+    double cpasync_bk64_tops = 0.0;
+    if (have_cpasync_bk64)
+        cpasync_bk64_tops = run_bench(cpasync_bk64_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                                      "igemm_cpasync_bk64 (LDGSTS BK=64)");
+    double perchannel_tops = 0.0;
+    if (have_perchannel) {
+        // Per-channel kernel has different args — use separate lambda
+        void *pc_args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K,
+                            &dev_pc_scale_bench, &dev_pc_zp_bench };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(perchannel_func,
+                grid_tiled_x, grid_tiled_y, 1, 64, 2, 1, 0, NULL, pc_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(perchannel_func,
+                    grid_tiled_x, grid_tiled_y, 1, 64, 2, 1, 0, NULL, pc_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        perchannel_tops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f TOPS\n", "igemm_perchannel (asym dequant)", ms, perchannel_tops);
+    }
 
     printf("  %-35s %7s      %8.0f TOPS  (theoretical)\n", "INT8 Tensor Core peak", "--", int8_peak_tops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
     printf("\n");
     double best_tops = fmax(naive_tops, fmax(tiled_tops, fmax(regblk_tops,
                         fmax(handtuned_tops, fmax(aggressive_tops,
-                        fmax(pipelined_tops, cpasync_tops))))));
+                        fmax(pipelined_tops, fmax(cpasync_tops,
+                        fmax(cpasync_bk64_tops, perchannel_tops))))))));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
     if (tiled_tops > 0)
@@ -375,6 +485,14 @@ int main(int argc, char **argv) {
         printf("  Pipelined vs cp.async: %.4f×  (%+.2f%%)\n",
                pipelined_tops / cpasync_tops,
                100.0 * (pipelined_tops - cpasync_tops) / cpasync_tops);
+    if (cpasync_bk64_tops > 0 && cpasync_tops > 0)
+        printf("  BK=64 vs BK=32 cp.async: %.4f×  (%+.2f%%)\n",
+               cpasync_bk64_tops / cpasync_tops,
+               100.0 * (cpasync_bk64_tops - cpasync_tops) / cpasync_tops);
+    if (perchannel_tops > 0 && cpasync_tops > 0)
+        printf("  Per-channel vs symmetric: %.4f×  (%+.2f%%)\n",
+               perchannel_tops / cpasync_tops,
+               100.0 * (perchannel_tops - cpasync_tops) / cpasync_tops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -385,6 +503,10 @@ int main(int argc, char **argv) {
     cuMemFree(dev_a_int8);
     cuMemFree(dev_b_int8);
     cuMemFree(dev_c);
+    cuMemFree(dev_pc_scale_bench);
+    cuMemFree(dev_pc_zp_bench);
+    free(host_pc_scale);
+    free(host_pc_zp);
     cuModuleUnload(igemm_module);
     if (tiled_module) cuModuleUnload(tiled_module);
     if (regblk_module) cuModuleUnload(regblk_module);

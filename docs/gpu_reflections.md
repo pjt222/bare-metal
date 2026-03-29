@@ -722,7 +722,35 @@ Double-buffered smem with cp.async: +35% over hand-tuned tiled baseline at 4096�
 compute(N) fills the bubble. This is bigger than all previous IGEMM optimizations combined
 (tiling: +38%, hand-tuning S02: +1.6%).
 
-**Insight 15: FFMA stall counts in direct kernels ARE often conservative.**
+**Insight 15: IMMA stall-tuning doesn't help pipelined kernels.**
+The cp.async pipelined IGEMM has 8 IMMA at S04 in its second K-step. Reducing 6 of
+them to S02 (the 7th protects a PRMT→R93 dependency; all-7 edit fails correctness)
+saves 12 cycles per tile but shows 0% improvement at 4096³. The IMMA block is ~2% of
+the total ~500-cycle loop body (cp.async + LDS interleaving + barriers dominate). Contrast
+with the tiled IGEMM where the same S04→S02 gave +1.6% because IMMA was a larger
+fraction of a simpler loop. **Rule: stall-tuning only helps when the tuned block is the
+dominant cost of the inner loop.**
+
+**Insight 16: BK=64 is 5% slower than BK=32 for pipelined cp.async IGEMM.**
+Doubling BK from 32→64 doubles IMMA per tile (8→16) and smem (8→16 KB, still under
+50 KB cliff). Result: 19,725 TOPS vs 20,849 TOPS (-5.4%). Same mechanism as Insight 13:
+longer inner loops reduce scheduling flexibility at 8 warps/SM. Even with cp.async overlap,
+the warp schedulers have enough work to hide latency with BK=32's shorter blocks.
+Half the loop iterations (K/64 vs K/32) also means less pipeline ramp-up amortization.
+**The "short loops at 8 warps" rule now holds across tiled, register-blocked, and pipelined
+kernels — it's structural, not incidental.**
+
+**Insight 17: Per-channel dequantization is faster than wmma::store_matrix_sync.**
+Adding per-channel asymmetric quantization to the cp.async IGEMM epilogue (INT32 acc →
+shared memory → explicit (row,col) indexing → per-channel scale/zp → coalesced global
+write) gave +3.1% over the symmetric version that uses wmma::store_matrix_sync directly
+to global memory. The improvement comes from write coalescing: explicit element-by-element
+writes with `elem/16, elem%16` produce perfectly coalesced 16-wide stores, while
+wmma::store_matrix_sync may scatter writes due to the fragment-to-memory mapping.
+**Rule: when the epilogue needs per-element transforms, routing through shared memory
+with explicit indexing can be faster than the WMMA store intrinsic.**
+
+**Insight 18: FFMA stall counts in direct kernels ARE often conservative.**
 The direct conv2d's 310-FFMA inner loop has S03-S04 between many independent FFMAs
 that could use S01 (FFMA result latency is 4 cycles; S04 is already correct for dependent
 pairs, but independent pairs could go to S01). ~150 pairs × 3 saved cycles = 450 cycles/block.
@@ -750,8 +778,13 @@ Cross-Attention (SD 64×64, sq=4096, skv=77, heads=8, D=64):
   cross_attn_pipelined:    0.293 ms  2,202 GFLOPS  (19% slower at this config)
 
 INT8 IGEMM (M=N=K=4096, symmetric quantization):
-  Naive (global loads):    12.6 ms   10,897 TOPS   1×
-  Tiled 64×64 (compiler):  9.1 ms   15,078 TOPS   1.39×
-  Tiled 64×64 (hand-tuned): 9.0 ms  15,320 TOPS   1.41×  ← best
-  Register-blocked 128×128:10.8 ms   12,760 TOPS   1.17×  (inner loop too long)
+  Naive (global loads):    12.4 ms   11,100 TOPS   1×
+  Tiled 64×64 (compiler):  9.1 ms   15,085 TOPS   1.36×
+  Tiled 64×64 (hand-tuned): 8.9 ms  15,376 TOPS   1.39×
+  Tiled 64×64 (aggressive): 9.0 ms  15,223 TOPS   1.37×
+  Register-blocked 128×128:10.8 ms   12,771 TOPS   1.15×  (inner loop too long)
+  Pipelined LDG (dbuf):     7.6 ms   18,114 TOPS   1.63×
+  Pipelined cp.async (dbuf): 6.6 ms  20,688 TOPS   1.86×
+  cp.async BK=64:            7.0 ms  19,725 TOPS   1.78×  (BK too long, -5%)
+  Per-channel asymmetric:    6.4 ms  21,331 TOPS   1.92×  ← best (3.1% of peak)
 ```
