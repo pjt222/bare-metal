@@ -227,8 +227,10 @@ requires actually modifying the SASS control codes with CuAssembler.
 | `cp.async` double-buffering in self-attention | **2–3×** | High | ✅ Done (4–5% slower — warp interleaving sufficient) |
 | Increase Bc=128 in Flash Attention | ~1.5× further | Medium | ✅ Done (17–20% SLOWER — occupancy cliff at 80 KB) |
 | Implicit GEMM for conv2d | eliminate 23-47 MB col buffer | Medium | ✅ Done (1.07–1.89× speedup, bit-perfect) |
-| Split-Q grid for L2 K/V reuse | 1.5–2× at scale | Medium | → next target |
-| Control code tightening (CuAssembler) | 5–15% | Very high | ❌ Not applicable — see Step 3 analysis |
+| Split-Q grid for L2 K/V reuse | 1.5–2× at scale | Medium | ✅ Done (~tied with br16, partial buffer overhead) |
+| Control code tightening (CuAssembler) | 5–15% | Very high | ✅ Done — HMMA S08 is hardware-fixed; IMMA S04→S02 gives +1.6% |
+| INT8 IMMA GEMM (tiled) | 2× over FP16 | Medium | ✅ Done (15,320 TOPS hand-tuned, 1.93× vs HGEMM) |
+| Persistent kernel grid | SM utilization | Medium | → next target |
 | GroupNorm → Conv2d epilogue fusion | 1.3× ResNet | Very high | advanced |
 
 ---
@@ -481,6 +483,102 @@ Single kernel, bit-perfect, no memory allocation for col buffer required.
 
 ---
 
+## Phase 6 — Bug Fixes and INT8 Experiments
+
+### Step 1 — running_sum Rescale Bug Fix: 1000× Correctness Improvement
+
+The online softmax in flash_attn_br16 (and 3 other kernels) was missing the rescale
+step when accumulating `running_sum` across KV tiles. The correct recurrence:
+```
+l_new = l_old * exp(m_old - m_new) + sum(exp(s_k - m_new))
+```
+The bug: `l += partial_sum` without the `l *= exp(m_old - m_new)` rescale first.
+This corrupted the softmax denominator when the running max shifted between tiles.
+
+max_abs improved from 1.88e-02 to 2.19e-05 (1000× better, matching FP16 precision floor).
+The bug was masked in testing because random data rarely shifts the running max significantly.
+Affected: flash_attn_br16, flash_attn_br16_bc128, flash_attn_br16_pipeline, cross_attn.
+
+### Step 2 — Split-Q Flash Attention: Roughly Tied With br16
+
+Implemented the split-Q variant: grid is `(num_splits, heads, batch)`, each block handles
+a KV chunk and iterates over ALL Q tiles. Two-kernel pipeline: main kernel outputs partial
+`{m, l, O_unnorm}`, reduce kernel merges.
+
+| Kernel | Time (seq=1024) | GFLOPS | vs br16 |
+|--------|----------------|--------|---------|
+| br16 (post-fix) | 3.59 ms | 4,876 | 1.00× |
+| split-Q splits=4 | 3.42 ms | 5,129 | **1.05×** |
+| split-Q splits=16 | 3.82 ms | 4,589 | 0.88× |
+
+**Why it doesn't win big on GA104:** Partial buffer I/O overhead. At splits=16, the partial_O
+buffer alone is 277 MB — writing and reading it costs ~0.9 ms at 608 GB/s, wiping out all KV
+DRAM savings. Sweet spot is splits=4, where buffer (69 MB) is manageable and KV reuse is real.
+
+### Step 3 — INT8 IGEMM: Shorter Inner Loops Beat Higher Density
+
+Three IGEMM kernels using WMMA API with symmetric per-tensor quantization:
+
+| Kernel | TOPS (4096³) | Inner loop |
+|--------|-------------|------------|
+| Naive (global loads) | 10,897 | 4 mma_sync |
+| **Tiled 64×64 (smem)** | **15,078** | 4 mma_sync |
+| Register-blocked 128×128 | 12,760 | 16 mma_sync |
+
+The 128×128 kernel's 16-mma_sync inner loop is too long for 8 warps/SM to hide IMMA
+pipeline latency. Same root cause as cp.async and Bc=128: on GA104, shorter inner loops
+with faster warp switching always beat higher per-warp compute density.
+
+---
+
+## IMMA Hand-Tuning Postmortem — IMMA Is NOT S08 Like HMMA
+
+CuAssembler disassembly of `igemm_tiled.sm_86.cubin` reveals that **IMMA (INT8 Tensor Core)
+has fundamentally different pipeline characteristics than HMMA (FP16 Tensor Core).**
+
+### The stall pattern
+
+The K-loop body contains 16 IMMA.16816.S8.S8 instructions in 8 pairs:
+
+```
+[B0-----:R-:W-:-:S04]  IMMA R12, R2.reuse, R57, R12     ← same A-frag: S04
+[B------:R-:W-:-:S04]  IMMA R4,  R2,       R54, R4       ← same A-frag: S04
+[B-1----:R-:W-:-:S01]  IMMA R24, R36,      R57, R24      ← switch A-frag: S01
+[B------:R-:W-:-:S01]  IMMA R20, R36,      R54, R20      ← same A-frag + interleaved IMAD: S01
+```
+
+Pattern: consecutive IMMAs sharing the same A-fragment (R2→R2 or R36→R36) get S04.
+Switching A-fragments (R2→R36 or vice versa) allows S01. This is register read port
+contention, not pipeline depth.
+
+### Hand-tuning results
+
+| Variant | IMMA stall | Time (4096³) | TOPS | vs Compiler |
+|---------|-----------|--------------|------|-------------|
+| Compiler (baseline) | S04 | 9.12 ms | 15,078 | — |
+| **Hand-tuned** | **S02** | **8.97 ms** | **15,320** | **+1.6%** |
+| Aggressive | S01 | 9.08 ms | 15,144 | +0.4% |
+
+- **S02 is optimal:** reduces wasted stall cycles but preserves scheduling slack
+- **S01 is correct but too aggressive at scale:** all 16 IMMAs fire maximally fast, creating
+  a compute burst that saturates the TC unit and backs up warp scheduling at 4096³
+- **Gains are modest** because the kernel is memory-bound (2 GB at 608 GB/s = 3.3 ms floor)
+
+### HMMA vs IMMA: the fundamental difference
+
+| Property | HMMA (FP16) | IMMA (INT8) |
+|----------|-------------|-------------|
+| Pipeline stall | S08 (hardware-fixed) | S04 (compiler-conservative) |
+| Minimum achievable | S08 | S01 (verified correct) |
+| Optimal hand-tuned | N/A (already at minimum) | S02 |
+| Constraint type | TC pipeline depth | Register read port contention |
+
+HMMA has an 8-cycle issue interval per warp — structural, not reducible. IMMA has no such
+constraint: the S04 comes from the compiler being conservative about operand availability.
+With operands pre-loaded, IMMA sustains 1 instruction per cycle per warp.
+
+---
+
 ## Consolidated Key Insights — Everything We've Learned
 
 *An empirical reference distilled from Phases 3–5. Each entry is backed by a real benchmark.*
@@ -517,12 +615,15 @@ independent register groups still require S08 between them from the same warp �
 only valid after 8+ cycles have elapsed since the last HMMA (satisfied naturally when other
 instructions interleave, e.g., LDSM).
 
-**Insight 5: nvcc's HMMA stall counts are already correct, not conservative.**
+**Insight 5: nvcc's HMMA stall counts are correct; IMMA stall counts are conservative.**
 CuAssembler analysis of flash_attn_br16 and wmma_gemm_conv showed that S08 stalls between
-HMMA instructions match the hardware TC pipeline requirement. The S01 pairs visible in the
-WMMA GEMM inner loop work because they alternate between two independent B-register groups
-(one from the current LDSM, one from the previous iteration) — the "free slot" is used for
-real computation, not wasted.
+HMMA instructions match the hardware TC pipeline requirement. But IMMA (INT8) stalls are
+set to S04 conservatively — S02 is optimal (+1.6%), S01 is correct but hurts scheduling.
+
+**Insight 5b: IMMA and HMMA have fundamentally different pipeline constraints.**
+HMMA: 8-cycle hardware pipeline depth (structural, not reducible).
+IMMA: no fixed pipeline constraint — S04 is compiler conservative, caused by register
+read port contention when consecutive IMMAs share the same A-fragment operand.
 
 **Insight 6: The WMMA GEMM inner loop pattern to emulate:**
 ```sass
@@ -595,7 +696,13 @@ The `.cuasm` format encodes control codes as `[B0-----:R-:W0:-:S08]` where:
 - `S08`: unconditional minimum stall of 8 cycles before issuing the next instruction
 - `Y`: yield hint (switch to another warp if possible)
 
-**Insight 13: FFMA stall counts in direct kernels ARE often conservative.**
+**Insight 13: On GA104, shorter inner loops beat higher per-warp compute density.**
+Confirmed across 4 experiments: cp.async (4-5% slower), Bc=128 (17-20% slower), split-Q
+(partial buffer overhead), register-blocked IGEMM 128×128 (0.84× vs tiled 64×64). With only
+8 warps/SM, a long compute burst from one warp blocks the scheduler from interleaving others.
+The 64×64 tile / 4-mma_sync loop lets warps switch frequently enough to hide DRAM stalls.
+
+**Insight 14: FFMA stall counts in direct kernels ARE often conservative.**
 The direct conv2d's 310-FFMA inner loop has S03-S04 between many independent FFMAs
 that could use S01 (FFMA result latency is 4 cycles; S04 is already correct for dependent
 pairs, but independent pairs could go to S01). ~150 pairs × 3 saved cycles = 450 cycles/block.
@@ -621,4 +728,10 @@ Flash Self-Attention (seq=1024, batch=8, heads=8, D=64):
 Cross-Attention (SD 64×64, sq=4096, skv=77, heads=8, D=64):
   cross_attn_br16:         0.246 ms  2,624 GFLOPS  ← best
   cross_attn_pipelined:    0.293 ms  2,202 GFLOPS  (19% slower at this config)
+
+INT8 IGEMM (M=N=K=4096, symmetric quantization):
+  Naive (global loads):    12.6 ms   10,897 TOPS   1×
+  Tiled 64×64 (compiler):  9.1 ms   15,078 TOPS   1.39×
+  Tiled 64×64 (hand-tuned): 9.0 ms  15,320 TOPS   1.41×  ← best
+  Register-blocked 128×128:10.8 ms   12,760 TOPS   1.17×  (inner loop too long)
 ```
