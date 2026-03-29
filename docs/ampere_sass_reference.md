@@ -64,12 +64,15 @@ Warp-wide matrix multiply. All 32 threads in a warp participate.
 | `HMMA.16816.F16 Rd, Ra, Rb, Rc` | 16x8x16 | FP16 in, FP16 out |
 | `HMMA.16816.F32 Rd, Ra, Rb, Rc` | 16x8x16 | FP16 in, FP32 out |
 | `HMMA.16816.BF16 Rd, Ra, Rb, Rc` | 16x8x16 | BF16 in, FP32 out |
-| `IMMA.8816.S8 Rd, Ra, Rb, Rc` | 8x8x16 | INT8 in, INT32 out |
+| `IMMA.16816.S8.S8 Rd, Ra.ROW, Rb.COL, Rc` | 16x8x16 | INT8 in, INT32 out |
 
 Each thread holds fragments of the matrices:
-- A fragment: 8 FP16 values (rows of 16x16 sub-tile)
-- B fragment: 8 FP16 values
-- C/D accumulator: 4 FP32 values (or 8 FP16 values)
+- A fragment (HMMA): 8 FP16 values (rows of 16x16 sub-tile)
+- B fragment (HMMA): 8 FP16 values
+- C/D accumulator (HMMA): 4 FP32 values (or 8 FP16 values)
+- A fragment (IMMA): 8 INT8 values (packed in 2 registers)
+- B fragment (IMMA): 8 INT8 values (packed in 2 registers)
+- C/D accumulator (IMMA): 8 INT32 values (8 registers)
 
 **Key**: These registers must be in the exact layout expected by hardware.
 Reverse-engineer by compiling a `wmma` kernel and inspecting which registers

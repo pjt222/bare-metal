@@ -152,17 +152,19 @@ Split-Q partial buffers: 69-277 MB I/O overhead wipes out KV DRAM savings on GA1
 
 ## Next Steps (Prioritized)
 
-### 🎯 Top Priority — INT8 IMMA Path
-Explore INT8 Tensor Core (`IMMA.16816`) for ~4× throughput over FP16.
-
-- Requires quantization: FP16 → INT8 per-tensor or per-channel scale+zero-point
-- IMMA accumulates in INT32, requires rescaling to FP32 output
-- Use case: inference (not training) — activations bounded, weights quantizable
-- Expected: 4× GFLOPS (from 174 TFLOPS FP16 → 696 TOPS INT8)
-
-**Not yet started.** Complexity: quantization correctness + scale factor management.
+### ✅ INT8 IMMA Path — Done
+Implemented INT8 Tensor Core GEMM using WMMA API with symmetric per-tensor quantization.
+- SASS: `IMMA.16816.S8.S8` confirmed (10 instructions per kernel, 8 I2FP + 9 FMUL for dequant)
+- Correctness: max_abs=0.19 at 512³ (PASS, quantization error as expected)
+- Performance: 10,828 TOPS at 4096³ (1.38× vs FP16 HGEMM's 7,853 GFLOPS)
+- Only 1.6% of 696 TOPS peak — bandwidth-bound without shared memory tiling (same as naive HGEMM)
+- Files: `phase2/igemm/igemm.cu`, `phase2/igemm/bench.cu`, `phase2/igemm/README.md`
 
 ---
+
+### 🎯 Top Priority — Tiled IGEMM with Shared Memory
+The naive IGEMM achieves only 1.6% of INT8 peak due to global memory bandwidth bottleneck.
+A shared-memory tiled version (matching the sgemm/tiled.cu pattern) would dramatically improve utilization.
 
 ### 🧪 Exploratory — Persistent Kernel Grid
 For flash attention at small batch sizes (batch=1, heads=8):

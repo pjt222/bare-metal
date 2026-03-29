@@ -94,6 +94,7 @@ Tolerance conventions by precision:
 - FP16 Tensor Core (HMMA): `abs=1e-2, rel=1e-2`
 - `--use_fast_math` (sin/cos): `abs=5e-4, rel=5e-4`
 - Conv2d (9x reaccumulation): `abs=1e-2, rel=1e-2`
+- INT8 Tensor Core (IMMA, symmetric quant): `abs=0.5, rel=0.1`
 
 ## Performance Measurement
 
@@ -115,6 +116,7 @@ Tolerance conventions by precision:
 - **SHFL.BFLY** — Warp butterfly reduction (5 instructions for 32-lane reduce)
 - **MUFU.EX2/RCP/RSQ/SIN/COS** — Special function unit (~16 cycle latency). `exp(x) = 2^(x * log2(e))` requires FMUL + MUFU.EX2.
 - **FFMA** — FP32 fused multiply-add (core of non-tensor GEMM)
+- **IMMA.16816.S8.S8** — INT8 Tensor Core (16x8x16 sub-tile, INT8→INT32). Two per PTX mma.sync, four per WMMA mma_sync call. Dequantized via I2FP.F32.S32 + FMUL.
 - **LDGSTS** (cp.async) — Async global→shared copy, bypasses register file
 
 ## Current State and Next Steps
