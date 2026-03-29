@@ -764,6 +764,20 @@ that could use S01 (FFMA result latency is 4 cycles; S04 is already correct for 
 pairs, but independent pairs could go to S01). ~150 pairs × 3 saved cycles = 450 cycles/block.
 This optimization is valid but the kernel is now superseded by implicit GEMM + WMMA.
 
+**Insight 20: Persistent kernel with L2 tile reuse doesn't help IGEMM on GA104.**
+Persistent grid (48 CTAs, 1/SM, atomic work-stealing) with column-first tile ordering
+(m varies fastest → CTAs in same column share B K-tiles in L2) measures -0.7% vs
+standard grid launch at 4096³ (27,383 vs 27,588 TOPS). Three reasons:
+1. **Register overhead**: The work-stealing loop adds +22 registers (234 vs 210) for tile
+   index, block coordinates, and loop state. No spills, but reduces compiler flexibility.
+2. **L2 already sufficient**: K-tile working set across 48 CTAs = 48 × 12 KB = 576 KB.
+   GA104's 4 MB L2 holds this easily even with standard grid launch's scattered access.
+3. **No K-step synchronization**: CTAs iterate the K-loop independently; they quickly
+   diverge in K-step progress, so "same column" doesn't guarantee they read the same
+   K-tile simultaneously. True L2 sharing would require grid-level barriers per K-step.
+**Where persistent GEMM WOULD help**: Stream-K (splitting K across CTAs with inter-CTA
+reduction), or GPUs with L2 << K-tile working set. Column-first ordering is not enough.
+
 ---
 
 ### The Complete Performance Hierarchy (RTX 3070 Ti, SD UNet params)
@@ -798,4 +812,5 @@ INT8 IGEMM (M=N=K=4096, symmetric quantization):
   8-warp 128×128 (1 blk/SM): 5.6 ms  24,533 TOPS   2.21×  (+18% vs 64×64)
   8-warp 128×256 (1 blk/SM): 5.0 ms  27,591 TOPS   2.49×  ← best (4.0% of peak)
   8-warp 256×256:           11.3 ms  12,114 TOPS   1.09×  (reg spill, -56%)
+  Persistent 128×256 (L2):   5.0 ms  27,383 TOPS   2.47×  (L2 reuse: -0.7%, +22 regs)
 ```

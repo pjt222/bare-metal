@@ -168,6 +168,13 @@ int main(int argc, char **argv) {
     if (have_tribuf) {
         CHECK_CU(cuModuleGetFunction(&tribuf_func, tribuf_module, "igemm_8warp_tribuf"));
     }
+    // --- Load persistent IGEMM kernel ---
+    CUmodule   persistent_module = NULL;
+    CUfunction persistent_func   = NULL;
+    bool have_persistent = (cuModuleLoad(&persistent_module, "igemm_persistent.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_persistent) {
+        CHECK_CU(cuModuleGetFunction(&persistent_func, persistent_module, "igemm_persistent"));
+    }
     // --- Load per-channel asymmetric IGEMM kernel ---
     CUmodule   perchannel_module = NULL;
     CUfunction perchannel_func   = NULL;
@@ -175,7 +182,7 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -186,7 +193,8 @@ int main(int argc, char **argv) {
            have_perchannel ? " + perchannel" : "",
            have_warp8 ? " + 8warp" : "",
            have_warp8_256 ? " + 8warp256" : "",
-           have_tribuf ? " + tribuf" : "");
+           have_tribuf ? " + tribuf" : "",
+           have_persistent ? " + persistent" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -246,6 +254,13 @@ int main(int argc, char **argv) {
     CHECK_CU(cuMemAlloc(&dev_pc_zp_bench,    N * sizeof(int)));
     CHECK_CU(cuMemcpyHtoD(dev_pc_scale_bench, host_pc_scale, N * sizeof(float)));
     CHECK_CU(cuMemcpyHtoD(dev_pc_zp_bench,    host_pc_zp,    N * sizeof(int)));
+
+    // --- Persistent kernel: tile counter + config ---
+    CUdeviceptr dev_tile_counter = 0;
+    if (have_persistent) {
+        CHECK_CU(cuMemAlloc(&dev_tile_counter, sizeof(int)));
+    }
+    int persistent_num_sms  = 48;  // GA104
 
     // --- Launch configs ---
     int grid_naive_x = (N + 31) / 32;  // naive: 32×32 per block
@@ -404,6 +419,20 @@ int main(int argc, char **argv) {
             auto r_w256 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_8warp_256 (128x256)", r_w256);
         }
+        // Persistent 128×256
+        if (have_persistent) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuMemsetD32(dev_tile_counter, 0, 1));
+            void *args_ps[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K,
+                                &scale_a, &scale_b, &dev_tile_counter };
+            CHECK_CU(cuLaunchKernel(persistent_func,
+                persistent_num_sms, 1, 1,   256, 1, 1,
+                0, NULL, args_ps, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ps = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_persistent (128x256)", r_ps);
+        }
         // 8-warp triple-buffer 128×128
         if (have_tribuf) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -509,6 +538,33 @@ int main(int argc, char **argv) {
     if (have_tribuf)
         tribuf_tops = run_bench(tribuf_func, grid_8warp_x, grid_8warp_y, 256, 1,
                                 "igemm_tribuf (128x128 3-buf)");
+    double persistent_tops = 0.0;
+    if (have_persistent) {
+        // Persistent kernel needs different args and tile_counter reset per launch
+        void *ps_args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K,
+                            &scale_a, &scale_b, &dev_tile_counter };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuMemsetD32(dev_tile_counter, 0, 1));
+            CHECK_CU(cuLaunchKernel(persistent_func,
+                persistent_num_sms, 1, 1, 256, 1, 1, 0, NULL, ps_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuMemsetD32(dev_tile_counter, 0, 1));
+                CHECK_CU(cuLaunchKernel(persistent_func,
+                    persistent_num_sms, 1, 1, 256, 1, 1, 0, NULL, ps_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        persistent_tops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f TOPS\n", "igemm_persistent (128x256 L2)", ms, persistent_tops);
+    }
     double cpasync_bk64_tops = 0.0;
     if (have_cpasync_bk64)
         cpasync_bk64_tops = run_bench(cpasync_bk64_func, grid_tiled_x, grid_tiled_y, 64, 2,
@@ -546,7 +602,8 @@ int main(int argc, char **argv) {
                         fmax(handtuned_tops, fmax(aggressive_tops,
                         fmax(pipelined_tops, fmax(cpasync_tops,
                         fmax(cpasync_bk64_tops, fmax(perchannel_tops,
-                        fmax(warp8_tops, fmax(warp8_256_tops, tribuf_tops)))))))))));
+                        fmax(warp8_tops, fmax(warp8_256_tops,
+                        fmax(tribuf_tops, persistent_tops))))))))))));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
     if (tiled_tops > 0)
@@ -599,6 +656,10 @@ int main(int argc, char **argv) {
         printf("  Triple-buf vs double-buf (128x128): %.4f×  (%+.2f%%)\n",
                tribuf_tops / warp8_tops,
                100.0 * (tribuf_tops - warp8_tops) / warp8_tops);
+    if (persistent_tops > 0 && warp8_256_tops > 0)
+        printf("  Persistent vs grid-launch (128x256): %.4f×  (%+.2f%%)\n",
+               persistent_tops / warp8_256_tops,
+               100.0 * (persistent_tops - warp8_256_tops) / warp8_256_tops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -611,6 +672,7 @@ int main(int argc, char **argv) {
     cuMemFree(dev_c);
     cuMemFree(dev_pc_scale_bench);
     cuMemFree(dev_pc_zp_bench);
+    if (dev_tile_counter) cuMemFree(dev_tile_counter);
     free(host_pc_scale);
     free(host_pc_zp);
     cuModuleUnload(igemm_module);
@@ -620,6 +682,7 @@ int main(int argc, char **argv) {
     if (aggressive_module) cuModuleUnload(aggressive_module);
     if (pipelined_module) cuModuleUnload(pipelined_module);
     if (cpasync_module) cuModuleUnload(cpasync_module);
+    if (persistent_module) cuModuleUnload(persistent_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);
