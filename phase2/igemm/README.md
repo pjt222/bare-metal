@@ -14,14 +14,17 @@ INT8 is the inference workhorse: weights and activations quantized to 8-bit, acc
 
 ## Measured Results (RTX 3070 Ti Laptop, sm_86)
 
-| Matrix Size | Time | TOPS | % of INT8 Peak | vs FP16 HGEMM |
-|-------------|------|------|-----------------|---------------|
-| 512³ | 0.058 ms | 4,638 | 0.7% | — |
-| 4096³ | 12.7 ms | 10,828 | 1.6% | 1.38× |
+| Kernel | 4096³ Time | TOPS | % INT8 Peak | vs Naive |
+|--------|-----------|------|-------------|----------|
+| Naive (global loads) | 12.6 ms | 10,897 | 1.6% | 1.00× |
+| **Tiled 64×64 (smem)** | **9.1 ms** | **15,145** | **2.2%** | **1.39×** |
+| Register-blocked 128×128 | 10.8 ms | 12,760 | 1.8% | 1.17× |
 
-FP16 HGEMM reference: 7,853 GFLOPS at 4096³ (4.5% of FP16 peak).
+FP16 HGEMM reference: 7,853 GFLOPS at 4096³. Tiled INT8 is 1.93× faster.
 
-**Why only 1.6% of INT8 peak?** Same reason as the naive HGEMM — no shared memory tiling. The kernel loads A and B tiles directly from global memory via `wmma::load_matrix_sync`. At 4096³, memory traffic dominates. INT8 helps by reading half the bytes per element (1 vs 2), giving the 1.38× speedup. A tiled version with shared memory would achieve much higher utilization.
+**Why tiled 64×64 beats register-blocked 128×128:** The 128×128 kernel's inner loop has 16 mma_sync calls per K-step (vs 4 for 64×64). This long IMMA chain reduces warp switching frequency. With only 8 warps/SM (4 warps × 2 blocks), the scheduler can't fully hide Tensor Core pipeline latency (S08 stalls). The 64×64 version's shorter inner loop allows faster warp interleaving — same lesson as the cp.async and Bc=128 Flash Attention experiments.
+
+**Why only 2.2% of INT8 peak?** Without shared memory, the naive kernel is fully bandwidth-bound. Tiling reduces redundant global loads 4× (from ~8 GB to ~2 GB at 4096³), but 2 GB at 608 GB/s still takes ~3.3 ms — far from the 0.2 ms compute minimum. Larger tiles (128×128) hurt because the longer inner loop can't be hidden by 8 warps. The path to higher utilization requires either more warps per SM or a fundamentally different approach (persistent kernels, software pipelining).
 
 ## The Key SASS Instruction
 

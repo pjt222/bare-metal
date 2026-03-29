@@ -102,6 +102,7 @@ Implicit GEMM with tables: 64 K-dim divs + 256 M-dim divs (amortized) → fast e
 cp.async self-attn: always slower than baseline when 2 blocks/SM are present (warp interleaving wins)
 running_sum rescale bug: online softmax requires l *= exp(m_old - m_new) BEFORE l += new_sum
 Split-Q partial buffers: 69-277 MB I/O overhead wipes out KV DRAM savings on GA104 (4 MB L2)
+WMMA register blocking 128×128: 16 mma_sync inner loop too long for 8 warps/SM → 0.84× vs 64×64 tiled
 ```
 
 ---
@@ -152,19 +153,25 @@ Split-Q partial buffers: 69-277 MB I/O overhead wipes out KV DRAM savings on GA1
 
 ## Next Steps (Prioritized)
 
-### ✅ INT8 IMMA Path — Done
+### ✅ INT8 IMMA Path — Done (3 kernels)
 Implemented INT8 Tensor Core GEMM using WMMA API with symmetric per-tensor quantization.
-- SASS: `IMMA.16816.S8.S8` confirmed (10 instructions per kernel, 8 I2FP + 9 FMUL for dequant)
-- Correctness: max_abs=0.19 at 512³ (PASS, quantization error as expected)
-- Performance: 10,828 TOPS at 4096³ (1.38× vs FP16 HGEMM's 7,853 GFLOPS)
-- Only 1.6% of 696 TOPS peak — bandwidth-bound without shared memory tiling (same as naive HGEMM)
-- Files: `phase2/igemm/igemm.cu`, `phase2/igemm/bench.cu`, `phase2/igemm/README.md`
+- SASS: `IMMA.16816.S8.S8` confirmed, zero HMMA, zero register spills
+- Correctness: all 3 kernels PASS at 512³ (max_abs=0.19)
+- Files: `phase2/igemm/{igemm.cu, igemm_tiled.cu, igemm_register_blocked.cu, bench.cu}`
+
+**Performance at 4096³:**
+
+| Kernel | TOPS | vs Naive | SASS IMMA count |
+|--------|------|----------|-----------------|
+| Naive (global loads) | 10,897 | 1.00× | 10 |
+| **Tiled 64×64 (smem)** | **15,145** | **1.39×** | 16 |
+| Register-blocked 128×128 | 12,760 | 1.17× | 64 |
+
+**Key finding:** Register-blocking (128×128, 4×4 WMMA tiles/warp) is SLOWER than tiled 64×64.
+The 16-mma_sync inner loop is too long for 8 warps/SM to hide IMMA pipeline latency.
+Same root cause as cp.async and Bc=128: on GA104, shorter inner loops + more warp switching wins.
 
 ---
-
-### 🎯 Top Priority — Tiled IGEMM with Shared Memory
-The naive IGEMM achieves only 1.6% of INT8 peak due to global memory bandwidth bottleneck.
-A shared-memory tiled version (matching the sgemm/tiled.cu pattern) would dramatically improve utilization.
 
 ### 🧪 Exploratory — Persistent Kernel Grid
 For flash attention at small batch sizes (batch=1, heads=8):

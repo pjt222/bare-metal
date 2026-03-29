@@ -98,7 +98,16 @@ int main(int argc, char **argv) {
     if (have_tiled) {
         CHECK_CU(cuModuleGetFunction(&tiled_func, tiled_module, "igemm_tiled"));
     }
-    printf("IGEMM kernels loaded: naive%s.\n\n", have_tiled ? " + tiled" : " (tiled cubin not found)");
+    // --- Load register-blocked IGEMM kernel ---
+    CUmodule   regblk_module = NULL;
+    CUfunction regblk_func   = NULL;
+    bool have_regblk = (cuModuleLoad(&regblk_module, "igemm_register_blocked.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_regblk) {
+        CHECK_CU(cuModuleGetFunction(&regblk_func, regblk_module, "igemm_register_blocked"));
+    }
+    printf("IGEMM kernels loaded: naive%s%s.\n\n",
+           have_tiled ? " + tiled" : "",
+           have_regblk ? " + register-blocked" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -144,8 +153,10 @@ int main(int argc, char **argv) {
     // --- Launch configs ---
     int grid_naive_x = (N + 31) / 32;  // naive: 32×32 per block
     int grid_naive_y = (M + 31) / 32;
-    int grid_tiled_x = (N + 63) / 64;  // tiled: 64×64 per block
+    int grid_tiled_x = (N + 63) / 64;    // tiled: 64×64 per block
     int grid_tiled_y = (M + 63) / 64;
+    int grid_regblk_x = (N + 127) / 128; // register-blocked: 128×128 per block
+    int grid_regblk_y = (M + 127) / 128;
 
     // --- Correctness check ---
     if (run_cpu_ref) {
@@ -174,6 +185,18 @@ int main(int argc, char **argv) {
             auto r2 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_tiled (smem)", r2);
         }
+        // Register-blocked
+        if (have_regblk) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_r[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(regblk_func,
+                grid_regblk_x, grid_regblk_y, 1,   128, 1, 1,
+                0, NULL, args_r, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r3 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_regblk (128x128)", r3);
+        }
         printf("  Note: quantization error expected — symmetric per-tensor, scale=max_abs/127\n");
     }
 
@@ -187,11 +210,12 @@ int main(int argc, char **argv) {
 
     void *bench_args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
 
-    // Helper to benchmark a kernel
-    auto run_bench = [&](CUfunction fn, int gx, int gy, const char *label) {
+    // Helper to benchmark a kernel (flexible block dims)
+    auto run_bench = [&](CUfunction fn, int gx, int gy, int bx, int by,
+                         const char *label) {
         for (int i = 0; i < warmup_iters; i++) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
-            CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, 64, 2, 1, 0, NULL, bench_args, NULL));
+            CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, bx, by, 1, 0, NULL, bench_args, NULL));
         }
         CHECK_CU(cuCtxSynchronize());
 
@@ -201,7 +225,7 @@ int main(int argc, char **argv) {
             timer.start();
             for (int i = 0; i < bench_iters; i++) {
                 CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
-                CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, 64, 2, 1, 0, NULL, bench_args, NULL));
+                CHECK_CU(cuLaunchKernel(fn, gx, gy, 1, bx, by, 1, 0, NULL, bench_args, NULL));
             }
             ms = timer.stop_ms() / bench_iters;
         }
@@ -210,24 +234,34 @@ int main(int argc, char **argv) {
         return t;
     };
 
-    double naive_tops = run_bench(igemm_func, grid_naive_x, grid_naive_y, "igemm_wmma  (naive)");
-    double tiled_tops = 0.0;
-    if (have_tiled) {
-        tiled_tops = run_bench(tiled_func, grid_tiled_x, grid_tiled_y, "igemm_tiled (smem)");
-    }
+    double naive_tops  = run_bench(igemm_func, grid_naive_x, grid_naive_y, 64, 2,
+                                   "igemm_wmma  (naive)");
+    double tiled_tops  = 0.0;
+    double regblk_tops = 0.0;
+    if (have_tiled)
+        tiled_tops = run_bench(tiled_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                               "igemm_tiled (64x64)");
+    if (have_regblk)
+        regblk_tops = run_bench(regblk_func, grid_regblk_x, grid_regblk_y, 128, 1,
+                                "igemm_regblk (128x128)");
 
     printf("  %-35s %7s      %8.0f TOPS  (theoretical)\n", "INT8 Tensor Core peak", "--", int8_peak_tops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
     printf("\n");
-    double best_tops = have_tiled ? fmax(naive_tops, tiled_tops) : naive_tops;
+    double best_tops = fmax(naive_tops, fmax(tiled_tops, regblk_tops));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
-    if (have_tiled && tiled_tops > 0)
+    if (tiled_tops > 0)
         printf("  Tiled vs naive: %.2f×\n", tiled_tops / naive_tops);
+    if (regblk_tops > 0)
+        printf("  RegBlk vs naive: %.2f×   RegBlk vs tiled: %.2f×\n",
+               regblk_tops / naive_tops,
+               tiled_tops > 0 ? regblk_tops / tiled_tops : 0.0);
 
     printf("\nSASS inspection:\n");
-    printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA         # naive\n");
-    printf("  cuobjdump -sass igemm_tiled.sm_86.cubin | grep IMMA   # tiled\n");
+    printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
+    printf("  cuobjdump -sass igemm_tiled.sm_86.cubin | grep IMMA                # tiled\n");
+    printf("  cuobjdump -sass igemm_register_blocked.sm_86.cubin | grep IMMA     # regblk\n");
 
     // --- Cleanup ---
     cuMemFree(dev_a_int8);
@@ -235,6 +269,7 @@ int main(int argc, char **argv) {
     cuMemFree(dev_c);
     cuModuleUnload(igemm_module);
     if (tiled_module) cuModuleUnload(tiled_module);
+    if (regblk_module) cuModuleUnload(regblk_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);
