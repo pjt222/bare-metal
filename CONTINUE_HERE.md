@@ -19,6 +19,7 @@ were implemented and benchmarked. Each one taught something important.
 | 3 | ✅ Done | Flash Attention: scalar → 4-warp → Br=16 HMMA (19× speedup) |
 | 4 | ✅ Done | Diffusion primitives: Conv2d, GroupNorm, ResBlock, Cross-Attn |
 | 5 | ✅ Done | 5 optimization experiments, all documented with postmortems |
+| 6 | ✅ Done | running_sum bug fix (4 kernels) + split-Q implementation |
 
 ---
 
@@ -91,7 +92,7 @@ were implemented and benchmarked. Each one taught something important.
 
 ---
 
-## Key Pitfalls Discovered This Session
+## Key Pitfalls Discovered
 
 ```
 Bc=128 flash attn: 80 KB smem → 1 block/SM → 4 warps → 17-20% SLOWER than Bc=64
@@ -99,47 +100,59 @@ HMMA S08 stall: hardware TC pipeline constraint, cannot reduce to S01 (structura
 Implicit GEMM naive: 6 divs/element × 1024 elements = 6144 divs/K-tile → 94× overhead vs precomputed
 Implicit GEMM with tables: 64 K-dim divs + 256 M-dim divs (amortized) → fast enough to beat explicit
 cp.async self-attn: always slower than baseline when 2 blocks/SM are present (warp interleaving wins)
+running_sum rescale bug: online softmax requires l *= exp(m_old - m_new) BEFORE l += new_sum
+Split-Q partial buffers: 69-277 MB I/O overhead wipes out KV DRAM savings on GA104 (4 MB L2)
 ```
+
+---
+
+## Phase 6 Findings
+
+### ✅ Step 1 — running_sum Rescale Bug Fix
+**1000× correctness improvement across 4 kernels.**
+- Bug: `running_sum[row] += partial_sum` was missing `running_sum[row] *= rescale_factor` before accumulation.
+  The correct online softmax recurrence is: `l_new = l_old * exp(m_old - m_new) + sum(exp(s_k - m_new))`.
+- Affected: `flash_attn_br16.cu`, `flash_attn_br16_bc128.cu`, `flash_attn_br16_pipeline.cu`, `cross_attn.cu`
+- Not affected: `flash_attn.cu` (1-warp scalar), `flash_attn_wmma.cu` (4-warp), `cross_attn_pipelined.cu` — these already had the rescale.
+- br16 max_abs improved from 1.88e-02 to 2.19e-05 (matching FP16 precision floor).
+- Bug was masked in testing because random data rarely shifts the running max significantly between tiles.
+
+### ✅ Step 2 — Split-Q Flash Attention
+**Implemented and benchmarked. Roughly tied with br16 (0.71–1.05× depending on config).**
+- Files: `flash_attn_split_q.cu` (both kernels), `bench_split_q.cu`
+- Grid: `(num_splits, heads, batch)` — each block handles a KV chunk, iterates over ALL Q tiles.
+- Two-kernel pipeline: main kernel outputs partial `{m, l, O_unnorm}`, reduce kernel merges.
+- Correctness: max_abs ~2e-5 at all split counts (matches br16 post-fix).
+
+**Benchmark results (seq=1024, batch=8, heads=8, D=64):**
+
+| Kernel | Time | GFLOPS | vs br16 |
+|--------|------|--------|---------|
+| br16 (post-fix) | 3.59 ms | 4,876 | 1.00× |
+| split-Q splits=2 | 4.36 ms | 4,022 | 0.77× |
+| split-Q splits=4 | 3.42 ms | 5,129 | **1.05×** |
+| split-Q splits=8 | 3.51 ms | 4,988 | 0.96× |
+| split-Q splits=16 | 3.82 ms | 4,589 | 0.88× |
+
+**Why split-Q doesn't win big on GA104:**
+1. **Partial buffer overhead dominates.** At splits=16, the partial_O buffer alone is 277 MB — writing
+   and reading it costs ~0.9 ms at 608 GB/s, wiping out all KV DRAM savings.
+2. **br16 already has decent L2 reuse.** With batch×heads=64, many blocks from the same head/batch
+   are co-resident. L2 (4 MB) holds KV tiles (512 KB per head/batch) well enough to amortize
+   some of the 16× redundant loads.
+3. **Sweet spot is splits=4**, where partial buffer (69 MB) is small and KV reuse is meaningful.
+   Larger split counts pay too much in buffer I/O; smaller counts don't reduce KV traffic enough.
+
+**Potential further optimizations (not implemented):**
+- FP16 partial_O to halve buffer traffic
+- Fused reduction via atomics (eliminates second kernel launch)
+- Persistent-grid split-Q to avoid partial buffer entirely
 
 ---
 
 ## Next Steps (Prioritized)
 
-### 🎯 Top Priority — Split-Q Flash Attention
-**Goal:** 1.5–2× speedup at scale by reusing K/V in L2 across blocks.
-
-**Current grid:** `(q_tiles, heads, batch)` — each block reads ALL K/V tiles.
-At seq=1024 with 16 q-tiles, the same K/V is loaded 16× from DRAM (L2 evicted between waves).
-
-**Proposed grid:** `(kv_tiles, heads, batch)` — each block reads ONE K/V tile,
-accumulates partial softmax sums over all Q positions.
-
-This is the "split-K" variant of Flash Attention:
-```
-Block i processes: KV_tile[i] × ALL Q tiles
-  → loads K/V once per block (stays in L2 while Q tiles iterate)
-  → accumulates partial {m_i, l_i, o_i} for each Q row
-Final reduction: merge partial {m_i, l_i, o_i} across kv_tiles dimension
-```
-
-**Complexity:** requires a second-pass reduction kernel (or atomic accumulation).
-The partial softmax merging formula:
-```
-m_new = max(m_a, m_b)
-l_new = exp(m_a - m_new) * l_a + exp(m_b - m_new) * l_b
-o_new = (exp(m_a - m_new) * l_a * o_a + exp(m_b - m_new) * l_b * o_b) / l_new
-```
-
-**Implementation plan:**
-1. `flash_attn_split_q.cu` — split-Q kernel: outputs partial {m, l, o} per KV tile
-2. `flash_attn_split_q_reduce.cu` — reduction kernel: merges partials across kv_tiles
-3. `bench_split_q.cu` — compare vs flash_attn_br16 at seq=256/512/1024/2048
-
-**Expected gain:** L2 reuse of K/V across concurrent blocks → fewer DRAM reads at large batch×heads.
-
----
-
-### 🔬 Secondary — INT8 IMMA Path
+### 🎯 Top Priority — INT8 IMMA Path
 Explore INT8 Tensor Core (`IMMA.16816`) for ~4× throughput over FP16.
 
 - Requires quantization: FP16 → INT8 per-tensor or per-channel scale+zero-point
@@ -160,7 +173,7 @@ For flash attention at small batch sizes (batch=1, heads=8):
 
 ---
 
-## File Structure — New Files This Session
+## File Structure — New Files
 
 ```
 phase3/flash_attention/
@@ -169,15 +182,14 @@ phase3/flash_attention/
   flash_attn_br16_bc128.cu      ← Bc=128 kernel (17-20% SLOWER — documents occupancy cliff)
   bench_bc128.cu                 ← Bc=64 vs Bc=128 comparison
   flash_br16.cuasm               ← CuAssembler disassembly (S08 analysis done)
-  flash_br16_pipeline.sm_86.cubin
-  flash_br16_bc128.sm_86.cubin
+  flash_attn_split_q.cu         ← Split-Q: 2 kernels (main + reduce), ~tied with br16
+  bench_split_q.cu               ← br16 vs split-Q comparison across split counts
 
 phase4/conv2d/
   conv2d_implicit_gemm.cu       ← implicit GEMM (no col buffer, 1.07-1.89× faster)
   bench_implicit_gemm.cu         ← explicit vs implicit comparison across 4 configs
   wmma_gemm.cuasm                ← CuAssembler disassembly (inner loop already tight)
   conv2d_direct.cuasm            ← CuAssembler disassembly (FFMA loop — obsolete kernel)
-  conv2d_implicit_gemm.sm_86.cubin
 
 docs/
   gpu_reflections.md             ← Updated with Steps 2-5 postmortems + 4th Law
@@ -241,12 +253,11 @@ CubinFile('path/to/kernel.cubin').saveAsCuAsm('kernel.cuasm')
 ## Reading Order for Next Session
 
 1. **This file** (you're reading it)
-2. `docs/gpu_reflections.md` — full story, all 5 postmortems, 4 laws
-3. `phase3/flash_attention/flash_attn_br16.cu` — the best attention kernel, starting point for split-Q
-4. The Flash Attention paper (Dao et al. 2022) — Section 3.1 describes the split-K formulation
-   that split-Q is derived from
+2. `docs/gpu_reflections.md` — full story, all postmortems, 4 laws
+3. `phase3/flash_attention/flash_attn_br16.cu` — the best attention kernel (now with correct online softmax)
+4. `phase3/flash_attention/flash_attn_split_q.cu` — split-Q experiment (2 kernels, ~tied with br16)
 
 ---
 
-*Last updated: end of Phase 5 optimization session, 2026-03-27.*
+*Last updated: end of Phase 6 session, 2026-03-29.*
 *All experiments ran on RTX 3070 Ti Laptop (GA104, sm_86, CUDA 12.8, WSL Ubuntu).*

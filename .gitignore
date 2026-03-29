@@ -4,9 +4,11 @@
 # Generated SASS disassembly
 *.cuasm
 
-# Benchmark executables
+# Compiled executables (not source files)
 bench
 bench_*
+!bench_*.cu
+phase1/host
 
 # Python
 __pycache__/

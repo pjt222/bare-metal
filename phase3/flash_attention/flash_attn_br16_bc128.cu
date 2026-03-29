@@ -238,9 +238,10 @@ void flash_attn_bc128(
                 float rescale_factor = exp2f((running_max[row] - new_max) * LOG2E);
                 running_max[row]     = new_max;
 
-                // Rescale smem_pv (D_HEAD=64 elements per row, 2 per lane)
+                // Rescale smem_pv and running_sum (D_HEAD=64 elements per row, 2 per lane)
                 pv_row[lane]             *= rescale_factor;
                 pv_row[lane + WARP_SIZE] *= rescale_factor;
+                running_sum[row]         *= rescale_factor;
 
                 // Compute exp weights for all 4 score positions
                 float w_0 = exp2f((score_0 - new_max) * LOG2E);

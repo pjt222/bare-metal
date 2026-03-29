@@ -248,9 +248,10 @@ void cross_attn_br16(
                 float rescale_factor = exp2f((running_max[row] - new_max) * LOG2E);
                 running_max[row]     = new_max;
 
-                // Rescale running output by exp(old_max - new_max)
+                // Rescale running output and sum by exp(old_max - new_max)
                 pv_row[lane]             *= rescale_factor;
                 pv_row[lane + WARP_SIZE] *= rescale_factor;
+                running_sum[row]         *= rescale_factor;
 
                 // Attention weights: exp(score - max) using masked local scores
                 // Padded positions: score_lo/hi = -inf → exp(-inf) = 0 → w = 0 ✓

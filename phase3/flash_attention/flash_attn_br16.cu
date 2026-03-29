@@ -258,10 +258,12 @@ void flash_attn_br16(
                 float rescale_factor = exp2f((running_max[row] - new_max) * LOG2E);
                 running_max[row]     = new_max;
 
-                // Rescale the running output (smem_pv row) by rescale_factor
+                // Rescale running output AND running sum by rescale_factor.
                 // This corrects for the shift in the running maximum.
+                // Online softmax recurrence: l_new = l_old * rescale + sum(exp(s - m_new))
                 pv_row[lane]             *= rescale_factor;
                 pv_row[lane + WARP_SIZE] *= rescale_factor;
+                running_sum[row]         *= rescale_factor;
 
                 // Compute exp weights and write back as FP16 into warp_work (overlay)
                 float w_lo = exp2f((score_row[lane]             - new_max) * LOG2E);

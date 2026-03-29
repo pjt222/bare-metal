@@ -359,6 +359,7 @@ void flash_attn_br16_pipeline(
 
                 pv_row[lane]             *= rescale_factor;
                 pv_row[lane + WARP_SIZE] *= rescale_factor;
+                running_sum[row]         *= rescale_factor;
 
                 float w_lo = exp2f((score_row[lane]             - new_max) * LOG2E);
                 float w_hi = exp2f((score_row[lane + WARP_SIZE] - new_max) * LOG2E);
