@@ -119,11 +119,27 @@ int main(int argc, char **argv) {
     if (have_aggressive) {
         CHECK_CU(cuModuleGetFunction(&aggressive_func, aggressive_module, "igemm_tiled"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s.\n\n",
+    // --- Load software-pipelined IGEMM kernel (LDG double-buffer) ---
+    CUmodule   pipelined_module = NULL;
+    CUfunction pipelined_func   = NULL;
+    bool have_pipelined = (cuModuleLoad(&pipelined_module, "igemm_pipelined.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_pipelined) {
+        CHECK_CU(cuModuleGetFunction(&pipelined_func, pipelined_module, "igemm_pipelined"));
+    }
+    // --- Load cp.async pipelined IGEMM kernel ---
+    CUmodule   cpasync_module = NULL;
+    CUfunction cpasync_func   = NULL;
+    bool have_cpasync = (cuModuleLoad(&cpasync_module, "igemm_pipelined_cpasync.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_cpasync) {
+        CHECK_CU(cuModuleGetFunction(&cpasync_func, cpasync_module, "igemm_pipelined_cpasync"));
+    }
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
-           have_aggressive ? " + aggressive" : "");
+           have_aggressive ? " + aggressive" : "",
+           have_pipelined ? " + pipelined" : "",
+           have_cpasync ? " + cpasync" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -237,6 +253,30 @@ int main(int argc, char **argv) {
             auto r3 = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_regblk (128x128)", r3);
         }
+        // Pipelined (LDG double-buffer)
+        if (have_pipelined) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_p[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(pipelined_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_p, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_pipe = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_pipelined (LDG)", r_pipe);
+        }
+        // Pipelined (cp.async)
+        if (have_cpasync) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_ca[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };
+            CHECK_CU(cuLaunchKernel(cpasync_func,
+                grid_tiled_x, grid_tiled_y, 1,   64, 2, 1,
+                0, NULL, args_ca, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ca = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_cpasync (LDGSTS)", r_ca);
+        }
         printf("  Note: quantization error expected — symmetric per-tensor, scale=max_abs/127\n");
     }
 
@@ -292,12 +332,21 @@ int main(int argc, char **argv) {
     if (have_aggressive)
         aggressive_tops = run_bench(aggressive_func, grid_tiled_x, grid_tiled_y, 64, 2,
                                     "igemm_aggressive (S04->S01)");
+    double pipelined_tops = 0.0;
+    if (have_pipelined)
+        pipelined_tops = run_bench(pipelined_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                                   "igemm_pipelined (LDG dbuf)");
+    double cpasync_tops = 0.0;
+    if (have_cpasync)
+        cpasync_tops = run_bench(cpasync_func, grid_tiled_x, grid_tiled_y, 64, 2,
+                                 "igemm_cpasync (LDGSTS dbuf)");
 
     printf("  %-35s %7s      %8.0f TOPS  (theoretical)\n", "INT8 Tensor Core peak", "--", int8_peak_tops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
     printf("\n");
     double best_tops = fmax(naive_tops, fmax(tiled_tops, fmax(regblk_tops,
-                        fmax(handtuned_tops, aggressive_tops))));
+                        fmax(handtuned_tops, fmax(aggressive_tops,
+                        fmax(pipelined_tops, cpasync_tops))))));
     printf("  Best: %.1f%% of INT8 peak, %.1f× vs FP16 peak\n",
            100.0 * best_tops / int8_peak_tops, best_tops / fp16_peak_gflops);
     if (tiled_tops > 0)
@@ -314,6 +363,18 @@ int main(int argc, char **argv) {
         printf("  Aggressive vs tiled: %.4f×  (%+.2f%%)\n",
                aggressive_tops / tiled_tops,
                100.0 * (aggressive_tops - tiled_tops) / tiled_tops);
+    if (pipelined_tops > 0 && handtuned_tops > 0)
+        printf("  Pipelined vs handtuned: %.4f×  (%+.2f%%)\n",
+               pipelined_tops / handtuned_tops,
+               100.0 * (pipelined_tops - handtuned_tops) / handtuned_tops);
+    if (cpasync_tops > 0 && handtuned_tops > 0)
+        printf("  cp.async vs handtuned: %.4f×  (%+.2f%%)\n",
+               cpasync_tops / handtuned_tops,
+               100.0 * (cpasync_tops - handtuned_tops) / handtuned_tops);
+    if (pipelined_tops > 0 && cpasync_tops > 0)
+        printf("  Pipelined vs cp.async: %.4f×  (%+.2f%%)\n",
+               pipelined_tops / cpasync_tops,
+               100.0 * (pipelined_tops - cpasync_tops) / cpasync_tops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -329,6 +390,8 @@ int main(int argc, char **argv) {
     if (regblk_module) cuModuleUnload(regblk_module);
     if (handtuned_module) cuModuleUnload(handtuned_module);
     if (aggressive_module) cuModuleUnload(aggressive_module);
+    if (pipelined_module) cuModuleUnload(pipelined_module);
+    if (cpasync_module) cuModuleUnload(cpasync_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);

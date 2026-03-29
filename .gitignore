@@ -15,5 +15,8 @@ phase1/host
 __pycache__/
 *.pyc
 
+# Session handoff (ephemeral, not committed)
+CONTINUE_HERE.md
+
 # Third-party tools (clone separately)
 tools/CuAssembler/

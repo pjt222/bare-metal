@@ -591,10 +591,14 @@ With operands pre-loaded, IMMA sustains 1 instruction per cycle per warp.
 At 2 blocks/SM × 4 warps/block = 8 warps: when one warp stalls on DRAM (~300 cycles),
 7 others execute HMMA/FFMA. This is sufficient to fully hide DRAM latency in practice.
 
-**Insight 2: cp.async only helps when warp count is too low to hide latency.**
-In a kernel with 2 blocks/SM already (8 warps), adding cp.async adds commit/wait overhead
-without providing additional hiding capacity. Net result: 4–5% slower. cp.async helps only
-when you have ≤ 4 warps and genuine idle time during tile loads.
+**Insight 2: cp.async benefit depends on compute/load ratio, not just warp count.**
+Originally concluded cp.async only helps with ≤ 4 warps — wrong. Refined finding from IGEMM:
+- Flash Attention (64 HMMA per tile): cp.async 4–5% slower at 8 warps. Long compute phase gives
+  warps enough work to interleave and hide DRAM latency without async help.
+- INT8 IGEMM (8 IMMA per tile): cp.async **+35% faster** at 8 warps. Short compute phase means
+  8 warps generate only ~128 compute cycles — insufficient to hide ~300-cycle DRAM latency.
+  cp.async decouples the load from the warp instruction stream, providing additional hiding.
+Rule: cp.async benefits scale inversely with compute/load ratio per tile.
 
 **Insight 3: The 64 KB smem threshold is a concurrency multiplier on GA104.**
 GA104 has 128 KB shared memory per SM. The firmware partitions it as:
@@ -697,10 +701,17 @@ The `.cuasm` format encodes control codes as `[B0-----:R-:W0:-:S08]` where:
 - `Y`: yield hint (switch to another warp if possible)
 
 **Insight 13: On GA104, shorter inner loops beat higher per-warp compute density.**
-Confirmed across 4 experiments: cp.async (4-5% slower), Bc=128 (17-20% slower), split-Q
-(partial buffer overhead), register-blocked IGEMM 128×128 (0.84× vs tiled 64×64). With only
-8 warps/SM, a long compute burst from one warp blocks the scheduler from interleaving others.
-The 64×64 tile / 4-mma_sync loop lets warps switch frequently enough to hide DRAM stalls.
+Confirmed across 4 experiments: Bc=128 (17-20% slower), split-Q (partial buffer overhead),
+register-blocked IGEMM 128×128 (0.84× vs tiled 64×64), WMMA 128×128 (16 mma_sync too long).
+With only 8 warps/SM, a long compute burst from one warp blocks the scheduler from interleaving
+others. The 64×64 tile / 4-mma_sync loop lets warps switch frequently enough to hide DRAM stalls.
+
+**Insight 14: Software pipelining (double-buffer) is the biggest single optimization for IGEMM.**
+Double-buffered smem with cp.async: +35% over hand-tuned tiled baseline at 4096³ (20,688 vs
+15,341 TOPS). Even the LDG-register variant gives +18%. The key: IGEMM's short compute phase
+(8 IMMA per tile) leaves most cycles idle waiting for DRAM. Overlapping load(N+1) with
+compute(N) fills the bubble. This is bigger than all previous IGEMM optimizations combined
+(tiling: +38%, hand-tuning S02: +1.6%).
 
 **Insight 14: FFMA stall counts in direct kernels ARE often conservative.**
 The direct conv2d's 310-FFMA inner loop has S03-S04 between many independent FFMAs
