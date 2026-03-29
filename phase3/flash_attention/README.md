@@ -198,3 +198,35 @@ nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
 # Inspect SASS
 cuobjdump -sass flash_attn.sm_86.cubin | grep -E 'SHFL|MUFU|FMAX|FFMA'
 ```
+
+## Persistent Kernel Grid (Issue #3)
+
+A persistent-grid variant (`flash_attn_persistent.cu`) launches `num_sms × 2` blocks that loop over work tiles via `atomicAdd`. Each block grabs tiles and processes them until all tiles are done.
+
+### Results
+
+**batch=1, heads=8 (small batch — issue target):**
+
+| seq | Tiles | br16 (ms) | Persistent (ms) | Speedup |
+|-----|-------|-----------|-----------------|---------|
+| 256 | 32 | 0.055 | 0.085 | 0.65× |
+| 512 | 64 | 0.159 | 0.161 | 0.98× |
+| 1024 | 128 | 0.579 | 0.580 | 1.00× |
+
+**batch=8, heads=8 (many tiles):**
+
+| seq | Tiles | br16 (ms) | Persistent (ms) | Speedup |
+|-----|-------|-----------|-----------------|---------|
+| 256 | 256 | 0.246 | 0.249 | 0.99× |
+| 512 | 512 | 0.938 | 0.849 | **1.10×** |
+| 1024 | 1024 | 3.108 | 2.819 | **1.10×** |
+
+### Analysis
+
+The persistent kernel helps at **moderate-to-large tile counts** (512+), NOT at the small-batch regime the issue originally targeted:
+
+- **When tiles << grid (32 tiles, 92 blocks):** 60 blocks launch, allocate 48 KB smem, then immediately exit. This wastes SM resources and makes things worse (0.65×).
+- **When tiles ≈ grid (128 tiles, 92 blocks):** roughly tied — each block processes ~1.4 tiles, minimal tail effect.
+- **When tiles >> grid (512-1024 tiles, 92 blocks):** +10% improvement. The standard grid's last "wave" underutilizes SMs (e.g., 1024 mod 92 = 12 blocks on 46 SMs). The persistent grid eliminates this tail effect.
+
+The benefit is **tail-wave elimination**, not SM utilization improvement at small batch.
