@@ -203,6 +203,13 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
+    // --- Load bank-conflict-free online-quant IGEMM kernel ---
+    CUmodule   bankfree_module = NULL;
+    CUfunction bankfree_func   = NULL;
+    bool have_bankfree = (cuModuleLoad(&bankfree_module, "igemm_online_quant_bankfree.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_bankfree) {
+        CHECK_CU(cuModuleGetFunction(&bankfree_func, bankfree_module, "igemm_online_quant_bankfree"));
+    }
     // --- Load warp-specialized online-quant IGEMM kernel ---
     CUmodule   warpspec_module = NULL;
     CUfunction warpspec_func   = NULL;
@@ -210,7 +217,7 @@ int main(int argc, char **argv) {
     if (have_warpspec) {
         CHECK_CU(cuModuleGetFunction(&warpspec_func, warpspec_module, "igemm_warp_specialized"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -225,6 +232,7 @@ int main(int argc, char **argv) {
            have_persistent ? " + persistent" : "",
            have_onlinequant ? " + online-quant" : "",
            have_inplace ? " + inplace" : "",
+           have_bankfree ? " + bankfree" : "",
            have_warpspec ? " + warpspec" : "",
            have_hgemm ? " + hgemm" : "");
 
@@ -529,6 +537,20 @@ int main(int argc, char **argv) {
             auto r_ip = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_inplace (FP16→INT8 in-place)", r_ip);
         }
+        // Bank-conflict-free online-quant FP16→INT8 128×128
+        if (have_bankfree) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_bf[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_bf_x = (N + 127) / 128;
+            int grid_bf_y = (M + 127) / 128;
+            CHECK_CU(cuLaunchKernel(bankfree_func,
+                grid_bf_x, grid_bf_y, 1,   256, 1, 1,
+                0, NULL, args_bf, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_bf = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_bankfree (FP16→INT8 bank-free)", r_bf);
+        }
         // Warp-specialized online-quant FP16→INT8 128×128
         if (have_warpspec) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -741,6 +763,32 @@ int main(int argc, char **argv) {
         printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in, in-place)\n",
                "igemm_inplace (FP16→INT8)", ms, inplace_gflops);
     }
+    double bankfree_gflops = 0.0;
+    if (have_bankfree) {
+        int grid_bf_x = (N + 127) / 128;
+        int grid_bf_y = (M + 127) / 128;
+        void *bf_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(bankfree_func,
+                grid_bf_x, grid_bf_y, 1, 256, 1, 1, 0, NULL, bf_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(bankfree_func,
+                    grid_bf_x, grid_bf_y, 1, 256, 1, 1, 0, NULL, bf_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        bankfree_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in, bank-free)\n",
+               "igemm_bankfree (FP16→INT8)", ms, bankfree_gflops);
+    }
     double warpspec_gflops = 0.0;
     if (have_warpspec) {
         int grid_ws_x = (N + 127) / 128;
@@ -892,6 +940,14 @@ int main(int argc, char **argv) {
         printf("  Online-quant IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
                onlinequant_gflops / hgemm_gflops,
                100.0 * (onlinequant_gflops - hgemm_gflops) / hgemm_gflops);
+    if (bankfree_gflops > 0 && inplace_gflops > 0)
+        printf("  Bank-free vs in-place: %.4f×  (%+.2f%%)\n",
+               bankfree_gflops / inplace_gflops,
+               100.0 * (bankfree_gflops - inplace_gflops) / inplace_gflops);
+    if (bankfree_gflops > 0 && hgemm_gflops > 0)
+        printf("  Bank-free IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
+               bankfree_gflops / hgemm_gflops,
+               100.0 * (bankfree_gflops - hgemm_gflops) / hgemm_gflops);
     if (warpspec_gflops > 0 && inplace_gflops > 0)
         printf("  Warp-spec vs in-place: %.4f×  (%+.2f%%)\n",
                warpspec_gflops / inplace_gflops,
@@ -926,6 +982,7 @@ int main(int argc, char **argv) {
     if (cpasync_module) cuModuleUnload(cpasync_module);
     if (persistent_module) cuModuleUnload(persistent_module);
     if (onlinequant_module) cuModuleUnload(onlinequant_module);
+    if (bankfree_module) cuModuleUnload(bankfree_module);
     if (warpspec_module) cuModuleUnload(warpspec_module);
     if (hgemm_module) cuModuleUnload(hgemm_module);
     cuCtxDestroy(cu_context);
