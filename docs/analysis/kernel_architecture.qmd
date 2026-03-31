@@ -1,0 +1,606 @@
+---
+title: "Kernel Architecture Analysis: GA104 Tensor Core GEMM"
+subtitle: "Empirical Performance Models for Hand-Optimized CUDA/SASS on RTX 3070 Ti"
+author: "Philipp Thoss"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 6
+    fig-dpi: 150
+engine: knitr
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+
+theme_gpu <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "grey40", size = 11),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold")
+  )
+theme_set(theme_gpu)
+
+gpu_green  <- "#76B900"
+gpu_blue   <- "#0071C5"
+gpu_red    <- "#E74C3C"
+gpu_orange <- "#F39C12"
+gpu_purple <- "#8E44AD"
+gpu_grey   <- "#95A5A6"
+```
+
+## Introduction
+
+This document presents a quantitative analysis of hand-optimized CUDA/SASS
+kernels targeting the NVIDIA RTX 3070 Ti (GA104, sm_86, Ampere architecture).
+All kernels are written from scratch --- no cuBLAS, cuDNN, or PyTorch --- and
+compiled with `nvcc -arch=sm_86 -O2`. SASS-level inspection and hand-editing
+via CuAssembler provides ground-truth for hardware behavior.
+
+The analysis covers 23 empirical insights across 5 development phases,
+distilled into quantitative models of the three resources that govern
+performance on GA104: **registers**, **shared memory**, and **warp occupancy**.
+
+### Hardware Specifications
+
+| Resource | GA104 (RTX 3070 Ti Laptop) |
+|---|---|
+| Streaming Multiprocessors | 48 |
+| CUDA cores / SM | 128 |
+| Tensor Cores / SM | 4 (3rd gen) |
+| Registers / SM | 65,536 (32-bit) |
+| Shared memory / SM | 100 KB max configurable |
+| L2 cache | 4 MB |
+| DRAM bandwidth | 608 GB/s |
+| FP32 peak (FFMA) | 21.7 TFLOPS |
+| FP16 Tensor peak (HMMA) | 174 TFLOPS |
+| INT8 Tensor peak (IMMA) | 696 TOPS |
+
+## The Occupancy Model {#sec-occupancy}
+
+Performance on GA104 is dominated by **warp occupancy** --- the number of
+active warps available to hide DRAM latency (~300 cycles). The occupancy
+is jointly determined by three per-block resources: thread count,
+register usage, and shared memory.
+
+```{r fig-occupancy-model}
+#| fig-cap: "GA104 occupancy model: achievable blocks per SM as a function of registers per thread and shared memory per block. The 50 KB cliff (dashed red) halves occupancy. Kernel variants are plotted at their measured resource usage."
+
+expand_grid <- function(...) tidyr::crossing(...)
+
+occupancy <- expand_grid(
+  regs = seq(32, 255, by = 1),
+  smem_kb = seq(0, 100, by = 1)
+) |>
+  mutate(
+    max_by_regs = pmin(floor(65536 / (regs * 256)), 4),
+    max_by_smem = ifelse(smem_kb == 0, 4, pmin(floor(100 / smem_kb), 4)),
+    blocks_per_sm = pmin(max_by_regs, max_by_smem),
+    warps_per_sm = blocks_per_sm * 8
+  )
+
+kernels <- tibble::tribble(
+  ~label,                ~regs, ~smem_kb, ~gflops, ~variant,
+  "HGEMM naive",           40,        0,    7849, "HGEMM",
+  "HGEMM tiled (8w)",     148,       40,   16687, "HGEMM",
+  "HGEMM 16-warp",         64,       32,   18700, "HGEMM",
+  "Online-quant v2",      239,       48,   12707, "Online-quant",
+  "In-place",             213,       40,   16646, "Online-quant",
+  "Bank-free",            211,       40,   17070, "Online-quant",
+  "Warp-specialized",     255,       40,   16039, "Online-quant",
+  "IGEMM 8w 128x128",     120,       24,   24533, "IGEMM (INT8)",
+  "IGEMM 8w 128x256",     210,       24,   27591, "IGEMM (INT8)",
+  "IGEMM cp.async 64x64",  80,        8,   20688, "IGEMM (INT8)"
+) |>
+  mutate(
+    blocks = pmin(
+      pmin(floor(65536 / (regs * 256)), 4),
+      ifelse(smem_kb == 0, 4, pmin(floor(100 / smem_kb), 4))
+    ),
+    warps = blocks * 8
+  )
+
+# Use 256 threads per block for the heatmap (standard for 8-warp blocks)
+occupancy_256 <- expand_grid(
+  regs = seq(32, 255, by = 1),
+  smem_kb = seq(1, 100, by = 1)
+) |>
+  mutate(
+    max_by_regs_256 = pmin(floor(65536 / (regs * 256)), 4),
+    max_by_smem = pmin(floor(100 / smem_kb), 4),
+    blocks = pmin(max_by_regs_256, max_by_smem),
+    warps = blocks * 8
+  )
+
+ggplot(occupancy_256, aes(x = regs, y = smem_kb, fill = factor(blocks))) +
+  geom_tile() +
+  scale_fill_manual(
+    values = c("0" = "#2C3E50", "1" = gpu_red, "2" = gpu_orange,
+               "3" = gpu_blue, "4" = gpu_green),
+    name = "Blocks / SM"
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red", linewidth = 0.8) +
+  annotate("text", x = 240, y = 53, label = "50 KB cliff",
+           color = "red", fontface = "bold", size = 3.5) +
+  geom_vline(xintercept = 128, linetype = "dotted", color = "white", linewidth = 0.5) +
+  annotate("text", x = 131, y = 95, label = "128 reg\n(2 blk limit)",
+           color = "white", size = 2.8, hjust = 0) +
+  geom_point(data = kernels, aes(x = regs, y = smem_kb),
+             shape = 21, size = 3, fill = "white", color = "black", stroke = 1.2) +
+  geom_text(data = kernels, aes(x = regs, y = smem_kb, label = label),
+            size = 2.5, hjust = -0.1, vjust = -0.8, color = "white", fontface = "bold") +
+  labs(
+    title = "GA104 Occupancy Landscape",
+    subtitle = "Blocks per SM as f(registers/thread, shared memory/block) at 256 threads/block",
+    x = "Registers per thread",
+    y = "Shared memory per block (KB)"
+  ) +
+  coord_cartesian(xlim = c(32, 260), ylim = c(0, 100)) +
+  theme(legend.position = "right")
+```
+
+@fig-occupancy-model reveals the two critical thresholds on GA104:
+
+1. **The 50 KB shared memory cliff**: Any block using >50 KB smem is limited to
+   1 block/SM. This halves warp occupancy from 8 to 4, exposing ~300-cycle DRAM
+   stalls.
+
+2. **The 128-register boundary**: At 256 threads/block, >128 registers/thread
+   exceeds the 65,536 register budget for 2 blocks/SM.
+
+The 16-warp HGEMM kernel (64 regs, 32 KB) sits in the 2-blocks/SM sweet spot,
+achieving 32 warps/SM --- ideal latency hiding. The online-quant variants
+(211--255 regs, 40 KB) are locked at 1 block/SM.
+
+
+## Performance Progression {#sec-progression}
+
+```{r fig-igemm-progression}
+#| fig-cap: "INT8 IGEMM throughput evolution across optimization stages. Each bar represents a distinct kernel variant at M=N=K=4096. The dominant optimization (cp.async pipelining, +35%) exceeds all prior gains combined."
+
+igemm_data <- tibble::tribble(
+  ~kernel,                    ~tops,  ~stage,         ~order,
+  "Naive (global)",           10897,  "Baseline",         1,
+  "Tiled 64x64",              15078,  "Tiling",           2,
+  "Hand-tuned S02",           15341,  "SASS tuning",      3,
+  "Pipelined LDG",            18054,  "Pipelining",       4,
+  "Pipelined cp.async",       20688,  "Pipelining",       5,
+  "8-warp 128x128",           24533,  "Occupancy",        6,
+  "8-warp 128x256",           27591,  "Occupancy",        7,
+  "Persistent 128x256",       27383,  "Persistent",       8
+) |>
+  mutate(
+    kernel = factor(kernel, levels = kernel[order(order)]),
+    pct_peak = tops / 696000 * 100,
+    vs_naive = tops / 10897
+  )
+
+stage_colors <- c(
+  "Baseline" = gpu_grey,
+  "Tiling" = gpu_blue,
+  "SASS tuning" = gpu_purple,
+  "Pipelining" = gpu_green,
+  "Occupancy" = gpu_orange,
+  "Persistent" = gpu_red
+)
+
+ggplot(igemm_data, aes(x = kernel, y = tops / 1000, fill = stage)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = sprintf("%.1fk", tops / 1000)),
+            vjust = -0.3, size = 3.2) +
+  scale_fill_manual(values = stage_colors, name = "Optimization stage") +
+  scale_y_continuous(
+    labels = label_comma(suffix = "k"),
+    sec.axis = sec_axis(~ . / 696 * 100, name = "% of INT8 peak (696 TOPS)")
+  ) +
+  labs(
+    title = "INT8 IGEMM Optimization Progression",
+    subtitle = "M = N = K = 4096, RTX 3070 Ti (GA104, sm_86)",
+    x = NULL, y = "Throughput (TOPS)"
+  ) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1, size = 10))
+```
+
+The progression in @fig-igemm-progression reveals a consistent pattern: **algorithmic
+restructuring** (tiling, pipelining) delivers 10--35% gains, while **micro-level tuning**
+(SASS stall codes) delivers 1--2%. The single largest jump (+35%) comes from
+software pipelining with `cp.async`, which decouples memory loading from the
+warp instruction stream.
+
+
+## cp.async Benefit Model {#sec-cpasync}
+
+The most surprising finding across the project: `cp.async` (LDGSTS in SASS) is
+not universally beneficial. Its impact depends on the **compute-to-load ratio**
+per tile --- the number of Tensor Core instructions executed between consecutive
+shared memory loads.
+
+```{r fig-cpasync-benefit}
+#| fig-cap: "cp.async speedup vs compute density per tile. Benefits scale inversely with compute/load ratio: short compute phases (IGEMM, 8 IMMA/tile) gain +35%, while long compute phases (Flash Attention, 64 HMMA/tile) lose 4--5%. The crossover occurs near 16--32 instructions per tile."
+
+cpasync_data <- tibble::tribble(
+  ~kernel,          ~tc_per_tile, ~speedup, ~type,
+  "IGEMM 64x64\n(BK=32)",      8,   1.35,  "IMMA (INT8)",
+  "IGEMM 64x64\n(BK=64)",     16,   0.946, "IMMA (INT8)",
+  "Cross-attn\n(Bc=64)",      64,   0.84,  "HMMA (FP16)",
+  "Self-attn\n(Bc=64)",       64,   0.95,  "HMMA (FP16)"
+)
+
+# Model: benefit ~ 1 / sqrt(tc_per_tile)
+model_x <- seq(4, 80, by = 1)
+model_y <- 1 + 0.35 * (8 / model_x)^0.7
+
+ggplot(cpasync_data, aes(x = tc_per_tile, y = (speedup - 1) * 100)) +
+  geom_line(data = tibble(x = model_x, y = (model_y - 1) * 100),
+            aes(x = x, y = y), color = gpu_grey, linewidth = 0.8, linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey50") +
+  geom_point(aes(color = type, shape = type), size = 4.5) +
+  geom_text(aes(label = kernel), vjust = -1.2, size = 3.2) +
+  scale_color_manual(values = c("IMMA (INT8)" = gpu_green, "HMMA (FP16)" = gpu_blue)) +
+  scale_shape_manual(values = c("IMMA (INT8)" = 16, "HMMA (FP16)" = 17)) +
+  annotate("rect", xmin = 0, xmax = 12, ymin = -10, ymax = 40,
+           alpha = 0.08, fill = gpu_green) +
+  annotate("text", x = 6, y = 37, label = "cp.async\nhelpful", color = gpu_green,
+           fontface = "bold", size = 3.5) +
+  annotate("rect", xmin = 30, xmax = 80, ymin = -10, ymax = 40,
+           alpha = 0.08, fill = gpu_red) +
+  annotate("text", x = 55, y = 37, label = "cp.async\nharmful", color = gpu_red,
+           fontface = "bold", size = 3.5) +
+  labs(
+    title = "cp.async Benefit vs Compute Density",
+    subtitle = "At 8 warps/SM: benefit scales inversely with Tensor Core instructions per tile",
+    x = "Tensor Core instructions per tile",
+    y = "Speedup from cp.async (%)",
+    color = "TC type", shape = "TC type"
+  ) +
+  coord_cartesian(xlim = c(0, 75), ylim = c(-10, 40))
+```
+
+The model in @fig-cpasync-benefit explains a key design rule:
+
+> **At 8 warps/SM, cp.async helps only when the compute phase is shorter than
+> the DRAM latency window (~300 cycles / 8 warps = ~37 cycles per warp).**
+
+With 8 IMMA instructions per tile (each ~4 cycles = 32 cycles total), the compute
+phase is shorter than the per-warp latency window, leaving idle cycles that
+cp.async fills. With 64 HMMA instructions per tile (each ~8 cycles = 512 cycles total),
+the compute phase alone exceeds the DRAM latency, and warp interleaving already
+provides full coverage.
+
+
+## Register Budget Economics {#sec-registers}
+
+Registers are the scarcest resource per thread. On GA104, the 65,536-register
+budget per SM creates hard occupancy boundaries. The WMMA API's fragment-based
+programming model makes register allocation transparent.
+
+```{r fig-register-budget}
+#| fig-cap: "Register budget breakdown for key kernel variants. The accumulator dominates allocation in all cases. The 16-warp HGEMM achieves 64 registers by halving the warp tile from 2x4 to 2x2, cutting accumulator cost from 64 to 32 registers."
+
+reg_data <- tibble::tribble(
+  ~kernel,              ~accumulator, ~a_frag, ~b_frag, ~control, ~total, ~blocks,
+  "HGEMM tiled\n(8w, 2x4)",    64,       16,      32,      36,     148,    1,
+  "HGEMM 16-warp\n(16w, 2x2)", 32,       16,      16,       0,      64,    2,
+  "Online-quant\nbankfree",    128,       16,      32,      35,     211,    1,
+  "IGEMM 8w\n128x256",         128,       16,      64,       2,     210,    1
+) |>
+  mutate(kernel = factor(kernel, levels = kernel))
+
+reg_long <- reg_data |>
+  select(kernel, accumulator, a_frag, b_frag, control) |>
+  pivot_longer(-kernel, names_to = "component", values_to = "regs") |>
+  mutate(component = factor(component,
+    levels = c("control", "b_frag", "a_frag", "accumulator"),
+    labels = c("Control + pointers", "B fragments", "A fragments", "Accumulator")))
+
+ggplot(reg_long, aes(x = kernel, y = regs, fill = component)) +
+  geom_col(width = 0.65) +
+  geom_hline(yintercept = 128, linetype = "dashed", color = gpu_red, linewidth = 0.8) +
+  annotate("text", x = 4.4, y = 134, label = "128 reg limit\n(2 blocks/SM)",
+           color = gpu_red, fontface = "bold", size = 3, hjust = 1) +
+  geom_hline(yintercept = 255, linetype = "dotted", color = "grey50") +
+  annotate("text", x = 4.4, y = 248, label = "255 max",
+           color = "grey50", size = 3, hjust = 1) +
+  geom_text(data = reg_data, aes(x = kernel, y = total, label = paste0(total, " regs")),
+            vjust = -0.4, size = 3.5, fontface = "bold", inherit.aes = FALSE) +
+  scale_fill_manual(
+    values = c("Accumulator" = gpu_orange, "A fragments" = gpu_blue,
+               "B fragments" = gpu_green, "Control + pointers" = gpu_grey),
+    name = "Component"
+  ) +
+  labs(
+    title = "Register Budget Breakdown",
+    subtitle = "WMMA fragment registers dominate allocation; accumulator size determines occupancy tier",
+    x = NULL, y = "Registers per thread"
+  ) +
+  coord_cartesian(ylim = c(0, 270))
+```
+
+@fig-register-budget reveals the central trade-off: **the accumulator fragment count
+determines the occupancy tier**. Online-quant requires both INT32 WMMA accumulators
+(64 regs) *and* FP32 running accumulators (64 regs) = 128 registers just for
+accumulation, permanently locking it to 1 block/SM.
+
+The 16-warp HGEMM's design insight: a 4x4 warp grid with 2x2 tiles per warp
+gives the same 128x128 output tile with half the per-warp accumulator cost (32 vs 64
+registers), enabling 2 blocks/SM.
+
+
+## HMMA vs IMMA: The Quantization Tax {#sec-hmma-imma}
+
+The online-quant experiment attempted to exploit INT8 Tensor Cores (4x theoretical
+throughput) for FP16 matrix multiply by performing on-the-fly quantization. This
+section analyzes why the approach ultimately lost to a properly tiled HGEMM.
+
+```{r fig-hmma-vs-imma}
+#| fig-cap: "FP16 GEMM throughput comparison: pure HGEMM path vs online FP16-to-INT8 quantization path. Both are measured at M=N=K=4096 on the same GPU. The 16-warp HGEMM (not yet measured at full power, projected at +12% over 8-warp) would decisively beat online-quant."
+
+comparison_data <- tibble::tribble(
+  ~kernel,                 ~gflops, ~path,           ~regs, ~warps_sm, ~order,
+  "HGEMM naive",             7849,  "HGEMM",           40,        8,     1,
+  "HGEMM tiled (8w)",       16687,  "HGEMM",          148,        8,     2,
+  "HGEMM 16-warp",          18700,  "HGEMM",           64,       32,     3,
+  "Online-quant v2",        12707,  "Online-quant",   239,        8,     4,
+  "In-place quant",         16646,  "Online-quant",   213,        8,     5,
+  "Bank-free quant",        17070,  "Online-quant",   211,        8,     6
+) |>
+  mutate(kernel = factor(kernel, levels = kernel[order(order)]))
+
+ggplot(comparison_data, aes(x = kernel, y = gflops / 1000, fill = path)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = sprintf("%.1fk\n(%d regs, %dw)",
+                                gflops / 1000, regs, warps_sm)),
+            vjust = -0.2, size = 3, lineheight = 0.85) +
+  scale_fill_manual(
+    values = c("HGEMM" = gpu_blue, "Online-quant" = gpu_orange),
+    name = "Compute path"
+  ) +
+  geom_hline(yintercept = 174, linetype = "dashed", color = gpu_grey) +
+  annotate("text", x = 1, y = 176, label = "FP16 peak: 174 TFLOPS",
+           hjust = 0, color = "grey50", size = 3) +
+  labs(
+    title = "HMMA vs Online-Quant IMMA: The Occupancy Argument",
+    subtitle = "FP16 GEMM throughput at M = N = K = 4096, RTX 3070 Ti",
+    x = NULL,
+    y = "Effective GFLOPS (thousands)"
+  ) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  coord_cartesian(ylim = c(0, 25))
+```
+
+The progression in @fig-hmma-vs-imma tells a clear story:
+
+1. **The naive HGEMM was a misleading baseline.** At 7,849 GFLOPS with 32x32
+   tiles, it is bandwidth-bound. The +118% gap to online-quant was an artifact
+   of comparing optimized INT8 to unoptimized FP16.
+
+2. **Tiled HGEMM matches online-quant.** With identical tiling (128x128, 8 warps,
+   cp.async), the HGEMM achieves 16,687 GFLOPS vs 17,070 GFLOPS --- within 2%.
+
+3. **The 16-warp HGEMM wins.** By reducing registers from 148 to 64, the 16-warp
+   variant achieves 2 blocks/SM (32 warps) vs 1 block/SM (8 warps) for online-quant.
+   The occupancy advantage is decisive: **+12% over the 8-warp tiled HGEMM**,
+   projected to **~10% over online-quant bankfree**.
+
+
+### Why Online-Quant Cannot Match the Occupancy
+
+The online-quant approach carries three structural penalties:
+
+| Cost | Registers | Impact |
+|---|---|---|
+| INT32 WMMA accumulator | 64 regs | Required for IMMA output |
+| FP32 running accumulator | 64 regs | Required for cross-tile dequant |
+| Quantize logic (max_abs, scale, convert) | ~20 regs | Per-tile overhead |
+| **Minimum total** | **~148 regs** | **Locked to 1 block/SM** |
+
+The FP32 running accumulator is the killer: IMMA outputs INT32, but cross-tile
+accumulation requires FP32 (different scales per tile). This forces **two** full
+accumulator sets --- a cost the HGEMM path avoids entirely.
+
+
+## The Roofline Model {#sec-roofline}
+
+```{r fig-roofline}
+#| fig-cap: "Roofline model for key kernels on GA104. Most kernels operate in the compute-bound regime (right of the ridge point). The gap to the compute ceiling reflects occupancy and scheduling inefficiency, not memory bandwidth."
+
+roofline_kernels <- tibble::tribble(
+  ~kernel,              ~ai,   ~gflops,  ~type,
+  "SGEMM naive",          8,      461,   "FP32",
+  "HGEMM naive",         16,     7849,   "FP16 TC",
+  "HGEMM tiled",        128,    16687,   "FP16 TC",
+  "HGEMM 16-warp",      128,    18700,   "FP16 TC",
+  "Flash Attn Br16",     64,     6112,   "FP16 TC",
+  "Conv2d implicit",     64,     6687,   "FP16 TC",
+  "IGEMM 8w 128x256",  192,    27591,   "INT8 TC",
+  "Online-quant BF",    128,    17070,   "Online-quant"
+)
+
+bw <- 608  # GB/s
+ridge_fp16 <- 174000 / bw  # AI at which FP16 peak is reached
+
+# Roofline lines
+roofline_x <- seq(1, 512, by = 0.5)
+fp16_roof <- pmin(roofline_x * bw, 174000)
+int8_roof <- pmin(roofline_x * bw, 696000)
+fp32_roof <- pmin(roofline_x * bw, 21700)
+
+roof_df <- tibble(
+  ai = rep(roofline_x, 3),
+  gflops = c(fp32_roof, fp16_roof, int8_roof),
+  ceiling = rep(c("FP32 (21.7 TF)", "FP16 TC (174 TF)", "INT8 TC (696 TOP)"),
+                each = length(roofline_x))
+)
+
+ggplot() +
+  geom_line(data = roof_df, aes(x = ai, y = gflops / 1000, color = ceiling),
+            linewidth = 1, alpha = 0.6) +
+  geom_point(data = roofline_kernels,
+             aes(x = ai, y = gflops / 1000, shape = type), size = 3.5) +
+  geom_text(data = roofline_kernels,
+            aes(x = ai, y = gflops / 1000, label = kernel),
+            vjust = -1, size = 2.8, check_overlap = TRUE) +
+  scale_x_log10(breaks = c(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)) +
+  scale_y_log10(labels = label_comma(suffix = "k")) +
+  scale_color_manual(values = c(
+    "FP32 (21.7 TF)" = gpu_grey,
+    "FP16 TC (174 TF)" = gpu_blue,
+    "INT8 TC (696 TOP)" = gpu_green
+  )) +
+  annotation_logticks(sides = "bl") +
+  labs(
+    title = "Roofline Model: GA104 Kernel Performance",
+    subtitle = "608 GB/s DRAM bandwidth, three compute ceilings",
+    x = "Arithmetic Intensity (FLOPs / byte)",
+    y = "Throughput (GFLOPS, thousands)",
+    color = "Compute ceiling",
+    shape = "Kernel type"
+  )
+```
+
+@fig-roofline shows that all tiled Tensor Core kernels operate firmly in the
+compute-bound regime (arithmetic intensity > 64 ops/byte). The gap between
+measured throughput and the compute ceiling represents **scheduling inefficiency**
+--- primarily occupancy limitations and Tensor Core pipeline bubbles, not memory
+bandwidth.
+
+The IGEMM 8-warp 128x256 kernel achieves 4.0% of INT8 peak at 192 ops/byte.
+The HGEMM 16-warp achieves ~10.7% of FP16 peak at 128 ops/byte. The higher
+percentage for HGEMM reflects its better occupancy (32 vs 8 warps/SM).
+
+## The Inner Loop Length Rule {#sec-inner-loop}
+
+One of the most counter-intuitive findings: **shorter inner loops consistently
+outperform longer ones at 8 warps/SM**, even when longer loops have higher
+arithmetic intensity.
+
+```{r fig-inner-loop}
+#| fig-cap: "Inner loop length vs performance across multiple kernel families. In every case, shorter loops (fewer Tensor Core instructions between synchronization points) outperform longer loops at the same occupancy level."
+
+loop_data <- tibble::tribble(
+  ~kernel,              ~tc_per_tile,  ~perf,     ~family,
+  "IGEMM 64x64\nBK=32",        8,     20688,     "IGEMM pipelined",
+  "IGEMM 64x64\nBK=64",       16,     19725,     "IGEMM pipelined",
+  "IGEMM 128x128\n4-warp",    16,     12760,     "IGEMM tiled",
+  "IGEMM 64x64\n4-warp",       4,     15078,     "IGEMM tiled",
+  "FlashAttn\nBc=64",         64,      6112,     "Flash Attention",
+  "FlashAttn\nBc=128",       128,      5098,     "Flash Attention"
+)
+
+ggplot(loop_data, aes(x = tc_per_tile, y = perf / 1000, color = family)) +
+  geom_point(size = 4) +
+  geom_line(aes(group = family), linewidth = 0.8, alpha = 0.5) +
+  geom_text(aes(label = kernel), vjust = -1.2, size = 3, show.legend = FALSE) +
+  scale_color_manual(values = c(
+    "IGEMM pipelined" = gpu_green,
+    "IGEMM tiled" = gpu_blue,
+    "Flash Attention" = gpu_orange
+  )) +
+  labs(
+    title = "Inner Loop Length vs Throughput",
+    subtitle = "Shorter compute bursts allow more frequent warp switching, improving latency hiding",
+    x = "Tensor Core instructions per tile",
+    y = "Throughput (thousands)",
+    color = "Kernel family"
+  )
+```
+
+This pattern (@fig-inner-loop) reflects a fundamental constraint of the GA104
+warp scheduler: with only 8 warps per SM, a long compute burst from one warp
+monopolizes the Tensor Core unit, preventing other warps from making progress
+on their own compute. Shorter bursts allow more frequent context switching,
+smoothing out DRAM latency spikes across warps.
+
+**This rule breaks at higher occupancy.** The 16-warp HGEMM (32 warps/SM) has
+enough warps to hide latency even with moderate loop lengths, which is why the
+128x128 tile works well despite 16 HMMA per K-step per warp.
+
+
+## Tensor Core Pipeline Characteristics {#sec-tc-pipeline}
+
+CuAssembler disassembly reveals fundamentally different pipeline behaviors
+for HMMA (FP16) and IMMA (INT8) Tensor Core instructions:
+
+| Property | HMMA.16816.F32 | IMMA.16816.S8.S8 |
+|---|---|---|
+| Issue interval (same warp) | **S08** (8 cycles, hardware-fixed) | S04 (compiler), **S02** optimal |
+| Constraint type | TC pipeline depth | Register read port contention |
+| Hand-tuning potential | None | +1.6% (S04 to S02) |
+| Instructions per PTX `mma.sync` | 2 | 2 |
+
+The HMMA S08 constraint is architectural: the Tensor Core pipeline is 8 stages
+deep, and consecutive HMMAs from the same warp must wait for the pipeline.
+The optimal pattern interleaves LDSM (shared memory loads) between HMMA pairs:
+
+```
+LDSM R44, [addr]       W0 S02   ; async smem load, set barrier 0
+HMMA Ra, Rb, R44, Rc   B0 S08   ; wait barrier 0, 8-cycle stall
+HMMA Rd, Re, R46, Rf      S01   ; uses R46 from PREVIOUS LDSM (ready)
+LDSM R44, [addr+1]     W0 S07   ; start next load
+```
+
+This achieves near-maximum utilization: each LDSM overlaps with 2 HMMAs.
+
+
+## Conclusions {#sec-conclusions}
+
+### The Three Laws of GA104 Kernel Design
+
+1. **Occupancy is king.** The gap between 8 warps/SM and 32 warps/SM is worth
+   10--15% throughput. Design register and smem budgets to maximize blocks/SM.
+
+2. **cp.async is conditional.** It helps when the compute phase per tile is
+   shorter than ~37 cycles (300-cycle DRAM latency / 8 warps). For long compute
+   phases, warp interleaving already provides sufficient latency hiding.
+
+3. **Short inner loops beat high compute density.** At limited occupancy,
+   the warp scheduler needs frequent context-switch opportunities. Tiles that
+   generate 4--8 TC instructions per K-step outperform tiles with 16--128
+   instructions at the same warp count.
+
+### The Online-Quant Verdict
+
+The FP16-to-INT8 online quantization path was a productive experiment that
+yielded +118% over the naive HGEMM baseline. But the comparison was unfair:
+the naive HGEMM used no tiling, no pipelining, and no occupancy optimization.
+Once the HGEMM path received the same treatment (128x128 tiles, cp.async,
+16-warp occupancy), it matched and then exceeded the online-quant path by ~10%.
+
+The structural cause: IMMA's 4x theoretical advantage is consumed by:
+
+- **Double accumulator cost** (INT32 + FP32 running) = 128 registers minimum
+- **Quantization overhead** (~32% of tile time for max_abs + scale + convert)
+- **Occupancy penalty** (211 regs locks online-quant to 1 block/SM = 8 warps)
+
+The HGEMM path avoids all three, freeing register budget for occupancy.
+
+### Remaining Optimization Headroom
+
+At 10.7% of FP16 peak, significant headroom remains. The dominant bottleneck
+is now the Tensor Core utilization within each warp --- the S08 pipeline
+constraint means each warp can issue at most 1 HMMA per 8 cycles, regardless
+of how many independent operations are available. Higher occupancy (more warps)
+is the primary lever, and the 16-warp / 2-block configuration is near the
+practical maximum for 128x128 tiles on GA104.
+
+Further gains likely require:
+
+1. **LDSM-interleaved inner loops** (manual scheduling of smem loads between HMMA pairs)
+2. **Larger tiles (128x256)** at 16 warps --- if register pressure can be managed
+3. **Warp-level register tiling** beyond the WMMA API's fragment abstraction

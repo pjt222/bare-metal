@@ -1,0 +1,20 @@
+project:
+  type: default
+  output-dir: _output
+
+execute:
+  echo: false
+  warning: false
+  message: false
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 6
+    fig-dpi: 150
