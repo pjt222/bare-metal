@@ -893,4 +893,5 @@ FP16 GEMM via online INT8 quantization (M=N=K=4096):
   Online-quant v2 (sep bufs):   10.8 ms 12,707 GFLOPS  1.62×  (239 regs, 48 KB smem)
   Online-quant in-place:         8.3 ms 16,646 GFLOPS  2.12×  ← (213 regs, 40 KB smem)
   Warp-specialized (4+4):        8.6 ms 16,039 GFLOPS  2.04×  (255 regs, -3.66% vs in-place)
+  Bank-conflict-free:            8.05 ms 17,070 GFLOPS  2.18×  ← (211 regs, +2.5% vs in-place)
 ```
