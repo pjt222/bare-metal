@@ -189,6 +189,20 @@ int main(int argc, char **argv) {
     if (have_hgemm) {
         CHECK_CU(cuModuleGetFunction(&hgemm_func, hgemm_module, "hgemm_wmma"));
     }
+    // --- Load tiled HGEMM (128×128, 8-warp, cp.async) ---
+    CUmodule   hgemm_tiled_module = NULL;
+    CUfunction hgemm_tiled_func   = NULL;
+    bool have_hgemm_tiled = (cuModuleLoad(&hgemm_tiled_module, "../hgemm/hgemm_tiled.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_hgemm_tiled) {
+        CHECK_CU(cuModuleGetFunction(&hgemm_tiled_func, hgemm_tiled_module, "hgemm_tiled"));
+    }
+    // --- Load 16-warp HGEMM (128×128, 2 blocks/SM) ---
+    CUmodule   hgemm_16w_module = NULL;
+    CUfunction hgemm_16w_func   = NULL;
+    bool have_hgemm_16w = (cuModuleLoad(&hgemm_16w_module, "../hgemm/hgemm_16warp.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_hgemm_16w) {
+        CHECK_CU(cuModuleGetFunction(&hgemm_16w_func, hgemm_16w_module, "hgemm_16warp"));
+    }
     // --- Load persistent IGEMM kernel ---
     CUmodule   persistent_module = NULL;
     CUfunction persistent_func   = NULL;
@@ -217,7 +231,7 @@ int main(int argc, char **argv) {
     if (have_warpspec) {
         CHECK_CU(cuModuleGetFunction(&warpspec_func, warpspec_module, "igemm_warp_specialized"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -234,7 +248,9 @@ int main(int argc, char **argv) {
            have_inplace ? " + inplace" : "",
            have_bankfree ? " + bankfree" : "",
            have_warpspec ? " + warpspec" : "",
-           have_hgemm ? " + hgemm" : "");
+           have_hgemm ? " + hgemm" : "",
+           have_hgemm_tiled ? " + hgemm_tiled" : "",
+           have_hgemm_16w ? " + hgemm_16w" : "");
 
     // --- Allocate host memory ---
     size_t a_elems = (size_t)M * K;
@@ -297,7 +313,7 @@ int main(int argc, char **argv) {
 
     // --- FP16 device memory for online-quant and HGEMM ---
     CUdeviceptr dev_a_fp16 = 0, dev_b_fp16 = 0;
-    if (have_onlinequant || have_hgemm) {
+    if (have_onlinequant || have_hgemm || have_hgemm_tiled || have_hgemm_16w) {
         // Convert FP32 host data to FP16 and upload
         unsigned short *host_a_fp16 = (unsigned short *)malloc(a_elems * sizeof(unsigned short));
         unsigned short *host_b_fp16 = (unsigned short *)malloc(b_elems * sizeof(unsigned short));
@@ -579,6 +595,20 @@ int main(int argc, char **argv) {
             auto r_hg = check_fp32(host_c_fp32, host_ref, c_elems, 1e-2f, 1e-2f);
             print_check_result("hgemm_wmma (FP16 baseline)", r_hg);
         }
+        // Tiled HGEMM (128×128 cp.async)
+        if (have_hgemm_tiled) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_ht[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_ht_x = (N + 127) / 128;
+            int grid_ht_y = (M + 127) / 128;
+            CHECK_CU(cuLaunchKernel(hgemm_tiled_func,
+                grid_ht_x, grid_ht_y, 1,   256, 1, 1,
+                0, NULL, args_ht, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ht = check_fp32(host_c_fp32, host_ref, c_elems, 1e-1f, 1e-1f);
+            print_check_result("hgemm_tiled (128x128 cp.async)", r_ht);
+        }
         // 8-warp triple-buffer 128×128
         if (have_tribuf) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -841,6 +871,58 @@ int main(int argc, char **argv) {
         printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 baseline)\n",
                "hgemm_wmma (FP16)", ms, hgemm_gflops);
     }
+    double hgemm_tiled_gflops = 0.0;
+    if (have_hgemm_tiled) {
+        int grid_ht_x = (N + 127) / 128;
+        int grid_ht_y = (M + 127) / 128;
+        void *ht_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(hgemm_tiled_func,
+                grid_ht_x, grid_ht_y, 1, 256, 1, 1, 0, NULL, ht_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(hgemm_tiled_func,
+                    grid_ht_x, grid_ht_y, 1, 256, 1, 1, 0, NULL, ht_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        hgemm_tiled_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 tiled)\n",
+               "hgemm_tiled (128x128)", ms, hgemm_tiled_gflops);
+    }
+    double hgemm_16w_gflops = 0.0;
+    if (have_hgemm_16w) {
+        int grid_h16_x = (N + 127) / 128;
+        int grid_h16_y = (M + 127) / 128;
+        void *h16_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(hgemm_16w_func,
+                grid_h16_x, grid_h16_y, 1, 512, 1, 1, 0, NULL, h16_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(hgemm_16w_func,
+                    grid_h16_x, grid_h16_y, 1, 512, 1, 1, 0, NULL, h16_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        hgemm_16w_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 16-warp)\n",
+               "hgemm_16warp (2blk/SM)", ms, hgemm_16w_gflops);
+    }
     double cpasync_bk64_tops = 0.0;
     if (have_cpasync_bk64)
         cpasync_bk64_tops = run_bench(cpasync_bk64_func, grid_tiled_x, grid_tiled_y, 64, 2,
@@ -956,6 +1038,22 @@ int main(int argc, char **argv) {
         printf("  Warp-spec IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
                warpspec_gflops / hgemm_gflops,
                100.0 * (warpspec_gflops - hgemm_gflops) / hgemm_gflops);
+    if (hgemm_tiled_gflops > 0 && hgemm_gflops > 0)
+        printf("  Tiled HGEMM vs naive HGEMM: %.4f×  (%+.2f%%)\n",
+               hgemm_tiled_gflops / hgemm_gflops,
+               100.0 * (hgemm_tiled_gflops - hgemm_gflops) / hgemm_gflops);
+    if (hgemm_tiled_gflops > 0 && bankfree_gflops > 0)
+        printf("  Tiled HGEMM vs bank-free online-quant: %.4f×  (%+.2f%%)\n",
+               hgemm_tiled_gflops / bankfree_gflops,
+               100.0 * (hgemm_tiled_gflops - bankfree_gflops) / bankfree_gflops);
+    if (hgemm_16w_gflops > 0 && bankfree_gflops > 0)
+        printf("  16-warp HGEMM vs bank-free online-quant: %.4f×  (%+.2f%%)\n",
+               hgemm_16w_gflops / bankfree_gflops,
+               100.0 * (hgemm_16w_gflops - bankfree_gflops) / bankfree_gflops);
+    if (hgemm_16w_gflops > 0 && hgemm_tiled_gflops > 0)
+        printf("  16-warp vs 8-warp HGEMM: %.4f×  (%+.2f%%)\n",
+               hgemm_16w_gflops / hgemm_tiled_gflops,
+               100.0 * (hgemm_16w_gflops - hgemm_tiled_gflops) / hgemm_tiled_gflops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -985,6 +1083,8 @@ int main(int argc, char **argv) {
     if (bankfree_module) cuModuleUnload(bankfree_module);
     if (warpspec_module) cuModuleUnload(warpspec_module);
     if (hgemm_module) cuModuleUnload(hgemm_module);
+    if (hgemm_tiled_module) cuModuleUnload(hgemm_tiled_module);
+    if (hgemm_16w_module) cuModuleUnload(hgemm_16w_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);
