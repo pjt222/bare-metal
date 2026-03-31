@@ -820,6 +820,40 @@ even when the smem savings themselves don't change occupancy. Always check `cuob
 
 ---
 
+**Insight 23: Warp specialization (4 IMMA + 4 quant) doesn't help online-quant IGEMM (-3.66%).**
+The idea: split 8 warps into 4 IMMA (compute on cur_buf) + 4 quantize (load+convert next_buf),
+overlapping quantize with IMMA. Target: save the ~32% per-tile overhead that quantize adds
+(20.7 µs/tile, measured as 8.255 ms in-place vs 5.607 ms INT8-only at 128×128).
+
+Result: 16,039 GFLOPS = **-3.66% vs in-place (16,646)**. Three reasons for failure:
+
+1. **Register cliff.** 4 IMMA warps on 128×128 = 16 WMMA tiles per warp = 128 regs for
+   running[] + 128 regs for acc[] = 256 regs → guaranteed spill. The workaround: process
+   each warp's 4×4 tiles in two 2×4 halves, time-sharing acc[2][4]. This doubled the IMMA
+   inner loop (128 IMMA instructions vs 64) and pushed the kernel to 255 regs (vs 213).
+
+2. **Insight 13 strikes again.** With 4 IMMA warps each running a 2-half inner loop
+   (32 mma_sync per K-tile per warp vs 16 in the in-place kernel), warp interleaving is
+   halved. The 4 quant warps provide some scheduling diversity, but they execute FP32
+   scalar code (h2f, fmul, f2i), not IMMA — the warp scheduler can't pipeline them with
+   Tensor Core operations.
+
+3. **Instruction footprint.** 11,319 SASS lines vs 7,127 — 59% larger. The divergent
+   if/else for IMMA vs quant paths, plus the doubled IMMA loop, bloats the code beyond
+   L0 I-cache capacity, causing instruction fetch stalls.
+
+Named barriers (`bar.sync <id>, <count>` PTX) worked correctly for asymmetric synchronization:
+128-thread quant-internal barriers plus 256-thread tile-boundary barriers. This technique is
+sound — the problem is that the overlap target (quantize time) is swamped by the structural
+costs of halving the IMMA warp count.
+
+**Key takeaway: warp specialization requires that the specialized groups maintain equivalent
+pipeline utilization.** When one group (IMMA) needs 2× the inner loop to compensate for half
+the warps, the cure is worse than the disease. A better target: reduce quantize cost directly
+(bank-conflict-free smem access patterns, vectorized INT8 writes) without splitting warps.
+
+---
+
 ### The Complete Performance Hierarchy (RTX 3070 Ti, SD UNet params)
 
 ```
@@ -858,4 +892,5 @@ FP16 GEMM via online INT8 quantization (M=N=K=4096):
   HGEMM (naive, FP16→FP32):     17.5 ms  7,849 GFLOPS  1×
   Online-quant v2 (sep bufs):   10.8 ms 12,707 GFLOPS  1.62×  (239 regs, 48 KB smem)
   Online-quant in-place:         8.3 ms 16,646 GFLOPS  2.12×  ← (213 regs, 40 KB smem)
+  Warp-specialized (4+4):        8.6 ms 16,039 GFLOPS  2.04×  (255 regs, -3.66% vs in-place)
 ```

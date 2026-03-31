@@ -203,7 +203,14 @@ int main(int argc, char **argv) {
     if (have_perchannel) {
         CHECK_CU(cuModuleGetFunction(&perchannel_func, perchannel_module, "igemm_pipelined_cpasync_perchannel"));
     }
-    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
+    // --- Load warp-specialized online-quant IGEMM kernel ---
+    CUmodule   warpspec_module = NULL;
+    CUfunction warpspec_func   = NULL;
+    bool have_warpspec = (cuModuleLoad(&warpspec_module, "igemm_warp_specialized.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_warpspec) {
+        CHECK_CU(cuModuleGetFunction(&warpspec_func, warpspec_module, "igemm_warp_specialized"));
+    }
+    printf("IGEMM kernels loaded: naive%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s.\n\n",
            have_tiled ? " + tiled" : "",
            have_regblk ? " + register-blocked" : "",
            have_handtuned ? " + handtuned" : "",
@@ -218,6 +225,7 @@ int main(int argc, char **argv) {
            have_persistent ? " + persistent" : "",
            have_onlinequant ? " + online-quant" : "",
            have_inplace ? " + inplace" : "",
+           have_warpspec ? " + warpspec" : "",
            have_hgemm ? " + hgemm" : "");
 
     // --- Allocate host memory ---
@@ -521,6 +529,20 @@ int main(int argc, char **argv) {
             auto r_ip = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
             print_check_result("igemm_inplace (FP16→INT8 in-place)", r_ip);
         }
+        // Warp-specialized online-quant FP16→INT8 128×128
+        if (have_warpspec) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            void *args_ws[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+            int grid_ws_x = (N + 127) / 128;
+            int grid_ws_y = (M + 127) / 128;
+            CHECK_CU(cuLaunchKernel(warpspec_func,
+                grid_ws_x, grid_ws_y, 1,   256, 1, 1,
+                0, NULL, args_ws, NULL));
+            CHECK_CU(cuCtxSynchronize());
+            CHECK_CU(cuMemcpyDtoH(host_c_fp32, dev_c, c_elems * sizeof(float)));
+            auto r_ws = check_fp32(host_c_fp32, host_ref, c_elems, 0.5f, 0.1f);
+            print_check_result("igemm_warpspec (FP16→INT8 warp-spec)", r_ws);
+        }
         // HGEMM baseline (FP16)
         if (have_hgemm) {
             CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
@@ -719,6 +741,32 @@ int main(int argc, char **argv) {
         printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in, in-place)\n",
                "igemm_inplace (FP16→INT8)", ms, inplace_gflops);
     }
+    double warpspec_gflops = 0.0;
+    if (have_warpspec) {
+        int grid_ws_x = (N + 127) / 128;
+        int grid_ws_y = (M + 127) / 128;
+        void *ws_args[] = { &dev_a_fp16, &dev_b_fp16, &dev_c, &M, &N, &K };
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+            CHECK_CU(cuLaunchKernel(warpspec_func,
+                grid_ws_x, grid_ws_y, 1, 256, 1, 1, 0, NULL, ws_args, NULL));
+        }
+        CHECK_CU(cuCtxSynchronize());
+        float ms;
+        {
+            BenchTimer timer;
+            timer.start();
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuMemsetD32(dev_c, 0, c_elems));
+                CHECK_CU(cuLaunchKernel(warpspec_func,
+                    grid_ws_x, grid_ws_y, 1, 256, 1, 1, 0, NULL, ws_args, NULL));
+            }
+            ms = timer.stop_ms() / bench_iters;
+        }
+        warpspec_gflops = compute_gflops_gemm(M, N, K, ms);
+        printf("  %-35s %7.3f ms   %8.2f GFLOPS  (FP16 in, warp-spec)\n",
+               "igemm_warpspec (FP16→INT8)", ms, warpspec_gflops);
+    }
     double hgemm_gflops = 0.0;
     if (have_hgemm) {
         int grid_hg_x = (N + 31) / 32;
@@ -844,6 +892,14 @@ int main(int argc, char **argv) {
         printf("  Online-quant IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
                onlinequant_gflops / hgemm_gflops,
                100.0 * (onlinequant_gflops - hgemm_gflops) / hgemm_gflops);
+    if (warpspec_gflops > 0 && inplace_gflops > 0)
+        printf("  Warp-spec vs in-place: %.4f×  (%+.2f%%)\n",
+               warpspec_gflops / inplace_gflops,
+               100.0 * (warpspec_gflops - inplace_gflops) / inplace_gflops);
+    if (warpspec_gflops > 0 && hgemm_gflops > 0)
+        printf("  Warp-spec IMMA vs HGEMM (FP16→FP16): %.4f×  (%+.2f%%)\n",
+               warpspec_gflops / hgemm_gflops,
+               100.0 * (warpspec_gflops - hgemm_gflops) / hgemm_gflops);
 
     printf("\nSASS inspection:\n");
     printf("  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive\n");
@@ -870,6 +926,7 @@ int main(int argc, char **argv) {
     if (cpasync_module) cuModuleUnload(cpasync_module);
     if (persistent_module) cuModuleUnload(persistent_module);
     if (onlinequant_module) cuModuleUnload(onlinequant_module);
+    if (warpspec_module) cuModuleUnload(warpspec_module);
     if (hgemm_module) cuModuleUnload(hgemm_module);
     cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
