@@ -610,7 +610,10 @@ The three highest-impact optimizations, in recommended order:
 3. **LDSM-interleaved inner loops** (+5--15%): manual scheduling of smem loads
    between HMMA pairs for near-maximum TC pipeline utilization. (Issue #19)
 
-The theoretical progression: 18.7 TFLOPS $\to$ ~21.5 (padding) $\to$ ~24 (tile)
-$\to$ ~25 TFLOPS combined ceiling (~14% of FP16 peak). Crossing 20% would
-require fundamentally higher AI (e.g., 256x256 BK=64) that GA104's smem cliff
-makes difficult without accepting 1-block occupancy.
+**Update (post-optimization sprint):** Steps 1-2 alone achieved **32,197 GFLOPS
+(18.5% of FP16 peak)** --- far exceeding the predicted ~25 TFLOPS ceiling.
+Bank-conflict padding (+39%) and 16-byte cp.async (+39%) compound dramatically.
+Step 3 (256x128 tile) was a negative result (-38%: occupancy loss outweighs
+higher AI). Steps 4-5 (triple-buffer, LDSM interleaving) are infeasible or
+yield <3% at 32 warps/SM. The 128x128 padded tile at 2 blocks/SM is near
+the architectural equilibrium for GA104.
