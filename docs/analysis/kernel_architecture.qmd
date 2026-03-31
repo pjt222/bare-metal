@@ -474,15 +474,17 @@ ggplot() +
   )
 ```
 
-@fig-roofline shows that all tiled Tensor Core kernels operate firmly in the
-compute-bound regime (arithmetic intensity > 64 ops/byte). The gap between
-measured throughput and the compute ceiling represents **scheduling inefficiency**
---- primarily occupancy limitations and Tensor Core pipeline bubbles, not memory
-bandwidth.
+@fig-roofline reveals a critical insight: **the HGEMM kernels at 128 ops/byte
+are below the GA104 machine balance point of 286 ops/byte** (174 TFLOPS / 608
+GB/s), placing them in the **memory-bandwidth-limited regime**. The gap to the
+compute ceiling is not just scheduling inefficiency --- it reflects insufficient
+arithmetic intensity to saturate the Tensor Cores.
 
-The IGEMM 8-warp 128x256 kernel achieves 4.0% of INT8 peak at 192 ops/byte.
-The HGEMM 16-warp achieves ~10.7% of FP16 peak at 128 ops/byte. The higher
-percentage for HGEMM reflects its better occupancy (32 vs 8 warps/SM).
+This explains why the 16-warp HGEMM at 128 ops/byte achieves only ~10.7% of
+FP16 peak: at 22% of machine balance, throughput is capped by DRAM bandwidth.
+The IGEMM 8-warp 128x256 kernel (192 ops/byte, 67% of balance) does better at
+4.0% of INT8 peak. **The next optimization target is increasing arithmetic
+intensity** via asymmetric tiles (256x128 → 85 ops/byte) or larger BK.
 
 ## The Inner Loop Length Rule {#sec-inner-loop}
 
@@ -593,14 +595,22 @@ The HGEMM path avoids all three, freeing register budget for occupancy.
 ### Remaining Optimization Headroom
 
 At 10.7% of FP16 peak, significant headroom remains. The dominant bottleneck
-is now the Tensor Core utilization within each warp --- the S08 pipeline
-constraint means each warp can issue at most 1 HMMA per 8 cycles, regardless
-of how many independent operations are available. Higher occupancy (more warps)
-is the primary lever, and the 16-warp / 2-block configuration is near the
-practical maximum for 128x128 tiles on GA104.
+is **arithmetic intensity**: at 128 ops/byte (128x128 tiles), the kernel is at
+only 22% of GA104's machine balance point (286 ops/byte). DRAM bandwidth, not
+Tensor Core scheduling, caps throughput. SASS inspection also reveals **4-way
+bank conflicts** on LDSM accesses to both `smem_a` and `smem_b`.
 
-Further gains likely require:
+The three highest-impact optimizations, in recommended order:
 
-1. **LDSM-interleaved inner loops** (manual scheduling of smem loads between HMMA pairs)
-2. **Larger tiles (128x256)** at 16 warps --- if register pressure can be managed
-3. **Warp-level register tiling** beyond the WMMA API's fragment abstraction
+1. **smem bank-conflict-free padding** (+8--15%): add 8-element row padding to
+   break 4-way bank conflicts on LDSM. Smem grows from 32 to 37 KB, preserving
+   2 blocks/SM. Low risk. (Issue #23)
+2. **Asymmetric 256x128 tiles** (+15--25%): raise AI from 64 to 85 ops/byte.
+   Same register count (64), smem at 48 KB (under cliff). Medium risk. (Issue #24)
+3. **LDSM-interleaved inner loops** (+5--15%): manual scheduling of smem loads
+   between HMMA pairs for near-maximum TC pipeline utilization. (Issue #19)
+
+The theoretical progression: 18.7 TFLOPS $\to$ ~21.5 (padding) $\to$ ~24 (tile)
+$\to$ ~25 TFLOPS combined ceiling (~14% of FP16 peak). Crossing 20% would
+require fundamentally higher AI (e.g., 256x256 BK=64) that GA104's smem cliff
+makes difficult without accepting 1-block occupancy.
