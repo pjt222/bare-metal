@@ -37,6 +37,14 @@ using namespace nvcuda;
 #define BN 128
 #define BK 32
 
+// Bank-conflict-free padding: offset row stride so LDSM accesses
+// hit different banks. Without padding, stride=64B (A) and 256B (B)
+// cause 4-way bank conflicts under the 128-byte bank period.
+#define PAD_A    8    // smem_a row stride: BK+8 = 40 halfs = 80 bytes
+#define PAD_B    8    // smem_b row stride: BN+8 = 136 halfs = 272 bytes
+#define STRIDE_A (BK + PAD_A)
+#define STRIDE_B (BN + PAD_B)
+
 #define NUM_WARPS   16
 #define WARP_SIZE   32
 #define BLOCK_SIZE  (NUM_WARPS * WARP_SIZE)  // 512 threads
@@ -64,9 +72,9 @@ void hgemm_16warp(
     float        * __restrict__ matrix_c,
     int M, int N, int K
 ) {
-    __shared__ __align__(16) __half smem_a[2][BM * BK];   // 16 KB
-    __shared__ __align__(16) __half smem_b[2][BK * BN];   // 16 KB
-    // Total: 32 KB — well under 50 KB cliff for 2 blocks/SM
+    __shared__ __align__(16) __half smem_a[2][BM * STRIDE_A];   // 20 KB (padded)
+    __shared__ __align__(16) __half smem_b[2][BK * STRIDE_B];  // 17 KB (padded)
+    // Total: 37 KB — under 50 KB cliff for 2 blocks/SM
 
     int tid     = threadIdx.x;
     int warp_id = tid / WARP_SIZE;
@@ -90,20 +98,21 @@ void hgemm_16warp(
     #define LOAD_A_TILE(buf, k_base)                                          \
         _Pragma("unroll")                                                     \
         for (int _i = 0; _i < CP_ELEMS_A; _i++) {                           \
-            int _elem = (tid + _i * BLOCK_SIZE) * ELEMS_PER_COPY;           \
-            int _row  = _elem / BK;                                          \
-            int _col  = _elem % BK;                                          \
+            int _flat = (tid + _i * BLOCK_SIZE) * ELEMS_PER_COPY;           \
+            int _row  = _flat / BK;                                          \
+            int _col  = _flat % BK;                                          \
+            int _soff = _row * STRIDE_A + _col;                             \
             int _grow = block_row + _row;                                    \
             int _gcol = (k_base) + _col;                                    \
             if (_grow < M && _gcol + ELEMS_PER_COPY - 1 < K) {             \
                 __pipeline_memcpy_async(                                      \
-                    &smem_a[buf][_elem],                                      \
+                    &smem_a[buf][_soff],                                      \
                     &matrix_a[_grow * K + _gcol],                            \
                     CP_ASYNC_BYTES);                                          \
             } else {                                                          \
                 for (int _b = 0; _b < ELEMS_PER_COPY; _b++) {              \
                     int _gc = _gcol + _b;                                    \
-                    smem_a[buf][_elem + _b] = (_grow < M && _gc < K)        \
+                    smem_a[buf][_soff + _b] = (_grow < M && _gc < K)        \
                         ? matrix_a[_grow * K + _gc] : __float2half(0.0f);   \
                 }                                                             \
             }                                                                 \
@@ -112,20 +121,21 @@ void hgemm_16warp(
     #define LOAD_B_TILE(buf, k_base)                                          \
         _Pragma("unroll")                                                     \
         for (int _i = 0; _i < CP_ELEMS_B; _i++) {                           \
-            int _elem = (tid + _i * BLOCK_SIZE) * ELEMS_PER_COPY;           \
-            int _row  = _elem / BN;                                          \
-            int _col  = _elem % BN;                                          \
+            int _flat = (tid + _i * BLOCK_SIZE) * ELEMS_PER_COPY;           \
+            int _row  = _flat / BN;                                          \
+            int _col  = _flat % BN;                                          \
+            int _soff = _row * STRIDE_B + _col;                             \
             int _grow = (k_base) + _row;                                    \
             int _gcol = block_col + _col;                                    \
             if (_grow < K && _gcol + ELEMS_PER_COPY - 1 < N) {             \
                 __pipeline_memcpy_async(                                      \
-                    &smem_b[buf][_elem],                                      \
+                    &smem_b[buf][_soff],                                      \
                     &matrix_b[_grow * N + _gcol],                            \
                     CP_ASYNC_BYTES);                                          \
             } else {                                                          \
                 for (int _b = 0; _b < ELEMS_PER_COPY; _b++) {              \
                     int _gc = _gcol + _b;                                    \
-                    smem_b[buf][_elem + _b] = (_grow < K && _gc < N)        \
+                    smem_b[buf][_soff + _b] = (_grow < K && _gc < N)        \
                         ? matrix_b[_grow * N + _gc] : __float2half(0.0f);   \
                 }                                                             \
             }                                                                 \
@@ -140,7 +150,7 @@ void hgemm_16warp(
             for (int wi = 0; wi < WARP_TILES_M; wi++) {                      \
                 int a_row = wy * 32 + wi * WMMA_M;                           \
                 wmma::load_matrix_sync(a_frag[wi],                            \
-                    &smem_a[buf][a_row * BK + k_local], BK);                 \
+                    &smem_a[buf][a_row * STRIDE_A + k_local], STRIDE_A);     \
             }                                                                  \
             wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K,          \
                            __half, wmma::row_major> b_frag[WARP_TILES_N];   \
@@ -148,7 +158,7 @@ void hgemm_16warp(
             for (int wj = 0; wj < WARP_TILES_N; wj++) {                      \
                 int b_col = wx * 32 + wj * WMMA_N;                           \
                 wmma::load_matrix_sync(b_frag[wj],                            \
-                    &smem_b[buf][k_local * BN + b_col], BN);                 \
+                    &smem_b[buf][k_local * STRIDE_B + b_col], STRIDE_B);     \
             }                                                                  \
             _Pragma("unroll")                                                 \
             for (int wi = 0; wi < WARP_TILES_M; wi++)                         \
