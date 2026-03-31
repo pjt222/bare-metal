@@ -57,6 +57,7 @@ static void cpu_sparse_gemm(
     float *C,              // [M × N]
     int M, int N, int K
 ) {
+    #pragma omp parallel for collapse(2) schedule(static)
     for (int row = 0; row < M; row++) {
         for (int col = 0; col < N; col++) {
             float acc = 0.0f;

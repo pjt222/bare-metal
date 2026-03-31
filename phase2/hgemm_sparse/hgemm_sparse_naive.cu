@@ -15,13 +15,21 @@
  * Fragment loading: ldmatrix from shared memory handles the hardware fragment
  * layout automatically. No manual element-to-register mapping needed.
  *
- * Accumulator layout (PTX mma.sync, NOT WMMA — differs from verify_wmma_layout):
- *   groupID = lane >> 2 (0..7)
- *   row_even = (groupID < 4) ? groupID*2 : (groupID-4)*2 + 8
- *   row_odd  = row_even + 1
- *   d0 = C[row_even][col0], d1 = C[row_even][col1]
- *   d2 = C[row_odd][col0],  d3 = C[row_odd][col1]
- *   col0 = (lane & 3) * 2, col1 = col0 + 1
+ * Fragment layout (verified empirically on sm_86 via verify_wmma_ab_layout.cu):
+ *   gid = lane >> 2 (0..7), tid = lane & 3 (0..3)
+ *
+ *   A (sparse, row-major [16 × K/2], 2 regs):
+ *     a0 = {A_comp[gid][tid*2],   A_comp[gid][tid*2+1]}     row gid
+ *     a1 = {A_comp[gid+8][tid*2], A_comp[gid+8][tid*2+1]}   row gid+8
+ *
+ *   B (dense, row-major [K × N] in smem, col-major register packing, 2 regs per sub-tile):
+ *     b0 = {B[tid*2][n],   B[tid*2+1][n]}     K rows tid*2..tid*2+1
+ *     b1 = {B[tid*2+8][n], B[tid*2+9][n]}     K rows tid*2+8..tid*2+9
+ *     n = gid for left sub-tile (N=0..7), gid+8 for right (N=8..15)
+ *
+ *   Accumulator (4 regs):
+ *     d0 = C[gid][tid*2],   d1 = C[gid][tid*2+1]
+ *     d2 = C[gid+8][tid*2], d3 = C[gid+8][tid*2+1]
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_naive.sm_86.cubin hgemm_sparse_naive.cu
@@ -98,52 +106,51 @@ void hgemm_sparse_naive(
         }
         __syncwarp();
 
-        // ---- Manual fragment construction (bypass ldmatrix for correctness) ----
-        // PTX mma.sync.m16n8k16 fragment layouts:
+        // ---- Fragment construction using empirically verified sm_86 layout ----
+        // Verified via verify_wmma_ab_layout.cu and test_dense_manual.cu bridging test.
         //
-        // A row-major (sparse, k_stored=8, 2 regs):
-        //   groupID = lane >> 2, tid = lane & 3
-        //   row_even = (groupID<4) ? groupID*2 : (groupID-4)*2+8
-        //   row_odd  = row_even + 1
-        //   a0 = {A_comp[row_even][tid*2], A_comp[row_even][tid*2+1]}
-        //   a1 = {A_comp[row_odd][tid*2],  A_comp[row_odd][tid*2+1]}
-        //
-        // B col-major (dense, k=16, 2 regs):
-        //   b0 = {B[tid*4+0][col], B[tid*4+1][col]}
-        //   b1 = {B[tid*4+2][col], B[tid*4+3][col]}
-        //   col = groupID (0..7 for N sub-tile)
-        int groupID_ptx = lane >> 2;
+        // Key discovery: sm_86 uses (gid, gid+8) row mapping, NOT the PTX ISA's
+        // documented (2*gid, 2*gid+1). B uses col-major register packing: 2 K-rows
+        // per register for a single N column (gid→N, tid→K), not the row-major
+        // packing the PTX docs suggest.
+        int gid = lane >> 2;
         int tid = lane & 3;
-        int a_row_even = (groupID_ptx < 4) ? (groupID_ptx * 2) : ((groupID_ptx - 4) * 2 + 8);
-        int a_row_odd  = a_row_even + 1;
 
-        // Load A fragment (sparse, row-major [16 × 8])
-        __half2 a0_h2 = __halves2half2(smem_a[a_row_even * 8 + tid * 2],
-                                        smem_a[a_row_even * 8 + tid * 2 + 1]);
-        __half2 a1_h2 = __halves2half2(smem_a[a_row_odd  * 8 + tid * 2],
-                                        smem_a[a_row_odd  * 8 + tid * 2 + 1]);
+        // A fragment (sparse, row-major [16 × 8], 2 regs)
+        //   a0 = {A_comp[gid][tid*2], A_comp[gid][tid*2+1]}
+        //   a1 = {A_comp[gid+8][tid*2], A_comp[gid+8][tid*2+1]}
+        int a_row_lo = gid;
+        int a_row_hi = gid + 8;
+
+        __half2 a0_h2 = __halves2half2(smem_a[a_row_lo * 8 + tid * 2],
+                                        smem_a[a_row_lo * 8 + tid * 2 + 1]);
+        __half2 a1_h2 = __halves2half2(smem_a[a_row_hi * 8 + tid * 2],
+                                        smem_a[a_row_hi * 8 + tid * 2 + 1]);
         uint32_t fa0 = *(uint32_t*)&a0_h2;
         uint32_t fa1 = *(uint32_t*)&a1_h2;
 
-        // Load B fragment — try row-major register layout:
-        //   groupID → K-row pair, tid → N-column pair
-        //   b0 = {B[k0][n0], B[k0][n1]}, b1 = {B[k1][n0], B[k1][n1]}
-        // For left sub-tile (n=0..7): n0 = tid*2, n1 = tid*2+1
-        int b_k0 = groupID_ptx * 2;
-        int b_k1 = b_k0 + 1;
+        // B fragment (dense, row-major [16 × 16] in smem, col-major reg packing, 2 regs per sub-tile)
+        //   b0 = {B[tid*2][n], B[tid*2+1][n]}       K rows tid*2..tid*2+1
+        //   b1 = {B[tid*2+8][n], B[tid*2+9][n]}     K rows tid*2+8..tid*2+9
+        //   n = gid for left sub-tile (N=0..7), gid+8 for right (N=8..15)
+        int b_k0 = tid * 2;
+        int b_k1 = tid * 2 + 1;
+        int b_k0_hi = tid * 2 + 8;
+        int b_k1_hi = tid * 2 + 9;
 
-        __half2 b_left0_h2 = __halves2half2(smem_b[b_k0 * 16 + tid * 2],
-                                             smem_b[b_k0 * 16 + tid * 2 + 1]);
-        __half2 b_left1_h2 = __halves2half2(smem_b[b_k1 * 16 + tid * 2],
-                                             smem_b[b_k1 * 16 + tid * 2 + 1]);
+        // Left sub-tile (N col = gid)
+        __half2 b_left0_h2 = __halves2half2(smem_b[b_k0    * 16 + gid],
+                                             smem_b[b_k1    * 16 + gid]);
+        __half2 b_left1_h2 = __halves2half2(smem_b[b_k0_hi * 16 + gid],
+                                             smem_b[b_k1_hi * 16 + gid]);
         uint32_t fb_left0 = *(uint32_t*)&b_left0_h2;
         uint32_t fb_left1 = *(uint32_t*)&b_left1_h2;
 
-        // For right sub-tile (n=8..15): n0 = 8 + tid*2, n1 = 8 + tid*2 + 1
-        __half2 b_right0_h2 = __halves2half2(smem_b[b_k0 * 16 + 8 + tid * 2],
-                                              smem_b[b_k0 * 16 + 8 + tid * 2 + 1]);
-        __half2 b_right1_h2 = __halves2half2(smem_b[b_k1 * 16 + 8 + tid * 2],
-                                              smem_b[b_k1 * 16 + 8 + tid * 2 + 1]);
+        // Right sub-tile (N col = gid + 8)
+        __half2 b_right0_h2 = __halves2half2(smem_b[b_k0    * 16 + gid + 8],
+                                              smem_b[b_k1    * 16 + gid + 8]);
+        __half2 b_right1_h2 = __halves2half2(smem_b[b_k0_hi * 16 + gid + 8],
+                                              smem_b[b_k1_hi * 16 + gid + 8]);
         uint32_t fb_right0 = *(uint32_t*)&b_right0_h2;
         uint32_t fb_right1 = *(uint32_t*)&b_right1_h2;
 
@@ -167,48 +174,39 @@ void hgemm_sparse_naive(
               "f"(d0_right), "f"(d1_right), "f"(d2_right), "f"(d3_right),
               "r"(meta));
 
-        // Debug: dump first block's fragment values
-        if (blockIdx.x == 0 && blockIdx.y == 0 && lane < 4 && k_base == 0) {
-            printf("lane=%d gid=%d tid=%d | a0=%08x a1=%08x | bL0=%08x bL1=%08x | d=[%.2f %.2f %.2f %.2f]\n",
-                   lane, groupID_ptx, tid, fa0, fa1, fb_left0, fb_left1,
-                   d0_left, d1_left, d2_left, d3_left);
-        }
-
         __syncwarp();
     }
 
-    // ---- Store output using PTX mma.sync accumulator layout ----
-    // (This is the PTX layout, NOT the WMMA layout from verify_wmma_layout.cu)
-    // groupID = lane >> 2 (0..7)
-    // row_even = (groupID < 4) ? groupID*2 : (groupID-4)*2 + 8
-    // row_odd  = row_even + 1
-    // col = (lane & 3) * 2 for d0/d2, (lane & 3) * 2 + 1 for d1/d3
+    // ---- Store output using verified sm_86 accumulator layout ----
+    // gid = lane >> 2 (0..7), tid = lane & 3 (0..3)
+    // d0 = C[gid][tid*2], d1 = C[gid][tid*2+1]
+    // d2 = C[gid+8][tid*2], d3 = C[gid+8][tid*2+1]
     int groupID  = lane >> 2;
-    int row_even = (groupID < 4) ? (groupID * 2) : ((groupID - 4) * 2 + 8);
-    int row_odd  = row_even + 1;
+    int row_lo   = groupID;
+    int row_hi   = groupID + 8;
     int col0     = (lane & 3) * 2;
     int col1     = col0 + 1;
 
-    int gr_even = tile_row + row_even;
-    int gr_odd  = tile_row + row_odd;
+    int gr_lo = tile_row + row_lo;
+    int gr_hi = tile_row + row_hi;
 
     // Left sub-tile (n=0..7)
-    if (gr_even < M) {
-        if (tile_col + col0 < N) C[(size_t)gr_even * N + tile_col + col0] = d0_left;
-        if (tile_col + col1 < N) C[(size_t)gr_even * N + tile_col + col1] = d1_left;
+    if (gr_lo < M) {
+        if (tile_col + col0 < N) C[(size_t)gr_lo * N + tile_col + col0] = d0_left;
+        if (tile_col + col1 < N) C[(size_t)gr_lo * N + tile_col + col1] = d1_left;
     }
-    if (gr_odd < M) {
-        if (tile_col + col0 < N) C[(size_t)gr_odd * N + tile_col + col0] = d2_left;
-        if (tile_col + col1 < N) C[(size_t)gr_odd * N + tile_col + col1] = d3_left;
+    if (gr_hi < M) {
+        if (tile_col + col0 < N) C[(size_t)gr_hi * N + tile_col + col0] = d2_left;
+        if (tile_col + col1 < N) C[(size_t)gr_hi * N + tile_col + col1] = d3_left;
     }
 
     // Right sub-tile (n=8..15)
-    if (gr_even < M) {
-        if (tile_col + 8 + col0 < N) C[(size_t)gr_even * N + tile_col + 8 + col0] = d0_right;
-        if (tile_col + 8 + col1 < N) C[(size_t)gr_even * N + tile_col + 8 + col1] = d1_right;
+    if (gr_lo < M) {
+        if (tile_col + 8 + col0 < N) C[(size_t)gr_lo * N + tile_col + 8 + col0] = d0_right;
+        if (tile_col + 8 + col1 < N) C[(size_t)gr_lo * N + tile_col + 8 + col1] = d1_right;
     }
-    if (gr_odd < M) {
-        if (tile_col + 8 + col0 < N) C[(size_t)gr_odd * N + tile_col + 8 + col0] = d2_right;
-        if (tile_col + 8 + col1 < N) C[(size_t)gr_odd * N + tile_col + 8 + col1] = d3_right;
+    if (gr_hi < M) {
+        if (tile_col + 8 + col0 < N) C[(size_t)gr_hi * N + tile_col + 8 + col0] = d2_right;
+        if (tile_col + 8 + col1 < N) C[(size_t)gr_hi * N + tile_col + 8 + col1] = d3_right;
     }
 }

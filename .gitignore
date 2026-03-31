@@ -10,6 +10,11 @@ bench
 bench_*
 !bench_*.cu
 phase1/host
+test_dense_manual
+test_mma_sp
+test_inplace_race
+verify_wmma_ab_layout
+verify_wmma_layout
 
 # Python
 __pycache__/
