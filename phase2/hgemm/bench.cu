@@ -87,6 +87,14 @@ int main(int argc, char **argv) {
         CHECK_CU(cuModuleGetFunction(&w16e_func, w16e_module, "hgemm_16warp_epi"));
     }
 
+    // --- Load 256×128 HGEMM kernel ---
+    CUmodule   w256_module = NULL;
+    CUfunction w256_func   = NULL;
+    bool have_w256 = (cuModuleLoad(&w256_module, "hgemm_256x128.sm_86.cubin") == CUDA_SUCCESS);
+    if (have_w256) {
+        CHECK_CU(cuModuleGetFunction(&w256_func, w256_module, "hgemm_256x128"));
+    }
+
     if (!have_naive && !have_tiled && !have_direct && !have_w16) {
         fprintf(stderr, "No kernels found. Build with:\n");
         fprintf(stderr, "  nvcc --cubin -arch=sm_86 -O2 -o hgemm.sm_86.cubin hgemm.cu\n");
@@ -285,6 +293,14 @@ int main(int argc, char **argv) {
     if (have_w16e)
         w16e_gflops = run_bench(w16e_func, grid_tiled_x, grid_tiled_y, 512, 1,
                                  "hgemm_16warp_epi (2blk+epi)");
+
+    double w256_gflops = 0.0;
+    if (have_w256) {
+        int grid_256_x = (N + 127) / 128;
+        int grid_256_y = (M + 255) / 256;
+        w256_gflops = run_bench(w256_func, grid_256_x, grid_256_y, 512, 1,
+                                 "hgemm_256x128 (1blk/SM AI=85)");
+    }
 
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP32 peak (FFMA)", "--", fp32_peak_gflops);
     printf("  %-35s %7s      %8.0f GFLOPS  (theoretical)\n", "FP16 Tensor Core peak", "--", fp16_peak_gflops);
