@@ -49,12 +49,12 @@ using namespace nvcuda;
 #define WARP_TILES_M 2
 #define WARP_TILES_N 2
 
-// cp.async: 8 bytes per call = 4 __half values
-// With 512 threads: 8192 / 512 / 8 = 2 calls per thread for each of A and B
-#define CP_ASYNC_BYTES  8
+// cp.async: 16 bytes per call = 8 __half values (LDGSTS.E.128)
+// With 512 threads: 8192 / 512 / 16 = 1 call per thread for each of A and B
+#define CP_ASYNC_BYTES  16
 #define ELEMS_PER_COPY  (CP_ASYNC_BYTES / 2)
-#define CP_ELEMS_A      (BM * BK / BLOCK_SIZE * 2 / CP_ASYNC_BYTES)   // 2
-#define CP_ELEMS_B      (BK * BN / BLOCK_SIZE * 2 / CP_ASYNC_BYTES)   // 2
+#define CP_ELEMS_A      (BM * BK / BLOCK_SIZE * 2 / CP_ASYNC_BYTES)   // 1
+#define CP_ELEMS_B      (BK * BN / BLOCK_SIZE * 2 / CP_ASYNC_BYTES)   // 1
 
 // 2 blocks/SM — requires ≤128 regs/thread, ≤50 KB smem/block
 extern "C" __global__ __launch_bounds__(BLOCK_SIZE, 2)
@@ -64,8 +64,8 @@ void hgemm_16warp(
     float        * __restrict__ matrix_c,
     int M, int N, int K
 ) {
-    __shared__ __align__(8) __half smem_a[2][BM * BK];   // 16 KB
-    __shared__ __align__(8) __half smem_b[2][BK * BN];   // 16 KB
+    __shared__ __align__(16) __half smem_a[2][BM * BK];   // 16 KB
+    __shared__ __align__(16) __half smem_b[2][BK * BN];   // 16 KB
     // Total: 32 KB — well under 50 KB cliff for 2 blocks/SM
 
     int tid     = threadIdx.x;
