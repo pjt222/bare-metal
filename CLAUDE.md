@@ -122,3 +122,9 @@ Tolerance conventions by precision:
 ## Current State and Next Steps
 
 All 5 phases complete. See `CONTINUE_HERE.md` for session state, benchmark results table, and prioritized next steps (split-Q Flash Attention, INT8 IMMA, persistent kernel grid). See `docs/gpu_reflections.md` for optimization postmortems.
+
+## Team Activation (REQUIRED when user requests a team)
+
+When the user asks to activate or use a team: (1) call `ToolSearch("select:TeamCreate")` to load the TeamCreate tool, (2) read the team definition from `/mnt/d/dev/p/agent-almanac/teams/<team-name>.md`, (3) call `TeamCreate` with the team configuration. Do NOT fall back to spawning individual agents via the Agent tool — always use TeamCreate for team requests.
+
+Available teams are listed in `/mnt/d/dev/p/agent-almanac/teams/_registry.yml`.

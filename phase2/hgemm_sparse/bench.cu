@@ -1,12 +1,17 @@
 /*
- * bench.cu — Benchmark: sparse HGEMM (mma.sp) vs dense HGEMM (WMMA)
+ * bench.cu — Benchmark: sparse HGEMM (mma.sp) naive vs tiled
  *
  * Tests 2:4 structured sparsity on GA104 (RTX 3070 Ti, sm_86).
  * Fixed 2:4 pattern: positions {0,1} per group of 4 along K are nonzero.
  *
+ * Benchmarks two kernels:
+ *   - hgemm_sparse_naive:  1 warp, no shared memory tiling
+ *   - hgemm_sparse_tiled:  16 warps, 128×128 output tiles via shared memory
+ *
  * Build:
  *   # In phase2/hgemm_sparse/
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_naive.sm_86.cubin hgemm_sparse_naive.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_tiled.sm_86.cubin hgemm_sparse_tiled.cu
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
  *
  * Usage:
@@ -92,21 +97,39 @@ int main(int argc, char **argv) {
 
     CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
 
-    // Load cubin
-    CUmodule mod_sparse;
-    CUfunction fn_sparse;
-    if (cuModuleLoad(&mod_sparse, "hgemm_sparse_naive.sm_86.cubin") != CUDA_SUCCESS) {
+    // =========================================================
+    // Load naive cubin
+    // =========================================================
+    CUmodule mod_naive;
+    CUfunction fn_naive;
+    if (cuModuleLoad(&mod_naive, "hgemm_sparse_naive.sm_86.cubin") != CUDA_SUCCESS) {
         fprintf(stderr, "Cannot load hgemm_sparse_naive.sm_86.cubin. Build first.\n");
         return 1;
     }
-    CHECK_CU(cuModuleGetFunction(&fn_sparse, mod_sparse, "hgemm_sparse_naive"));
+    CHECK_CU(cuModuleGetFunction(&fn_naive, mod_naive, "hgemm_sparse_naive"));
 
-    // Query kernel info
-    int regs = 0;
-    cuFuncGetAttribute(&regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_sparse);
-    printf("Sparse kernel registers: %d\n", regs);
+    int naive_regs = 0;
+    cuFuncGetAttribute(&naive_regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_naive);
+    printf("Naive  kernel registers: %d\n", naive_regs);
 
-    // Check SASS for sparse HMMA
+    // =========================================================
+    // Load tiled cubin (optional — skip if not built yet)
+    // =========================================================
+    CUmodule mod_tiled;
+    CUfunction fn_tiled;
+    bool have_tiled = false;
+    int tiled_regs = 0;
+
+    CUresult tiled_load_result = cuModuleLoad(&mod_tiled, "hgemm_sparse_tiled.sm_86.cubin");
+    if (tiled_load_result == CUDA_SUCCESS) {
+        CHECK_CU(cuModuleGetFunction(&fn_tiled, mod_tiled, "hgemm_sparse_tiled"));
+        cuFuncGetAttribute(&tiled_regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_tiled);
+        printf("Tiled  kernel registers: %d\n", tiled_regs);
+        have_tiled = true;
+    } else {
+        printf("WARNING: hgemm_sparse_tiled.sm_86.cubin not found — skipping tiled kernel.\n");
+    }
+
     printf("(Inspect SASS: cuobjdump -sass hgemm_sparse_naive.sm_86.cubin | grep HMMA)\n\n");
 
     // =========================================================
@@ -154,27 +177,27 @@ int main(int argc, char **argv) {
     CHECK_CU(cuMemcpyHtoD(d_b, host_b_fp16, elems_b * sizeof(__half)));
 
     // =========================================================
-    // Correctness test
+    // Correctness test — naive kernel
     // =========================================================
     printf("Correctness test:\n");
     CHECK_CU(cuMemsetD32(d_c, 0, elems_c));
 
     void *args[] = { &d_a_compressed, &d_b, &d_c, &M, &N, &K };
-    int grid_x = N / 16;
-    int grid_y = M / 16;
+    int naive_grid_x = N / 16;
+    int naive_grid_y = M / 16;
 
-    CHECK_CU(cuLaunchKernel(fn_sparse,
-        grid_x, grid_y, 1,
+    CHECK_CU(cuLaunchKernel(fn_naive,
+        naive_grid_x, naive_grid_y, 1,
         32, 1, 1,
         0, NULL, args, NULL));
     CHECK_CU(cuCtxSynchronize());
     CHECK_CU(cuMemcpyDtoH(host_out, d_c, elems_c * sizeof(float)));
 
     // FP16 accumulation: use relaxed tolerance
-    auto result = check_fp32(host_out, host_ref, elems_c, 1e-1f, 1e-1f);
-    print_check_result("hgemm_sparse_naive (mma.sp, FP16)", result);
+    auto naive_result = check_fp32(host_out, host_ref, elems_c, 1e-1f, 1e-1f);
+    print_check_result("hgemm_sparse_naive (mma.sp, FP16)", naive_result);
 
-    if (result.num_errors > 0 && result.num_errors <= 20) {
+    if (naive_result.num_errors > 0 && naive_result.num_errors <= 20) {
         printf("\n  First errors:\n");
         int shown = 0;
         for (size_t i = 0; i < elems_c && shown < 10; i++) {
@@ -189,6 +212,42 @@ int main(int argc, char **argv) {
             }
         }
     }
+
+    // =========================================================
+    // Correctness test — tiled kernel
+    // =========================================================
+    if (have_tiled) {
+        CHECK_CU(cuMemsetD32(d_c, 0, elems_c));
+
+        int tiled_grid_x = (N + 127) / 128;
+        int tiled_grid_y = (M + 127) / 128;
+
+        CHECK_CU(cuLaunchKernel(fn_tiled,
+            tiled_grid_x, tiled_grid_y, 1,
+            512, 1, 1,
+            0, NULL, args, NULL));
+        CHECK_CU(cuCtxSynchronize());
+        CHECK_CU(cuMemcpyDtoH(host_out, d_c, elems_c * sizeof(float)));
+
+        auto tiled_result = check_fp32(host_out, host_ref, elems_c, 1e-1f, 1e-1f);
+        print_check_result("hgemm_sparse_tiled (mma.sp, FP16)", tiled_result);
+
+        if (tiled_result.num_errors > 0 && tiled_result.num_errors <= 20) {
+            printf("\n  First errors:\n");
+            int shown = 0;
+            for (size_t i = 0; i < elems_c && shown < 10; i++) {
+                float abs_err = fabsf(host_out[i] - host_ref[i]);
+                float ref_abs = fabsf(host_ref[i]);
+                float rel_err = (ref_abs > 1e-8f) ? (abs_err / ref_abs) : abs_err;
+                if (abs_err > 1e-1f && rel_err > 1e-1f) {
+                    int r = i / N, c = i % N;
+                    printf("    [%zu] row=%d col=%d GPU=%.4f REF=%.4f abs=%.2e\n",
+                           i, r, c, host_out[i], host_ref[i], abs_err);
+                    shown++;
+                }
+            }
+        }
+    }
     printf("\n");
 
     // =========================================================
@@ -196,46 +255,86 @@ int main(int argc, char **argv) {
     // =========================================================
     if (M >= 512) {
         printf("Performance (M=%d, N=%d, K=%d):\n", M, N, K);
+        printf("  %-32s %9s  %11s  %15s\n", "Kernel", "Time(ms)", "Eff.GFLOPS", "Dense-eq GFLOPS");
+        printf("  %-32s %9s  %11s  %15s\n", "------", "--------", "----------", "---------------");
 
-        int warmup = 5, bench_n = 50;
+        int warmup_iters = 5, bench_iters = 50;
 
         // GFLOPS: count only the non-zero operations (K/2 effective mults per output element)
         double effective_flops = 2.0 * M * N * (K / 2);  // sparse: half the K dimension
         // Also report "equivalent dense GFLOPS" for comparison
         double dense_equiv_flops = 2.0 * M * N * K;
 
-        for (int i = 0; i < warmup; i++) {
-            CHECK_CU(cuLaunchKernel(fn_sparse,
-                grid_x, grid_y, 1, 32, 1, 1, 0, NULL, args, NULL));
+        // --- Benchmark naive kernel ---
+        for (int i = 0; i < warmup_iters; i++) {
+            CHECK_CU(cuLaunchKernel(fn_naive,
+                naive_grid_x, naive_grid_y, 1, 32, 1, 1, 0, NULL, args, NULL));
         }
         CHECK_CU(cuCtxSynchronize());
 
-        float avg_ms;
+        float naive_avg_ms;
         {
             BenchTimer timer;
             timer.start();
-            for (int i = 0; i < bench_n; i++) {
-                CHECK_CU(cuLaunchKernel(fn_sparse,
-                    grid_x, grid_y, 1, 32, 1, 1, 0, NULL, args, NULL));
+            for (int i = 0; i < bench_iters; i++) {
+                CHECK_CU(cuLaunchKernel(fn_naive,
+                    naive_grid_x, naive_grid_y, 1, 32, 1, 1, 0, NULL, args, NULL));
             }
-            avg_ms = timer.stop_ms() / bench_n;
+            naive_avg_ms = timer.stop_ms() / bench_iters;
         }
 
-        double sparse_gflops = effective_flops / (avg_ms / 1000.0) / 1e9;
-        double equiv_gflops = dense_equiv_flops / (avg_ms / 1000.0) / 1e9;
-        printf("  %-40s %7.3f ms  %8.0f GFLOPS (effective)\n",
-               "hgemm_sparse_naive", avg_ms, sparse_gflops);
-        printf("  %-40s %7s     %8.0f GFLOPS (dense-equivalent)\n",
-               "", "", equiv_gflops);
-        printf("\n  Dense HGEMM baseline (32,197 GFLOPS at 4096^3) for comparison.\n");
-        printf("  This naive kernel has no smem tiling — expect low utilization.\n");
+        double naive_eff_gflops = effective_flops / (naive_avg_ms / 1000.0) / 1e9;
+        double naive_equiv_gflops = dense_equiv_flops / (naive_avg_ms / 1000.0) / 1e9;
+        printf("  %-32s %9.3f  %11.0f  %15.0f\n",
+               "hgemm_sparse_naive", naive_avg_ms, naive_eff_gflops, naive_equiv_gflops);
+
+        // --- Benchmark tiled kernel ---
+        float tiled_avg_ms = 0.0f;
+        double tiled_eff_gflops = 0.0;
+        double tiled_equiv_gflops = 0.0;
+
+        if (have_tiled) {
+            int tiled_grid_x = (N + 127) / 128;
+            int tiled_grid_y = (M + 127) / 128;
+
+            for (int i = 0; i < warmup_iters; i++) {
+                CHECK_CU(cuLaunchKernel(fn_tiled,
+                    tiled_grid_x, tiled_grid_y, 1, 512, 1, 1, 0, NULL, args, NULL));
+            }
+            CHECK_CU(cuCtxSynchronize());
+
+            {
+                BenchTimer timer;
+                timer.start();
+                for (int i = 0; i < bench_iters; i++) {
+                    CHECK_CU(cuLaunchKernel(fn_tiled,
+                        tiled_grid_x, tiled_grid_y, 1, 512, 1, 1, 0, NULL, args, NULL));
+                }
+                tiled_avg_ms = timer.stop_ms() / bench_iters;
+            }
+
+            tiled_eff_gflops = effective_flops / (tiled_avg_ms / 1000.0) / 1e9;
+            tiled_equiv_gflops = dense_equiv_flops / (tiled_avg_ms / 1000.0) / 1e9;
+            printf("  %-32s %9.3f  %11.0f  %15.0f\n",
+                   "hgemm_sparse_tiled", tiled_avg_ms, tiled_eff_gflops, tiled_equiv_gflops);
+        }
+
+        // --- Summary ---
+        printf("  %-32s %9s  %11s  %15.0f\n",
+               "Dense baseline (ref)", "", "", 32197.0);
+
+        if (have_tiled && tiled_avg_ms > 0.0f) {
+            printf("\n  Speedup (tiled/naive):          %.1fx\n",
+                   naive_avg_ms / tiled_avg_ms);
+        }
     }
 
     // Cleanup
     cuMemFree(d_a_compressed);
     cuMemFree(d_b);
     cuMemFree(d_c);
-    cuModuleUnload(mod_sparse);
+    cuModuleUnload(mod_naive);
+    if (have_tiled) cuModuleUnload(mod_tiled);
     cuCtxDestroy(ctx);
 
     free(host_a); free(host_b); free(host_ref); free(host_out);
