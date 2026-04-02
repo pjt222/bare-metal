@@ -46,6 +46,20 @@
  *
  * Metadata: fixed 0x44444444 (positions {0,1} per group of 4).
  *
+ * A fragment loading: ldmatrix.sync.aligned.m8n8.x2.shared.b16
+ *   Lane t → &smem_a[(a_base_row + (t & 15)) * STRIDE_A + k_comp_offset]
+ *   fa0 (rows 0–7) and fa1 (rows 8–15) in one instruction.
+ *   Eliminates 4×LDS.U16 + 2×PRMT per register pair (verified on sm_86).
+ *   A fragment reuse: ldmatrix is outside the wj loop, fa0/fa1 reused across
+ *   both wj tiles (no redundant reload within a k_step).
+ *
+ * B fragment loading: scalar LDS.U16 + PRMT
+ *   ldmatrix.trans requires smem K-rows to be contiguous per N-column, but
+ *   smem_b is row-major ([BK × STRIDE_B]) where K-rows of a given N-col are
+ *   BN+PAD=136 halfs apart. Restructuring smem_b to col-major would lose
+ *   cp.async pipelining (global B is row-major; 8 K-rows of one N-col are
+ *   not a contiguous 16-byte burst in global memory). Scalar loads retained.
+ *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_tiled.sm_86.cubin hgemm_sparse_tiled.cu
  */
@@ -68,8 +82,8 @@
 // Bank-conflict-free padding
 #define PAD_A    8
 #define PAD_B    8
-#define STRIDE_A (BK_COMP + PAD_A)  // 16 + 8 = 24 halfs
-#define STRIDE_B (BN + PAD_B)       // 128 + 8 = 136 halfs
+#define STRIDE_A  (BK_COMP + PAD_A)  // 16 + 8 = 24 halfs (A row stride)
+#define STRIDE_B  (BN + PAD_B)       // 128 + 8 = 136 halfs (B row stride)
 
 #define NUM_WARPS   16
 #define WARP_SIZE   32
@@ -88,13 +102,13 @@
 #define ELEMS_PER_COPY (CP_ASYNC_BYTES / 2)  // 8 halfs
 
 // A_compressed tile: BM × BK_COMP = 128 × 16 = 2048 halfs = 4096 bytes
-// 4096 / 16 = 256 copies needed. With 512 threads, ~0.5 per thread → 1 iter with half the threads active
+// 4096 / 16 = 256 copies needed. With 512 threads, ~0.5 per thread → 1 iter with half threads active
 // B tile: BK × BN = 32 × 128 = 4096 halfs = 8192 bytes
-// 8192 / 16 = 512 copies needed. With 512 threads, exactly 1 per thread
+// 8192 / 16 = 512 copies needed. 512 threads → 1 iter (exactly one per thread)
 
-// Number of cp.async iterations per thread (ceiling)
-#define CP_ITERS_A 1   // 256 copies / 512 threads → 0.5, but we guard with bounds check
-#define CP_ITERS_B 1   // 512 copies / 512 threads → 1
+// Number of cp.async iterations per thread
+#define CP_ITERS_A 1   // 256 copies / 512 threads → 0.5, guard with flat < total
+#define CP_ITERS_B 1   // 512 copies / 512 threads → 1.0, guard with flat < total
 
 extern "C" __global__ __launch_bounds__(BLOCK_SIZE, 2)
 void hgemm_sparse_tiled(
@@ -104,9 +118,11 @@ void hgemm_sparse_tiled(
     int M, int N, int K
 ) {
     // Double-buffered shared memory
-    __shared__ __align__(16) __half smem_a[2][BM * STRIDE_A];   // 2 × 6 KB = 12 KB
-    __shared__ __align__(16) __half smem_b[2][BK * STRIDE_B];   // 2 × 8.5 KB = 17 KB
-    // Total: ~29 KB — well under 50 KB cliff for 2 blocks/SM
+    __shared__ __align__(16) __half smem_a[2][BM * STRIDE_A];       // 2 × 6 KB = 12 KB
+    __shared__ __align__(16) __half smem_b[2][BK * STRIDE_B];       // 2 × 8.5 KB = 17 KB
+    // smem_b layout: row-major [BK × STRIDE_B]
+    //   smem_b[buf][k * STRIDE_B + n] = B[k_tile_base + k][block_col + n]
+    // Total: 12 + 17 = 29 KB — under 50 KB cliff for 2 blocks/SM ✓
 
     int thread_id = threadIdx.x;
     int warp_id = thread_id / WARP_SIZE;
@@ -180,33 +196,47 @@ void hgemm_sparse_tiled(
         }                                                                          \
     }
 
-    // LOAD_B_TILE: load dense B tile [BK × BN] into smem_b[buf]
-    // Total elements: 32 × 128 = 4096 halfs. Each cp.async copies 8 halfs.
-    // 4096 / 8 = 512 copies. 512 threads → exactly 1 per thread.
+    // LOAD_B_TILE: load dense B[k_base..k_base+BK-1][block_col..block_col+BN-1]
+    // into smem_b[buf] via cp.async (row-major layout, K×STRIDE_B).
+    // Total elements: BK × BN = 32 × 128 = 4096 halfs = 8192 bytes.
+    // Each cp.async copies 16 bytes = 8 halfs. 512 copies needed → 1 per thread.
     #define LOAD_B_TILE(buf, k_base_logical)                                      \
     {                                                                              \
         int _flat = thread_id * ELEMS_PER_COPY;                                   \
-        int _row = _flat / BN;                                                    \
-        int _col = _flat % BN;                                                    \
-        int _soff = _row * STRIDE_B + _col;                                       \
-        int _grow = (k_base_logical) + _row;                                      \
-        int _gcol = block_col + _col;                                             \
-        if (_grow < K && _gcol + ELEMS_PER_COPY - 1 < N) {                       \
-            __pipeline_memcpy_async(                                               \
-                &smem_b[buf][_soff],                                               \
-                &B[(size_t)_grow * N + _gcol],                                    \
-                CP_ASYNC_BYTES);                                                   \
-        } else {                                                                   \
-            for (int _b = 0; _b < ELEMS_PER_COPY; _b++) {                        \
-                int _gc = _gcol + _b;                                             \
-                smem_b[buf][_soff + _b] = (_grow < K && _gc < N)                  \
-                    ? B[(size_t)_grow * N + _gc] : __float2half(0.0f);            \
+        if (_flat < BK * BN) {                                                    \
+            int _row = _flat / BN;   /* K row within tile */                      \
+            int _col = _flat % BN;   /* N col within tile */                      \
+            int _soff = _row * STRIDE_B + _col;                                   \
+            int _grow = (k_base_logical) + _row;                                  \
+            int _gcol = block_col + _col;                                         \
+            if (_grow < K && _gcol + ELEMS_PER_COPY - 1 < N) {                   \
+                __pipeline_memcpy_async(                                           \
+                    &smem_b[buf][_soff],                                           \
+                    &B[(size_t)_grow * N + _gcol],                                \
+                    CP_ASYNC_BYTES);                                               \
+            } else {                                                               \
+                for (int _b = 0; _b < ELEMS_PER_COPY; _b++) {                    \
+                    int _gn = _gcol + _b;                                         \
+                    smem_b[buf][_soff + _b] = (_grow < K && _gn < N)              \
+                        ? B[(size_t)_grow * N + _gn]                              \
+                        : __float2half(0.0f);                                     \
+                }                                                                  \
             }                                                                      \
         }                                                                          \
     }
 
     // ======================================================================
     // COMPUTE_TILE: process one K-tile from shared memory using mma.sp
+    //
+    // A fragments: loaded via ldmatrix.sync.aligned.m8n8.x2.shared.b16
+    //   Lane t provides smem address: &smem_a[(a_base_row + gid) * STRIDE_A + k_comp_offset]
+    //   All 4 lanes sharing the same gid provide the same row address; ldmatrix
+    //   distributes the 8 halfs of that row across tid_frag (cols tid*2, tid*2+1).
+    //   Produces fa0 (A rows 0–7) and fa1 (A rows 8–15) in one instruction,
+    //   replacing 4×LDS.U16 + 2×PRMT per register pair.
+    //
+    // B fragments: scalar LDS (ldmatrix.trans not applicable — smem_b is row-major,
+    //   K-rows are strided by STRIDE_B halfs, not contiguous as .trans requires)
     // ======================================================================
     #define COMPUTE_TILE(buf)                                                      \
     _Pragma("unroll")                                                              \
@@ -216,20 +246,27 @@ void hgemm_sparse_tiled(
                                                                                    \
         _Pragma("unroll")                                                          \
         for (int wi = 0; wi < WARP_TILES_M; wi++) {                               \
-            /* A fragment: rows from warp's M-region */                            \
+            /* A fragment via ldmatrix.sync.aligned.m8n8.x2:                    */\
+            /* Loads a 16×8 sub-tile from smem_a into 2 registers.              */\
+            /* Lane addressing rule (verified empirically, smem stride=8/half): */\
+            /*   lane t provides address for row (a_base_row + t%16).           */\
+            /*   fa0 gets rows 0-7, fa1 gets rows 8-15.                         */\
+            /*   Halfs within each row are distributed by tf=lane&3:            */\
+            /*     fa0: {A[gid][tf*2], A[gid][tf*2+1]}  (matches scalar code)  */\
+            /*     fa1: {A[gid+8][tf*2], A[gid+8][tf*2+1]}                     */\
+            /* With STRIDE_A=24 halfs, address = (a_base_row + lane%16) * 24   */\
+            /*   + k_comp_offset.                                                */\
             int a_base_row = wy * 32 + wi * WMMA_M;                               \
-            int a_row_lo = a_base_row + gid;                                      \
-            int a_row_hi = a_base_row + gid + 8;                                  \
-            int a_col = k_comp_offset + tid_frag * 2;                             \
-                                                                                   \
-            __half2 a0_h2 = __halves2half2(                                       \
-                smem_a[buf][a_row_lo * STRIDE_A + a_col],                         \
-                smem_a[buf][a_row_lo * STRIDE_A + a_col + 1]);                    \
-            __half2 a1_h2 = __halves2half2(                                       \
-                smem_a[buf][a_row_hi * STRIDE_A + a_col],                         \
-                smem_a[buf][a_row_hi * STRIDE_A + a_col + 1]);                    \
-            uint32_t fa0 = *(uint32_t*)&a0_h2;                                    \
-            uint32_t fa1 = *(uint32_t*)&a1_h2;                                    \
+            uint32_t fa0, fa1;                                                     \
+            {                                                                      \
+                uint32_t smem_a_ptr = __cvta_generic_to_shared(                   \
+                    &smem_a[buf][(a_base_row + (lane & 15)) * STRIDE_A            \
+                                 + k_comp_offset]);                                \
+                asm volatile(                                                      \
+                    "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];\n"  \
+                    : "=r"(fa0), "=r"(fa1)                                        \
+                    : "r"(smem_a_ptr));                                            \
+            }                                                                      \
                                                                                    \
             _Pragma("unroll")                                                      \
             for (int wj = 0; wj < WARP_TILES_N; wj++) {                           \
