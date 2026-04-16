@@ -57,12 +57,17 @@
  *   A fragment reuse: ldmatrix is outside the wj loop, fa0/fa1 reused across
  *   both wj tiles (no redundant reload within a k_step).
  *
- * B fragment loading: scalar LDS.U16 + PRMT
- *   ldmatrix.trans requires smem K-rows to be contiguous per N-column, but
- *   smem_b is row-major ([BK × STRIDE_B]) where K-rows of a given N-col are
- *   BN+PAD=136 halfs apart. Restructuring smem_b to col-major would lose
- *   cp.async pipelining (global B is row-major; 8 K-rows of one N-col are
- *   not a contiguous 16-byte burst in global memory). Scalar loads retained.
+ * B fragment loading: ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16
+ *   Works with the EXISTING row-major smem_b ([BK × STRIDE_B]) — no layout change.
+ *   With .trans, each thread provides a pointer to a K-row (16 contiguous bytes
+ *   along N), and the hardware transposes to deliver the correct K-column values
+ *   per N-column to each thread. Address per thread:
+ *     row = k_step + (lane&7) + ((lane>>3)&1)*8
+ *     ptr = &smem_b[row * STRIDE_B + b_base_col + {0 or 8}]
+ *   Result: thread (gid=g, tid_frag=t) receives
+ *     fb0 = packed{B[k_step+t*2][b_base_col+g], B[k_step+t*2+1][b_base_col+g]}
+ *     fb1 = packed{B[k_step+t*2+8][b_base_col+g], B[k_step+t*2+9][b_base_col+g]}
+ *   Replaces 8 LDS.U16 + 4 PRMT per wj with 2 LDSM.16.M88.2 — same 4-reg footprint.
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_tiled.sm_86.cubin hgemm_sparse_tiled.cu
@@ -251,23 +256,18 @@ void hgemm_sparse_tiled(
         int k_comp_offset = k_step / 2;  /* compressed K offset: 0 or 8 */       \
         /* Global K=16 step index for metadata lookup */                           \
         int _gk_idx = (tile_idx) * (BK / WMMA_K) + k_step / WMMA_K;             \
+        /* B-fragment smem row for ldmatrix.trans:                               */\
+        /* Thread lane t provides K-row k_step+(lane&7) for matrix-0 (K-rows    */\
+        /* 0..7) and k_step+(lane&7)+8 for matrix-1 (K-rows 8..15).             */\
+        int _b_k_row = k_step + (lane & 7) + (((lane >> 3) & 1) * 8);           \
+        int _b_smem_k_off = _b_k_row * STRIDE_B;                                  \
                                                                                    \
         _Pragma("unroll")                                                          \
         for (int wi = 0; wi < WARP_TILES_M; wi++) {                               \
             /* A fragment via ldmatrix.sync.aligned.m8n8.x2:                    */\
-            /* Loads a 16×8 sub-tile from smem_a into 2 registers.              */\
-            /* Lane addressing rule (verified empirically, smem stride=8/half): */\
-            /*   lane t provides address for row (a_base_row + t%16).           */\
-            /*   fa0 gets rows 0-7, fa1 gets rows 8-15.                         */\
-            /*   Halfs within each row are distributed by tf=lane&3:            */\
-            /*     fa0: {A[gid][tf*2], A[gid][tf*2+1]}  (matches scalar code)  */\
-            /*     fa1: {A[gid+8][tf*2], A[gid+8][tf*2+1]}                     */\
-            /* With STRIDE_A=24 halfs, address = (a_base_row + lane%16) * 24   */\
-            /*   + k_comp_offset.                                                */\
+            /* Lane t provides address for row (a_base_row + t%16).             */\
+            /* fa0 gets rows 0-7, fa1 gets rows 8-15.                           */\
             int a_base_row = wy * 32 + wi * WMMA_M;                               \
-            /* Load dynamic metadata for this (M-tile, K-step, gid) triple.     */\
-            /* m_tile_idx: which 16-row tile this warp sub-tile sits in.         */\
-            /* gk_idx:     global K=16 step index within the full K dimension.   */\
             int _m_tile_idx = block_row / WMMA_M + wy * WARP_TILES_M + wi;       \
             uint32_t meta = metadata[                                              \
                 (size_t)_m_tile_idx * K_steps_total * 8                           \
@@ -286,34 +286,32 @@ void hgemm_sparse_tiled(
                                                                                    \
             _Pragma("unroll")                                                      \
             for (int wj = 0; wj < WARP_TILES_N; wj++) {                           \
-                /* B fragment: K-rows from k_step, N-cols from warp's N-region */ \
+                /* B fragment via ldmatrix.sync.aligned.m8n8.x2.trans:          */\
+                /* Each thread points to a K-row (16 contiguous N-bytes).        */\
+                /* .trans delivers the N-column for this thread's gid.           */\
+                /* Left sub-tile:  N-cols b_base_col+[0..7]  (gid selects)      */\
+                /* Right sub-tile: N-cols b_base_col+[8..15] (gid selects +8)   */\
                 int b_base_col = wx * 32 + wj * WMMA_N;                           \
-                int b_k0 = k_step + tid_frag * 2;                                \
-                int b_k1 = b_k0 + 1;                                             \
-                int b_k0_hi = b_k0 + 8;                                          \
-                int b_k1_hi = b_k0_hi + 1;                                       \
-                                                                                   \
-                /* Left sub-tile (N col = b_base_col + gid, i.e. n=0..7) */       \
-                int n_left = b_base_col + gid;                                    \
-                __half2 bl0 = __halves2half2(                                     \
-                    smem_b[buf][b_k0    * STRIDE_B + n_left],                     \
-                    smem_b[buf][b_k1    * STRIDE_B + n_left]);                    \
-                __half2 bl1 = __halves2half2(                                     \
-                    smem_b[buf][b_k0_hi * STRIDE_B + n_left],                     \
-                    smem_b[buf][b_k1_hi * STRIDE_B + n_left]);                    \
-                uint32_t fb_left0 = *(uint32_t*)&bl0;                             \
-                uint32_t fb_left1 = *(uint32_t*)&bl1;                             \
-                                                                                   \
-                /* Right sub-tile (N col = b_base_col + gid + 8, n=8..15) */      \
-                int n_right = b_base_col + gid + 8;                               \
-                __half2 br0 = __halves2half2(                                     \
-                    smem_b[buf][b_k0    * STRIDE_B + n_right],                    \
-                    smem_b[buf][b_k1    * STRIDE_B + n_right]);                   \
-                __half2 br1 = __halves2half2(                                     \
-                    smem_b[buf][b_k0_hi * STRIDE_B + n_right],                    \
-                    smem_b[buf][b_k1_hi * STRIDE_B + n_right]);                   \
-                uint32_t fb_right0 = *(uint32_t*)&br0;                            \
-                uint32_t fb_right1 = *(uint32_t*)&br1;                            \
+                uint32_t fb_left0, fb_left1;                                      \
+                {                                                                  \
+                    uint32_t _ptr = __cvta_generic_to_shared(                     \
+                        &smem_b[buf][_b_smem_k_off + b_base_col]);                \
+                    asm volatile(                                                  \
+                        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16"         \
+                        " {%0,%1}, [%2];\n"                                       \
+                        : "=r"(fb_left0), "=r"(fb_left1)                         \
+                        : "r"(_ptr));                                              \
+                }                                                                  \
+                uint32_t fb_right0, fb_right1;                                    \
+                {                                                                  \
+                    uint32_t _ptr = __cvta_generic_to_shared(                     \
+                        &smem_b[buf][_b_smem_k_off + b_base_col + 8]);            \
+                    asm volatile(                                                  \
+                        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16"         \
+                        " {%0,%1}, [%2];\n"                                       \
+                        : "=r"(fb_right0), "=r"(fb_right1)                       \
+                        : "r"(_ptr));                                              \
+                }                                                                  \
                                                                                    \
                 /* mma.sp: C_left += A_sparse × B_left */                         \
                 asm volatile(                                                      \
