@@ -414,7 +414,7 @@ int main(int argc, char **argv) {
 
         // --- Summary ---
         printf("  %-32s %9s  %11s  %15.0f\n",
-               "Dense baseline (ref)", "", "", 32197.0);
+               "Dense baseline (ref)", "", "", 31910.0);
 
         if (have_tiled && tiled_avg_ms > 0.0f) {
             printf("\n  Speedup (tiled/naive):          %.1fx\n",
