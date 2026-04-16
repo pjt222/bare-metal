@@ -25,3 +25,7 @@ CONTINUE_HERE.md
 
 # Third-party tools (clone separately)
 tools/CuAssembler/
+
+# CuAssembler working artifacts
+*.cuasm.orig
+*.sass
