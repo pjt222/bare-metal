@@ -44,7 +44,11 @@
  *     d0 = C[gid][tid*2],   d1 = C[gid][tid*2+1]
  *     d2 = C[gid+8][tid*2], d3 = C[gid+8][tid*2+1]
  *
- * Metadata: fixed 0x44444444 (positions {0,1} per group of 4).
+ * Metadata: loaded dynamically from metadata[] array (see sparse_meta.h).
+ *   Each uint32_t entry covers one gid (lane>>2, 0..7) for one 16-row M-tile
+ *   and one K=16 step. bits[15:0] encode 4 nibbles (K-groups 0–3); upper 16
+ *   bits duplicate the lower 16 (reserved). Rows gid and gid+8 share the same
+ *   nibbles — hardware constraint of mma.sp::ordered_metadata (see sparse_meta.h).
  *
  * A fragment loading: ldmatrix.sync.aligned.m8n8.x2.shared.b16
  *   Lane t → &smem_a[(a_base_row + (t & 15)) * STRIDE_A + k_comp_offset]
@@ -112,9 +116,10 @@
 
 extern "C" __global__ __launch_bounds__(BLOCK_SIZE, 2)
 void hgemm_sparse_tiled(
-    const __half * __restrict__ A_compressed,  // [M × K/2] FP16 row-major
-    const __half * __restrict__ B,             // [K × N]   FP16 row-major
-    float        * __restrict__ C,             // [M × N]   FP32 row-major
+    const __half     * __restrict__ A_compressed,  // [M × K/2] FP16 row-major
+    const __half     * __restrict__ B,             // [K × N]   FP16 row-major
+    float            * __restrict__ C,             // [M × N]   FP32 row-major
+    const uint32_t   * __restrict__ metadata,      // [(M/16)*(K/16)*8] per-thread meta
     int M, int N, int K
 ) {
     // Double-buffered shared memory
@@ -133,15 +138,12 @@ void hgemm_sparse_tiled(
     int block_row = blockIdx.y * BM;
     int block_col = blockIdx.x * BN;
 
-    int K_stored = K / 2;  // compressed K dimension of A
+    int K_stored      = K / 2;         // compressed K dimension of A
+    int K_steps_total = K / WMMA_K;   // total K=16 steps across full K dimension
 
     // Fragment indexing within a warp
-    int gid = lane >> 2;   // 0..7: group ID (selects M-row or N-col within 16×8 tile)
-    int tid_frag = lane & 3;  // 0..3: thread ID within group (selects K position)
-
-    // Fixed 2:4 metadata: positions {0,1} per group of 4
-    // Nibble 0x4 = (1 << 2) | 0 → indices {0, 1}. All 8 nibbles → 0x44444444.
-    uint32_t meta = 0x44444444;
+    int gid      = lane >> 2;   // 0..7: group ID (selects M-row within 16×8 tile)
+    int tid_frag = lane & 3;    // 0..3: thread ID within group (selects K position)
 
     // ---- Accumulators: 2×2 WMMA tiles × 2 sub-tiles (left/right) × 4 regs ----
     float acc_left[WARP_TILES_M][WARP_TILES_N][4];
@@ -238,11 +240,17 @@ void hgemm_sparse_tiled(
     // B fragments: scalar LDS (ldmatrix.trans not applicable — smem_b is row-major,
     //   K-rows are strided by STRIDE_B halfs, not contiguous as .trans requires)
     // ======================================================================
-    #define COMPUTE_TILE(buf)                                                      \
+    // COMPUTE_TILE(buf, tile_idx):
+    //   buf      — double-buffer index (0 or 1)
+    //   tile_idx — K-tile loop index, used to compute global k_step index for
+    //              metadata lookup: global_k_step = tile_idx*(BK/WMMA_K) + local
+    #define COMPUTE_TILE(buf, tile_idx)                                            \
     _Pragma("unroll")                                                              \
     for (int k_step = 0; k_step < BK; k_step += WMMA_K) {                        \
         /* k_step is the logical K offset within the tile (0 or 16) */            \
         int k_comp_offset = k_step / 2;  /* compressed K offset: 0 or 8 */       \
+        /* Global K=16 step index for metadata lookup */                           \
+        int _gk_idx = (tile_idx) * (BK / WMMA_K) + k_step / WMMA_K;             \
                                                                                    \
         _Pragma("unroll")                                                          \
         for (int wi = 0; wi < WARP_TILES_M; wi++) {                               \
@@ -257,6 +265,14 @@ void hgemm_sparse_tiled(
             /* With STRIDE_A=24 halfs, address = (a_base_row + lane%16) * 24   */\
             /*   + k_comp_offset.                                                */\
             int a_base_row = wy * 32 + wi * WMMA_M;                               \
+            /* Load dynamic metadata for this (M-tile, K-step, gid) triple.     */\
+            /* m_tile_idx: which 16-row tile this warp sub-tile sits in.         */\
+            /* gk_idx:     global K=16 step index within the full K dimension.   */\
+            int _m_tile_idx = block_row / WMMA_M + wy * WARP_TILES_M + wi;       \
+            uint32_t meta = metadata[                                              \
+                (size_t)_m_tile_idx * K_steps_total * 8                           \
+              + (size_t)_gk_idx     * 8                                           \
+              + gid];                                                              \
             uint32_t fa0, fa1;                                                     \
             {                                                                      \
                 uint32_t smem_a_ptr = __cvta_generic_to_shared(                   \
@@ -350,7 +366,7 @@ void hgemm_sparse_tiled(
         LOAD_A_TILE(next_buf, next_k_base);
         LOAD_B_TILE(next_buf, next_k_base);
         __pipeline_commit();
-        COMPUTE_TILE(cur_buf);
+        COMPUTE_TILE(cur_buf, tile);
         __pipeline_wait_prior(0);
         __syncthreads();
     }
@@ -358,7 +374,7 @@ void hgemm_sparse_tiled(
     // Epilogue: compute last tile
     {
         int last_buf = (num_tiles - 1) & 1;
-        COMPUTE_TILE(last_buf);
+        COMPUTE_TILE(last_buf, num_tiles - 1);
     }
 
     #undef LOAD_A_TILE

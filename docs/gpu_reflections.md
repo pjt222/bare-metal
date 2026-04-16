@@ -820,6 +820,31 @@ even when the smem savings themselves don't change occupancy. Always check `cuob
 
 ---
 
+**Insight 24: smem epilogue benefit is occupancy-dependent — helps at ≤8 warps, hurts at 16.**
+
+A coalesced smem epilogue (accumulator→shared→global, one syncthreads) improves store efficiency
+by staging scattered per-thread writes into contiguous rows before writing to DRAM. But the
+benefit depends on total smem and warp count:
+
+| Kernel | Epilogue | Smem (KB) | Warps/SM | Effect |
+|--------|----------|-----------|----------|--------|
+| 8-warp IGEMM (128×128) | smem epilogue | 24 | 8 | **+3.1%** |
+| 8-warp HGEMM (smem vs direct) | smem vs direct | 40 vs 32 | 8 | **+1.8%** (noisy) |
+| 16-warp HGEMM (128×128) | smem vs direct | 48 vs 32 | 32 | **−1 to −3%** |
+
+At 16 warps, the epilogue adds 16 KB smem (16 warp-tiles × 256 floats × 4 bytes), pushing
+total smem from ~32 KB to ~48 KB. Though this stays under the 50 KB cliff for 2 blocks/SM,
+the higher smem pressure reduces L1 data cache headroom for coalescing global stores, and
+the `__syncthreads()` across 32 warps adds meaningful barrier overhead that isn't present
+at 8 warps.
+
+**Design rule:** Use smem epilogue when total smem ≤ 40 KB **and** warps ≤ 8.
+Use direct `wmma::store_matrix_sync` (or register-→global direct stores) when warps > 8
+or smem budget is tight. At 16+ warps, per-thread direct stores into contiguous output tiles
+achieve comparable coalescing without the smem overhead.
+
+---
+
 **Insight 23: Warp specialization (4 IMMA + 4 quant) doesn't help online-quant IGEMM (-3.66%).**
 The idea: split 8 warps into 4 IMMA (compute on cur_buf) + 4 quantize (load+convert next_buf),
 overlapping quantize with IMMA. Target: save the ~32% per-tile overhead that quantize adds
