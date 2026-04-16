@@ -199,19 +199,23 @@ static void compress_2_4_arbitrary(
 //
 // For small sizes only (O(M*N*K) cost).
 // -----------------------------------------------------------------------
+// Loop order: row × k × col — cache-friendly (B row and C row both contiguous).
 static void cpu_sparse_gemm_arbitrary(
     const float *A_dense,  // [M × K] — with explicit zeros at sparse positions
     const float *B,        // [K × N]
     float       *C,        // [M × N] — output
     int M, int N, int K
 ) {
+    memset(C, 0, (size_t)M * N * sizeof(float));
     for (int row = 0; row < M; row++) {
-        for (int col = 0; col < N; col++) {
-            float acc = 0.0f;
-            for (int k = 0; k < K; k++) {
-                acc += A_dense[(size_t)row * K + k] * B[(size_t)k * N + col];
+        for (int k = 0; k < K; k++) {
+            float a_val = A_dense[(size_t)row * K + k];
+            if (a_val == 0.0f) continue;  // skip zeros (2:4 sparsity)
+            const float *b_row = &B[(size_t)k * N];
+            float       *c_row = &C[(size_t)row * N];
+            for (int col = 0; col < N; col++) {
+                c_row[col] += a_val * b_row[col];
             }
-            C[(size_t)row * N + col] = acc;
         }
     }
 }

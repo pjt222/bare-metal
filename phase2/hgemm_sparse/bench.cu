@@ -56,6 +56,7 @@ static void compress_2_4_fixed(
 
 // -----------------------------------------------------------------------
 // cpu_sparse_gemm_fixed: CPU reference for fixed {0,1} pattern
+// Loop order: row × k × col — cache-friendly (B row, C row both contiguous)
 // -----------------------------------------------------------------------
 static void cpu_sparse_gemm_fixed(
     const float *A_dense,
@@ -63,16 +64,17 @@ static void cpu_sparse_gemm_fixed(
     float *C,
     int M, int N, int K
 ) {
-    #pragma omp parallel for collapse(2) schedule(static)
+    memset(C, 0, (size_t)M * N * sizeof(float));
     for (int row = 0; row < M; row++) {
-        for (int col = 0; col < N; col++) {
-            float acc = 0.0f;
-            for (int k = 0; k < K; k++) {
-                if ((k % 4) < 2) {
-                    acc += A_dense[row * K + k] * B[k * N + col];
+        for (int k = 0; k < K; k++) {
+            if ((k % 4) < 2) {
+                float a_val = A_dense[(size_t)row * K + k];
+                const float *b_row = &B[(size_t)k * N];
+                float       *c_row = &C[(size_t)row * N];
+                for (int col = 0; col < N; col++) {
+                    c_row[col] += a_val * b_row[col];
                 }
             }
-            C[row * N + col] = acc;
         }
     }
 }
