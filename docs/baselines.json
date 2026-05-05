@@ -1,0 +1,23 @@
+{
+  "recorded_date": "2026-05-05",
+  "platform": "RTX 3070 Ti Laptop (GA104, sm_86, Ampere)",
+  "note": "Recorded on WSL2, CUDA 12.8. Values are best-of-3 warm runs.",
+  "kernels": {
+    "phase2/hgemm/hgemm_16warp.cu": {
+      "2048_2048_2048": {"ms": 0.527, "gflops": 31910},
+      "4096_4096_4096": {"ms": 4.220, "gflops": 31910}
+    },
+    "phase2/hgemm_sparse/hgemm_sparse_tiled.cu": {
+      "2048_2048_2048": {"ms": 0.420, "gflops": 40930, "note": "dense-equiv"}
+    },
+    "phase2/igemm/igemm_pipelined_cpasync.cu": {
+      "4096_4096_4096": {"ms": 6.600, "tops": 20688}
+    },
+    "phase3/flash_attention/flash_attn_br16_regpv.cu": {
+      "1024_8_8": {"ms": 2.810, "gflops": 6112, "config_note": "seq_len=1024, batch=8, heads=8"}
+    },
+    "phase4/conv2d/conv2d_implicit_gemm.cu": {
+      "1_64_64_320_320": {"ms": 1.130, "gflops": 6687, "config_note": "N=1, H=W=64, Cin=Cout=320"}
+    }
+  }
+}

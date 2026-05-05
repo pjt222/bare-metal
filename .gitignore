@@ -20,6 +20,7 @@ verify_wmma_layout
 # Python
 __pycache__/
 *.pyc
+!scripts/bench_regress.py
 
 # Third-party tools (clone separately)
 tools/CuAssembler/
