@@ -138,7 +138,7 @@ struct BenchDriver {
         if (context_owned && context) {
             // Ensure no pending operations before destroy
             cuCtxSynchronize();
-            cuCtxDestroy(context);
+            cuDevicePrimaryCtxRelease(device);
         }
     }
 
@@ -159,7 +159,8 @@ struct BenchDriver {
         CHECK_CU(cuDeviceGetName(name, sizeof(name), device));
         printf("Device: %s\n\n", name);
 
-        CHECK_CU(cuCtxCreate(&context, 0, device));
+        CHECK_CU(cuDevicePrimaryCtxRetain(&context, device));
+        CHECK_CU(cuCtxSetCurrent(context));
         context_owned = true;
     }
 
