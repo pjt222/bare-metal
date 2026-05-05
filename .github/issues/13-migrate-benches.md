@@ -1,0 +1,63 @@
+---
+title: "Migrate remaining 23 bench files to BenchDriver"
+labels: ["refactoring", "bench-driver"]
+---
+
+## Background
+PR #53 introduced `phase2/common/bench_driver.h` and refactored 3 pilot files:
+- `phase2/hgemm/bench_refactored.cu` (348 → 96 lines)
+- `phase2/igemm/bench_refactored.cu` (1093 → 79 lines)
+- `phase3/flash_attention/bench_refactored.cu` (298 → 122 lines)
+
+Total reduction: 1,739 → 297 lines (-83%).
+
+## Remaining Files to Migrate
+
+### Phase 2
+- [ ] `phase2/sgemm/bench.cu`
+- [ ] `phase2/softmax/bench.cu`
+- [ ] `phase2/layernorm/bench.cu`
+- [ ] `phase2/activations/bench.cu`
+- [ ] `phase2/igemm/bench.cu`
+- [ ] `phase2/igemm/bench_igemm_sparse.cu`
+- [ ] `phase2/hgemm_sparse/bench.cu`
+
+### Phase 3
+- [ ] `phase3/flash_attention/bench.cu`
+- [ ] `phase3/flash_attention/bench_bc128.cu`
+- [ ] `phase3/flash_attention/bench_br16.cu`
+- [ ] `phase3/flash_attention/bench_br16_regpv.cu`
+- [ ] `phase3/flash_attention/bench_fused.cu`
+- [ ] `phase3/flash_attention/bench_persistent.cu`
+- [ ] `phase3/flash_attention/bench_pipeline.cu`
+- [ ] `phase3/flash_attention/bench_split_q.cu`
+- [ ] `phase3/flash_attention/bench_wmma.cu`
+
+### Phase 4
+- [ ] `phase4/conv2d/bench.cu`
+- [ ] `phase4/conv2d/bench_im2col.cu`
+- [ ] `phase4/conv2d/bench_implicit_gemm.cu`
+- [ ] `phase4/cross_attention/bench.cu`
+- [ ] `phase4/cross_attention/bench_pipelined.cu`
+- [ ] `phase4/groupnorm/bench.cu`
+- [ ] `phase4/resblock/bench.cu`
+- [ ] `phase4/timestep_emb/bench.cu`
+
+### Phase 5
+- [ ] `phase5/attention_layer/bench.cu`
+
+## Approach
+1. Start with simplest (softmax, activations, timestep_emb)
+2. Then GEMM variants (sgemm, hgemm_sparse bench)
+3. Then attention/cross-attention
+4. Then conv/groupnorm/resblock (most complex host setup)
+
+## Acceptance Criteria
+- [ ] All migrated files compile and run correctly
+- [ ] Performance numbers match or exceed pre-migration baselines
+- [ ] Original bench files kept as `.bak` during migration, removed after verification
+- [ ] `bench_driver.h` extended if any kernel needs new driver features
+
+## Notes
+- Don't delete original files until new ones are verified
+- Some bench files load multiple kernels (e.g., hgemm bench loads 6 variants) — driver variant loop handles this
