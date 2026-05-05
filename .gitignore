@@ -1,5 +1,6 @@
 # Compiled CUDA binaries
 *.cubin
+!*_handtuned.sm_86.cubin
 
 # Generated SASS disassembly (keep hand-tuned variants)
 *.cuasm
@@ -20,12 +21,25 @@ verify_wmma_layout
 __pycache__/
 *.pyc
 
-# Session handoff (ephemeral, not committed)
-CONTINUE_HERE.md
-
 # Third-party tools (clone separately)
 tools/CuAssembler/
 
 # CuAssembler working artifacts
 *.cuasm.orig
+
+# Raw SASS reference (generated on-demand via scripts/build.py)
 *.sass
+
+# Claude Code / context
+.claude/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
