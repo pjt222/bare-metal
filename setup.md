@@ -1,65 +1,95 @@
 # Environment Setup
 
-## 1. CUDA Toolkit 12.6
+> **Development happens in WSL2.** The Windows NVIDIA driver exposes the GPU to WSL via `/usr/lib/wsl/lib/`. All build scripts, benchmarks, and SASS tooling assume a Linux environment.
 
-Download from: https://developer.nvidia.com/cuda-12-6-0-download-archive
-Select: Windows 11 > x86_64 > exe (local)
+## Quick Start (WSL2 — Recommended)
 
-After install, verify these are on PATH (open a new terminal):
+### 1. Install CUDA Toolkit in WSL
+
+```bash
+# Ubuntu 24.04
+sudo apt update
+sudo apt install nvidia-cuda-toolkit
 ```
+
+Verify:
+```bash
 nvcc --version
 cuobjdump --version
 nvdisasm --version
+nvidia-smi
 ```
 
-Default install path: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\`
+> **Why CUDA 12.8?** This project targets sm_86 (RTX 3070 Ti). CuAssembler was developed against CUDA 11.x–12.x; the cubin format may differ in 13.x. The driver is forward-compatible, so 12.8 kernels run on newer drivers.
 
-> **Why 12.6 and not 13.x?** CuAssembler was developed against CUDA 11.x/12.x.
-> The cubin format may differ in 13.x. Driver is forward-compatible so 12.6 runs fine.
-
-## 2. Visual Studio 2022 Build Tools
-
-nvcc requires the MSVC C++ compiler (`cl.exe`).
-
-Download: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
-Workload to select: **Desktop development with C++**
-
-After install, use the **Developer Command Prompt for VS 2022** (or add cl.exe to PATH).
-
-## 3. Python Dependencies
+### 2. Python Dependencies
 
 ```bash
-pip install pyelftools sympy
+python3 -m pip install pyelftools sympy
 ```
 
-## 4. CuAssembler
+If pip warns about PEP 668 (externally managed environment):
+```bash
+python3 -m pip install pyelftools sympy --break-system-packages
+```
+
+### 3. CuAssembler
 
 ```bash
-cd D:\dev\p\bare-metal
 git clone https://github.com/cloudcores/CuAssembler.git tools/CuAssembler
 ```
 
-Add to PYTHONPATH (add to your shell profile or set per-session):
+Add to `~/.bashrc` (or set per-session):
 ```bash
-set PYTHONPATH=D:\dev\p\bare-metal\tools\CuAssembler;%PYTHONPATH%
+export PYTHONPATH="$PWD/tools/CuAssembler:$PYTHONPATH"
 ```
 
-## 5. Verify Everything
+### 4. Verify Everything
 
 ```bash
-cd D:\dev\p\bare-metal
-python scripts/verify_setup.py
+python3 scripts/verify_setup.py
 ```
 
 All checks should pass before proceeding to Phase 1.
 
+---
+
+## Appendix: Native Windows Setup
+
+> ⚠️ **Not recommended.** Use WSL2 unless you have a specific reason to build on Windows natively.
+
+### CUDA Toolkit (Windows)
+Download from: https://developer.nvidia.com/cuda-downloads  
+Default path: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\`
+
+### Build Tools
+nvcc on Windows requires MSVC (`cl.exe`). Install **Visual Studio 2022 Build Tools** with the **Desktop development with C++** workload, then use the **Developer Command Prompt for VS 2022**.
+
+### PYTHONPATH (Windows cmd)
+```cmd
+set PYTHONPATH=D:\dev\p\bare-metal\tools\CuAssembler;%PYTHONPATH%
+```
+
+---
+
 ## Troubleshooting
 
-**nvcc not found**: Add `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin` to PATH.
+**nvcc not found in WSL**:  
+```bash
+export PATH=/usr/local/cuda/bin:$PATH
+```
+Add to `~/.bashrc` to make permanent.
 
-**cl.exe not found**: Open a Developer Command Prompt for VS 2022, or run:
-`"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"`
+**WSL: GPU detected by `nvidia-smi` but CUDA programs fail**:  
+Check driver/toolkit version compatibility:
+```bash
+cat /proc/driver/nvidia/version   # Windows driver version
+nvcc --version                    # CUDA toolkit version
+```
+The toolkit version must be ≤ the driver's maximum supported CUDA version.
 
-**CuAssembler import fails**: Check PYTHONPATH includes `D:\dev\p\bare-metal\tools\CuAssembler`.
+**CuAssembler import fails**:  
+Ensure `tools/CuAssembler/` is in `sys.path`. `scripts/build.py` and `scripts/verify_setup.py` handle this automatically.
 
-**GPU not detected**: Run `nvidia-smi` — if this fails, reinstall the NVIDIA driver.
+**GPU not detected**:  
+Run `nvidia-smi`. If this fails, reinstall the Windows NVIDIA driver (WSL uses the Windows driver, not a separate Linux driver).
