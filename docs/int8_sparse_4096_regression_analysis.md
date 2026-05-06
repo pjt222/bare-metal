@@ -141,6 +141,8 @@ ncu --metrics sm__inst_executed_pipe_tensor_op_hmma.sum \
 |--------|------|-----------------|--------|
 | Sparse (rebuilt) | 2048³ | **39,457** | Baseline |
 | Sparse (rebuilt) | 4096³ | **25,568** | **-35% regression** |
+| Sparse (metadata preload, #65) | 2048³ | **39,674** | Baseline |
+| Sparse (metadata preload, #65) | 4096³ | **31,835** | **-19.8% regression** |
 | Dense cp.async | 2048³ | 17,239 | Stable |
 | Dense cp.async | 4096³ | 17,975 | Stable |
 
@@ -242,3 +244,24 @@ Cost: +512 bytes smem (still under 50 KB cliff). Benefit: eliminates all metadat
 - Dense kernel is stable across sizes because it has no metadata traffic.
 - The 4096³ regression is specifically an **L2 capacity problem**, not a fundamental algorithmic flaw.
 - **2048³ is the sweet spot** for this kernel on GA104. For larger matrices, metadata preloading is the path forward.
+
+---
+
+## Update 2026-05-05: #65 — Metadata Preload Implemented
+
+Commit 36a1fa7 adds double-buffered metadata preload to shared memory:
+
+```cpp
+__shared__ uint32_t smem_meta[2][128];  // 1 KB, loaded per tile alongside A/B
+```
+
+Results after fix:
+
+| Size | Before #65 | After #65 | Change |
+|------|-----------|-----------|--------|
+| 2048³ | 39,457 | **39,674** | +0.5% |
+| 4096³ | 25,568 | **31,835** | +24.5% |
+
+Regression reduced from -35% → -19.8% (2048³ → 4096³). Root cause confirmed: metadata L2 thrashing eliminated.
+
+Remaining 19.8% gap: likely B-fragment scalar packing overhead (160 PRMT in inner loop, 2.5× dense kernel). Fix requires smem transpose (N-major layout for ldmatrix compatibility) — tracked as #66.

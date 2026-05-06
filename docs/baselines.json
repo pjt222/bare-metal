@@ -7,8 +7,9 @@
       "2048_2048_2048": {"ms": 0.527, "gflops": 31910},
       "4096_4096_4096": {"ms": 4.220, "gflops": 31910}
     },
-    "phase2/hgemm_sparse/hgemm_sparse_tiled.cu": {
-      "2048_2048_2048": {"ms": 0.420, "gflops": 40930, "note": "dense-equiv"}
+    "phase2/igemm/igemm_sparse_tiled.cu": {
+      "2048_2048_2048": {"ms": 0.433, "tops": 39674, "note": "dense-equiv after #65 metadata preload"},
+      "4096_4096_4096": {"ms": 4.317, "tops": 31835, "note": "dense-equiv after #65, -19.8% vs 2048^3"}
     },
     "phase2/igemm/igemm_pipelined_cpasync.cu": {
       "4096_4096_4096": {"ms": 6.600, "tops": 20688}
