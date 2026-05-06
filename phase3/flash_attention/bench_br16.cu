@@ -1,12 +1,10 @@
 /*
- * bench_br16.cu — Benchmark: flash_attn_br16 (HMMA) vs flash_attn_4warp (scalar)
+ * bench_br16.cu — Flash Attention Br=16 HMMA benchmark (BenchDriver refactor)
+ *
+ * Tests flash_attn_br16 (FP16 HMMA) vs flash_attn_4warp (FP32 scalar).
  *
  * Build:
  *   nvcc -arch=sm_86 -O2 -o bench_br16 bench_br16.cu -lcuda -I../../phase2/common
- *
- * Usage:
- *   ./bench_br16              # seq=1024, batch=8, heads=8
- *   ./bench_br16 2048 4 8
  */
 
 #include <cstdio>
@@ -15,235 +13,160 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../phase2/common/bench_driver.h"
 
-// CPU reference (FP32 naive — same as before)
 static void cpu_attention(
-    const float *Qf, const float *Kf, const float *Vf, float *Of,
-    float *sbuf, int seq, int d, float scale
+    const float *Q, const float *K, const float *V, float *O,
+    float *score_buf, int seq, int d, float scale
 ) {
     for (int q = 0; q < seq; q++) {
         float row_max = -3.402823466e+38f;
         for (int k = 0; k < seq; k++) {
             float dot = 0.0f;
-            for (int dd = 0; dd < d; dd++) dot += Qf[q*d+dd] * Kf[k*d+dd];
-            sbuf[k] = dot * scale;
-            row_max = fmaxf(row_max, sbuf[k]);
+            for (int i = 0; i < d; i++) dot += Q[q*d+i] * K[k*d+i];
+            score_buf[k] = dot * scale;
+            row_max = fmaxf(row_max, score_buf[k]);
         }
-        float sum = 0.0f;
-        for (int k = 0; k < seq; k++) { sbuf[k] = expf(sbuf[k] - row_max); sum += sbuf[k]; }
-        float rcp = 1.0f / sum;
-        for (int dd = 0; dd < d; dd++) Of[q*d+dd] = 0.0f;
+        float exp_sum = 0.0f;
         for (int k = 0; k < seq; k++) {
-            float w = sbuf[k] * rcp;
-            for (int dd = 0; dd < d; dd++) Of[q*d+dd] += w * Vf[k*d+dd];
+            score_buf[k] = expf(score_buf[k] - row_max);
+            exp_sum += score_buf[k];
+        }
+        for (int i = 0; i < d; i++) O[q*d+i] = 0.0f;
+        float rcp = 1.0f / exp_sum;
+        for (int k = 0; k < seq; k++) {
+            float w = score_buf[k] * rcp;
+            for (int i = 0; i < d; i++) O[q*d+i] += w * V[k*d+i];
         }
     }
 }
 
-// Convert FP32 host array to FP16 for br16 kernel
 static void fp32_to_fp16(const float *src, __half *dst, size_t n) {
     for (size_t i = 0; i < n; i++) dst[i] = __float2half(src[i]);
 }
 
 int main(int argc, char **argv) {
-    int seq        = (argc > 1) ? atoi(argv[1]) : 1024;
-    int batch      = (argc > 2) ? atoi(argv[2]) : 8;
-    int num_heads  = (argc > 3) ? atoi(argv[3]) : 8;
-
-    const int d        = 64;
-    const int Br_block = 64;   // must match flash_attn_br16.cu
-    const int num_warps = 4;
-    const int Bc_4warp  = 64;
-
-    if (seq % Br_block != 0) {
-        fprintf(stderr, "seq=%d must be divisible by Br_block=%d\n", seq, Br_block);
-        return 1;
-    }
-
+    int seq  = (argc > 1) ? atoi(argv[1]) : 1024;
+    int batch= (argc > 2) ? atoi(argv[2]) : 8;
+    int heads= (argc > 3) ? atoi(argv[3]) : 8;
+    const int d = 64, Br_block = 64, Bc = 64, num_warps = 4;
     float scale = 1.0f / sqrtf((float)d);
 
-    printf("=== Flash Attention WMMA (Br=16 HMMA) vs 4-Warp Scalar ===\n");
-    printf("seq=%d  d=%d  batch=%d  heads=%d\n\n", seq, d, batch, num_heads);
-
-    CHECK_CU(cuInit(0));
-    CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
-    printf("Device: %s\n\n", devname);
-
-    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
-    CHECK_CU(cuCtxSetCurrent(ctx));
-
-    // Load cubins
-    CUmodule mod_4w, mod_br16;
-    CUfunction fn_4warp, fn_br16;
-
-    if (cuModuleLoad(&mod_4w, "flash_wmma.sm_86.cubin") != CUDA_SUCCESS ||
-        cuModuleLoad(&mod_br16, "flash_br16.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load cubins. Build both first.\n");
+    if (seq % Br_block != 0) {
+        fprintf(stderr, "seq must be divisible by %d\n", Br_block);
         return 1;
     }
-    CHECK_CU(cuModuleGetFunction(&fn_4warp, mod_4w,   "flash_attn_4warp"));
-    CHECK_CU(cuModuleGetFunction(&fn_br16,  mod_br16, "flash_attn_br16"));
 
-    // Set required shared memory for br16 (48 KB)
-    size_t smem_br16 = 2 * Bc_4warp * d * sizeof(short)      // K+V tiles FP16
-                     + Br_block * Bc_4warp * sizeof(float)    // smem_work FP32
-                     + Br_block * d        * sizeof(float);   // smem_pv FP32
-    CHECK_CU(cuFuncSetAttribute(fn_br16,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem_br16));
-    printf("br16 shared memory: %zu bytes (%.1f KB)\n\n", smem_br16, smem_br16/1024.0);
+    printf("=== Flash Attention Br=16 HMMA Benchmark (BenchDriver refactor) ===\n");
+    printf("seq=%d d=%d batch=%d heads=%d\n\n", seq, d, batch, heads);
 
-    // =========================================================
-    // Correctness test (single head)
-    // =========================================================
-    size_t n_elems = (size_t)seq * d;
-    size_t n_bytes = n_elems * sizeof(float);
+    BenchDriver driver;
+    driver.init_context();
 
-    float *hQf  = (float*)malloc(n_bytes);
-    float *hKf  = (float*)malloc(n_bytes);
-    float *hVf  = (float*)malloc(n_bytes);
-    float *hRef = (float*)malloc(n_bytes);
-    float *hOut = (float*)malloc(n_bytes);
-    float *sBuf = (float*)malloc(seq * sizeof(float));
+    size_t ne = (size_t)seq * d;
+    size_t nb = ne * sizeof(float);
 
-    fill_random(hQf, n_elems, 20);
-    fill_random(hKf, n_elems, 21);
-    fill_random(hVf, n_elems, 22);
+    // Single-head correctness
+    auto hQ  = driver.host_alloc<float>(ne);
+    auto hK  = driver.host_alloc<float>(ne);
+    auto hV  = driver.host_alloc<float>(ne);
+    auto hRef= driver.host_alloc<float>(ne);
+    auto hOut= driver.host_alloc<float>(ne);
+    auto sBuf= driver.host_alloc<float>(seq);
 
-    printf("Computing CPU reference...\n");
-    cpu_attention(hQf, hKf, hVf, hRef, sBuf, seq, d, scale);
-    printf("Done.\n\n");
+    fill_random(hQ.get(), ne, 20);
+    fill_random(hK.get(), ne, 21);
+    fill_random(hV.get(), ne, 22);
+    cpu_attention(hQ.get(), hK.get(), hV.get(), hRef.get(), sBuf.get(), seq, d, scale);
 
-    // FP16 versions for br16 kernel
-    __half *hQh = (__half*)malloc(n_elems * sizeof(__half));
-    __half *hKh = (__half*)malloc(n_elems * sizeof(__half));
-    __half *hVh = (__half*)malloc(n_elems * sizeof(__half));
-    fp32_to_fp16(hQf, hQh, n_elems);
-    fp32_to_fp16(hKf, hKh, n_elems);
-    fp32_to_fp16(hVf, hVh, n_elems);
+    auto hQh = driver.host_alloc<__half>(ne);
+    auto hKh = driver.host_alloc<__half>(ne);
+    auto hVh = driver.host_alloc<__half>(ne);
+    fp32_to_fp16(hQ.get(), hQh.get(), ne);
+    fp32_to_fp16(hK.get(), hKh.get(), ne);
+    fp32_to_fp16(hV.get(), hVh.get(), ne);
 
-    // Device buffers
-    CUdeviceptr dQf, dKf, dVf, dO;        // FP32 for 4-warp
-    CUdeviceptr dQh, dKh, dVh;             // FP16 for br16
+    auto dQf = driver.device_alloc<float>(ne);
+    auto dKf = driver.device_alloc<float>(ne);
+    auto dVf = driver.device_alloc<float>(ne);
+    auto dO  = driver.device_alloc<float>(ne);
+    auto dQh = driver.device_alloc<__half>(ne);
+    auto dKh = driver.device_alloc<__half>(ne);
+    auto dVh = driver.device_alloc<__half>(ne);
 
-    CHECK_CU(cuMemAlloc(&dQf, n_bytes));
-    CHECK_CU(cuMemAlloc(&dKf, n_bytes));
-    CHECK_CU(cuMemAlloc(&dVf, n_bytes));
-    CHECK_CU(cuMemAlloc(&dO,  n_bytes));
-    CHECK_CU(cuMemAlloc(&dQh, n_elems * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dKh, n_elems * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dVh, n_elems * sizeof(__half)));
+    driver.copy_h2d(dQf, hQ, nb);
+    driver.copy_h2d(dKf, hK, nb);
+    driver.copy_h2d(dVf, hV, nb);
+    driver.copy_h2d(dQh, hQh, ne * sizeof(__half));
+    driver.copy_h2d(dKh, hKh, ne * sizeof(__half));
+    driver.copy_h2d(dVh, hVh, ne * sizeof(__half));
 
-    CHECK_CU(cuMemcpyHtoD(dQf, hQf, n_bytes));
-    CHECK_CU(cuMemcpyHtoD(dKf, hKf, n_bytes));
-    CHECK_CU(cuMemcpyHtoD(dVf, hVf, n_bytes));
-    CHECK_CU(cuMemcpyHtoD(dQh, hQh, n_elems * sizeof(__half)));
-    CHECK_CU(cuMemcpyHtoD(dKh, hKh, n_elems * sizeof(__half)));
-    CHECK_CU(cuMemcpyHtoD(dVh, hVh, n_elems * sizeof(__half)));
+    CUfunction fn_4w = driver.load_kernel("flash_wmma.sm_86.cubin", "flash_attn_4warp");
+    CUfunction fn_br = driver.load_kernel("flash_br16.sm_86.cubin", "flash_attn_br16");
+
+    size_t smem_br = 2 * Bc * d * sizeof(__half)
+                   + Br_block * Bc * sizeof(float)
+                   + Br_block * d * sizeof(float);
+    CHECK_CU(cuFuncSetAttribute(fn_br, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem_br));
+    printf("br16 smem: %zu bytes (%.1f KB)\n\n", smem_br, smem_br / 1024.0f);
 
     int n1 = 1;
+    void *a4w[] = { &dQf.ptr, &dKf.ptr, &dVf.ptr, &dO.ptr, &seq, &n1, &scale };
+    void *abr[] = { &dQh.ptr, &dKh.ptr, &dVh.ptr, &dO.ptr, &seq, &n1, &scale };
 
-    // Test 4-warp (FP32 in/out)
-    void *args_4w[] = { &dQf, &dKf, &dVf, &dO, &seq, &n1, &scale };
-    CHECK_CU(cuMemsetD32(dO, 0, n_elems));
-    CHECK_CU(cuLaunchKernel(fn_4warp,
-        seq / num_warps, 1, 1,   128, 1, 1,   0, NULL, args_4w, NULL));
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
+    CHECK_CU(cuLaunchKernel(fn_4w, seq / num_warps, 1, 1, 128, 1, 1, 0, nullptr, a4w, nullptr));
     CHECK_CU(cuCtxSynchronize());
-    CHECK_CU(cuMemcpyDtoH(hOut, dO, n_bytes));
+    driver.copy_d2h(hOut, dO, nb);
+    driver.check(hOut.get(), hRef.get(), (int)ne, 1e-3f, 1e-1f, "flash_attn_4warp (FP32)");
 
-    printf("Correctness (vs CPU FP32 naive):\n");
-    auto r4 = check_fp32(hOut, hRef, n_elems, 1e-3f, 1e-1f);
-    print_check_result("flash_attn_4warp (FP32 K/V)", r4);
-
-    // Test br16 (FP16 in, FP32 out)
-    void *args_br[] = { &dQh, &dKh, &dVh, &dO, &seq, &n1, &scale };
-    CHECK_CU(cuMemsetD32(dO, 0, n_elems));
-    CHECK_CU(cuLaunchKernel(fn_br16,
-        seq / Br_block, 1, 1,   128, 1, 1,   (unsigned)smem_br16, NULL, args_br, NULL));
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
+    CHECK_CU(cuLaunchKernel(fn_br, seq / Br_block, 1, 1, 128, 1, 1, (unsigned)smem_br, nullptr, abr, nullptr));
     CHECK_CU(cuCtxSynchronize());
-    CHECK_CU(cuMemcpyDtoH(hOut, dO, n_bytes));
+    driver.copy_d2h(hOut, dO, nb);
+    driver.check(hOut.get(), hRef.get(), (int)ne, 1e-2f, 1.0f, "flash_attn_br16 (FP16 HMMA)");
 
-    auto rbr = check_fp32(hOut, hRef, n_elems, 1e-2f, 1e-0f);
-    print_check_result("flash_attn_br16  (FP16 HMMA)", rbr);
-    printf("\n");
+    // =====================================================================
+    // Performance: multi-head
+    // =====================================================================
+    size_t tot = (size_t)batch * heads * ne;
 
-    cuMemFree(dQf); cuMemFree(dKf); cuMemFree(dVf);
-    cuMemFree(dQh); cuMemFree(dKh); cuMemFree(dVh); cuMemFree(dO);
+    auto dQF = driver.device_alloc<float>(tot);
+    auto dKF = driver.device_alloc<float>(tot);
+    auto dVF = driver.device_alloc<float>(tot);
+    auto dOF = driver.device_alloc<float>(tot);
+    auto dQH = driver.device_alloc<__half>(tot);
+    auto dKH = driver.device_alloc<__half>(tot);
+    auto dVH = driver.device_alloc<__half>(tot);
 
-    // =========================================================
-    // Performance benchmark (multi-head)
-    // =========================================================
-    printf("Performance (batch=%d, heads=%d, seq=%d):\n\n", batch, num_heads, seq);
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dQF.ptr, 0x3f000000, tot));
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dKF.ptr, 0x3f000000, tot));
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dVF.ptr, 0x3f000000, tot));
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dQH.ptr, 0x3800, tot));
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dKH.ptr, 0x3800, tot));
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dVH.ptr, 0x3800, tot));
 
-    size_t tot_f32 = (size_t)batch * num_heads * seq * d;
-    size_t tot_f16 = tot_f32;  // same element count
+    void *a4wm[] = { &dQF.ptr, &dKF.ptr, &dVF.ptr, &dOF.ptr, &seq, &heads, &scale };
+    void *abrm[] = { &dQH.ptr, &dKH.ptr, &dVH.ptr, &dOF.ptr, &seq, &heads, &scale };
 
-    CUdeviceptr dQFm, dKFm, dVFm, dOMf;    // FP32 multi
-    CUdeviceptr dQHm, dKHm, dVHm;           // FP16 multi
-
-    CHECK_CU(cuMemAlloc(&dQFm, tot_f32 * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dKFm, tot_f32 * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dVFm, tot_f32 * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dOMf, tot_f32 * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dQHm, tot_f16 * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dKHm, tot_f16 * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dVHm, tot_f16 * sizeof(__half)));
-
-    CHECK_CU(cuMemsetD32(dQFm, 0x3f000000, tot_f32));
-    CHECK_CU(cuMemsetD32(dKFm, 0x3f000000, tot_f32));
-    CHECK_CU(cuMemsetD32(dVFm, 0x3f000000, tot_f32));
-    // Initialize FP16 buffers (0x3800 ≈ 0.5 in FP16)
-    CHECK_CU(cuMemsetD16(dQHm, 0x3800, tot_f16));
-    CHECK_CU(cuMemsetD16(dKHm, 0x3800, tot_f16));
-    CHECK_CU(cuMemsetD16(dVHm, 0x3800, tot_f16));
-
-    int warmup = 5, bench_n = 50;
-
-    auto run_bench_fn = [&](CUfunction fn, int grid_x, int block_x,
-                             size_t smem, void **args_ptr, const char *label) {
-        for (int i = 0; i < warmup; i++) {
-            CHECK_CU(cuLaunchKernel(fn,
-                grid_x, num_heads, batch,
-                block_x, 1, 1,
-                (unsigned)smem, NULL, args_ptr, NULL));
-        }
+    auto bench = [&](CUfunction fn, int gx, int smem, void **args, const char *label) {
+        for (int i = 0; i < 5; i++)
+            CHECK_CU(cuLaunchKernel(fn, gx, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, args, nullptr));
         CHECK_CU(cuCtxSynchronize());
-        float avg_ms;
-        {
-            BenchTimer timer;
-            timer.start();
-            for (int i = 0; i < bench_n; i++) {
-                CHECK_CU(cuLaunchKernel(fn,
-                    grid_x, num_heads, batch,
-                    block_x, 1, 1,
-                    (unsigned)smem, NULL, args_ptr, NULL));
-            }
-            avg_ms = timer.stop_ms() / bench_n;
-        }
-        double bw_elem = (double)tot_f32 * (1 + 2.0*(seq/64) + 1);  // Q+K×iter+V×iter+O
-        double bw_gb   = bw_elem * sizeof(float) / 1e9 / (avg_ms / 1000.0);
-        double ideal   = 4.0 * tot_f32 * sizeof(float) / 1e9 / (avg_ms / 1000.0);
-        printf("  %-42s %7.3f ms  %6.1f GB/s  (ideal: %5.1f GB/s)\n",
-               label, avg_ms, bw_gb, ideal);
+        BenchTimer timer; timer.start();
+        for (int i = 0; i < 50; i++)
+            CHECK_CU(cuLaunchKernel(fn, gx, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, args, nullptr));
+        CHECK_CU(cuCtxSynchronize());
+        float ms = timer.stop_ms() / 50.0f;
+        double bw_elem = (double)tot * (1 + 2.0 * (seq / 64) + 1);
+        double bw = bw_elem * sizeof(float) / 1e9 / (ms / 1000.0);
+        double ideal = 4.0 * tot * sizeof(float) / 1e9 / (ms / 1000.0);
+        printf("  %-40s %7.3f ms  %6.1f GB/s  (ideal: %5.1f GB/s)\n", label, ms, bw, ideal);
     };
 
-    void *args_4wm[] = { &dQFm, &dKFm, &dVFm, &dOMf, &seq, &num_heads, &scale };
-    void *args_brm[] = { &dQHm, &dKHm, &dVHm, &dOMf, &seq, &num_heads, &scale };
+    printf("\nPerformance (batch=%d, heads=%d):\n\n", batch, heads);
+    bench(fn_4w, seq / num_warps, 0,        a4wm, "flash_attn_4warp (FP32, BKV=64)");
+    bench(fn_br, seq / Br_block,  smem_br, abrm, "flash_attn_br16  (FP16, HMMA)  ");
 
-    run_bench_fn(fn_4warp, seq/num_warps,  128, 0,         args_4wm, "flash_attn_4warp (FP32, BKV=64)");
-    run_bench_fn(fn_br16,  seq/Br_block,   128, smem_br16, args_brm, "flash_attn_br16  (FP16, HMMA)  ");
-
-    printf("\nNote: br16 uses FP16 inputs (half the bandwidth for K/V loads)\n");
-    printf("Expected SASS: cuobjdump -sass flash_br16.sm_86.cubin | grep HMMA\n");
-
-    cuMemFree(dQFm); cuMemFree(dKFm); cuMemFree(dVFm); cuMemFree(dOMf);
-    cuMemFree(dQHm); cuMemFree(dKHm); cuMemFree(dVHm);
-    cuModuleUnload(mod_4w); cuModuleUnload(mod_br16);
-    cuDevicePrimaryCtxRelease(cu_dev);
-
-    free(hQf); free(hKf); free(hVf); free(hRef); free(hOut); free(sBuf);
-    free(hQh); free(hKh); free(hVh);
     return 0;
 }
