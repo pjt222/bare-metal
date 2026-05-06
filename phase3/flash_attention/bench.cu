@@ -1,299 +1,131 @@
 /*
- * bench.cu — Flash Attention benchmark: correctness vs CPU + throughput
+ * bench.cu — Flash Attention benchmark (BenchDriver refactor)
  *
- * Tests:
- *   1. Correctness: flash_attn_1warp output vs CPU numerically stable naive attention
- *   2. Performance: flash_attn_multihead throughput in GB/s at multiple seq_lens
+ * Tests correctness (single-head) and throughput (multi-head).
  *
  * Build:
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
- *
- * Usage:
- *   ./bench                     # default: single-head, seq_len=512
- *   ./bench 1024                # seq_len=1024
- *   ./bench 2048 8 8            # seq_len=2048, batch=8, num_heads=8
- *
- * Expected SASS (check with cuobjdump -sass flash_attn.sm_86.cubin):
- *   SHFL.BFLY  — warp dot product reduction (5 instructions, offsets 16,8,4,2,1)
- *   MUFU.EX2   — exp2f for attention weights (online softmax)
- *   MUFU.RCP   — __frcp_rn for final 1/sum normalization
- *   FMAX       — running max comparison across KV tiles
- *   FFMA       — weighted V accumulation (output_reg += weight * V_tile)
  */
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../phase2/common/bench_driver.h"
 
-// -----------------------------------------------------------------------
-// CPU reference: numerically stable scaled dot-product attention
-//   O[q] = sum_k softmax(scale * Q[q] · K[k])_k * V[k]
-// Uses standard two-pass softmax (max subtraction then normalize).
-// -----------------------------------------------------------------------
 static void cpu_attention(
-    const float *Q,         // [seq_len × d_head]
-    const float *K,         // [seq_len × d_head]
-    const float *V,         // [seq_len × d_head]
-    float       *O,         // [seq_len × d_head]  output
-    float       *score_buf, // [seq_len] scratch buffer
-    int seq_len,
-    int d_head,
-    float scale
+    const float *Q, const float *K, const float *V, float *O,
+    float *score_buf, int seq_len, int d_head, float scale
 ) {
-    for (int q_idx = 0; q_idx < seq_len; q_idx++) {
-        const float *q_row = Q + (size_t)q_idx * d_head;
-
-        // --- Pass 1: compute scores and find max ---
+    for (int q = 0; q < seq_len; q++) {
         float row_max = -3.402823466e+38f;
-        for (int k_idx = 0; k_idx < seq_len; k_idx++) {
-            const float *k_row = K + (size_t)k_idx * d_head;
+        for (int k = 0; k < seq_len; k++) {
             float dot = 0.0f;
-            for (int d = 0; d < d_head; d++) {
-                dot += q_row[d] * k_row[d];
-            }
-            score_buf[k_idx] = dot * scale;
-            row_max = fmaxf(row_max, score_buf[k_idx]);
+            for (int d = 0; d < d_head; d++) dot += Q[q*d_head+d] * K[k*d_head+d];
+            score_buf[k] = dot * scale;
+            row_max = fmaxf(row_max, score_buf[k]);
         }
-
-        // --- Pass 2: exp(score - max) and sum ---
         float exp_sum = 0.0f;
-        for (int k_idx = 0; k_idx < seq_len; k_idx++) {
-            score_buf[k_idx] = expf(score_buf[k_idx] - row_max);
-            exp_sum += score_buf[k_idx];
+        for (int k = 0; k < seq_len; k++) {
+            score_buf[k] = expf(score_buf[k] - row_max);
+            exp_sum += score_buf[k];
         }
-
-        // --- Pass 3: normalize and accumulate weighted V ---
-        float *o_row = O + (size_t)q_idx * d_head;
-        for (int d = 0; d < d_head; d++) o_row[d] = 0.0f;
-
-        float rcp_sum = 1.0f / exp_sum;
-        for (int k_idx = 0; k_idx < seq_len; k_idx++) {
-            float softmax_weight = score_buf[k_idx] * rcp_sum;
-            const float *v_row = V + (size_t)k_idx * d_head;
-            for (int d = 0; d < d_head; d++) {
-                o_row[d] += softmax_weight * v_row[d];
-            }
+        for (int d = 0; d < d_head; d++) O[q*d_head+d] = 0.0f;
+        float rcp = 1.0f / exp_sum;
+        for (int k = 0; k < seq_len; k++) {
+            float w = score_buf[k] * rcp;
+            for (int d = 0; d < d_head; d++) O[q*d_head+d] += w * V[k*d_head+d];
         }
     }
 }
 
-// -----------------------------------------------------------------------
-// Main
-// -----------------------------------------------------------------------
 int main(int argc, char **argv) {
-    int seq_len   = (argc > 1) ? atoi(argv[1]) : 512;
+    int seq_len    = (argc > 1) ? atoi(argv[1]) : 512;
     int batch_size = (argc > 2) ? atoi(argv[2]) : 1;
     int num_heads  = (argc > 3) ? atoi(argv[3]) : 1;
-
-    const int d_head = 64;   // must match D_HEAD in flash_attn.cu
-    const int block_kv = 32; // must match BLOCK_KV in flash_attn.cu
-
-    // seq_len must be multiple of block_kv for this kernel
-    if (seq_len % block_kv != 0) {
-        fprintf(stderr, "ERROR: seq_len=%d must be a multiple of BLOCK_KV=%d\n",
-                seq_len, block_kv);
-        return EXIT_FAILURE;
-    }
-
+    const int d_head = 64, block_kv = 32;
     float scale = 1.0f / sqrtf((float)d_head);
 
-    printf("=== Flash Attention Benchmark — Online Softmax ===\n");
-    printf("seq_len=%d  d_head=%d  batch=%d  heads=%d  scale=%.4f\n\n",
-           seq_len, d_head, batch_size, num_heads, scale);
-
-    CHECK_CU(cuInit(0));
-    CUdevice  cu_device;
-    CHECK_CU(cuDeviceGet(&cu_device, 0));
-
-    char device_name[256];
-    CHECK_CU(cuDeviceGetName(device_name, sizeof(device_name), cu_device));
-    printf("Device: %s\n\n", device_name);
-
-    CUcontext cu_context;
-    CHECK_CU(cuDevicePrimaryCtxRetain(&cu_context, cu_device));
-    CHECK_CU(cuCtxSetCurrent(cu_context));
-
-    // --- Load kernel cubin ---
-    CUmodule   flash_module;
-    CUfunction single_head_func, multihead_func;
-
-    CUresult load_result = cuModuleLoad(&flash_module, "flash_attn.sm_86.cubin");
-    if (load_result != CUDA_SUCCESS) {
-        const char *err_str = nullptr;
-        cuGetErrorString(load_result, &err_str);
-        fprintf(stderr, "Cannot load flash_attn.sm_86.cubin: %s\n", err_str);
-        fprintf(stderr, "Build with: nvcc --cubin -arch=sm_86 -O2 -o flash_attn.sm_86.cubin flash_attn.cu\n");
-        cuDevicePrimaryCtxRelease(cu_device);
-        return EXIT_FAILURE;
+    if (seq_len % block_kv != 0) {
+        fprintf(stderr, "seq_len must be multiple of %d\n", block_kv);
+        return 1;
     }
-    CHECK_CU(cuModuleGetFunction(&single_head_func, flash_module, "flash_attn_1warp"));
-    CHECK_CU(cuModuleGetFunction(&multihead_func,   flash_module, "flash_attn_multihead"));
-    printf("Flash Attention kernels loaded.\n\n");
 
-    // =========================================================
-    // Part 1: Correctness test (single-head, seq_len)
-    // =========================================================
-    size_t single_head_elements = (size_t)seq_len * d_head;
-    size_t single_head_bytes    = single_head_elements * sizeof(float);
+    printf("=== Flash Attention Benchmark (BenchDriver refactor) ===\n");
+    printf("seq=%d d=%d batch=%d heads=%d\n\n", seq_len, d_head, batch_size, num_heads);
 
-    float *host_Q     = (float *)malloc(single_head_bytes);
-    float *host_K     = (float *)malloc(single_head_bytes);
-    float *host_V     = (float *)malloc(single_head_bytes);
-    float *host_O_gpu = (float *)malloc(single_head_bytes);
-    float *host_O_ref = (float *)malloc(single_head_bytes);
-    float *score_buf  = (float *)malloc(seq_len * sizeof(float));
+    BenchDriver driver;
+    driver.init_context();
 
-    fill_random(host_Q, single_head_elements, 42);
-    fill_random(host_K, single_head_elements, 43);
-    fill_random(host_V, single_head_elements, 44);
+    size_t sh = (size_t)seq_len * d_head;
+    size_t sb = sh * sizeof(float);
 
-    // CPU reference (numerically stable naive attention)
-    printf("Computing CPU reference...\n");
-    cpu_attention(host_Q, host_K, host_V, host_O_ref, score_buf,
-                  seq_len, d_head, scale);
-    printf("CPU reference done.\n\n");
+    // Single-head correctness
+    auto hQ  = driver.host_alloc<float>(sh);
+    auto hK  = driver.host_alloc<float>(sh);
+    auto hV  = driver.host_alloc<float>(sh);
+    auto hRef= driver.host_alloc<float>(sh);
+    auto hOut= driver.host_alloc<float>(sh);
+    auto sBuf= driver.host_alloc<float>(seq_len);
 
-    // Allocate GPU buffers
-    CUdeviceptr dev_Q, dev_K, dev_V, dev_O;
-    CHECK_CU(cuMemAlloc(&dev_Q, single_head_bytes));
-    CHECK_CU(cuMemAlloc(&dev_K, single_head_bytes));
-    CHECK_CU(cuMemAlloc(&dev_V, single_head_bytes));
-    CHECK_CU(cuMemAlloc(&dev_O, single_head_bytes));
+    fill_random(hQ.get(), sh, 42);
+    fill_random(hK.get(), sh, 43);
+    fill_random(hV.get(), sh, 44);
+    cpu_attention(hQ.get(), hK.get(), hV.get(), hRef.get(), sBuf.get(), seq_len, d_head, scale);
 
-    CHECK_CU(cuMemcpyHtoD(dev_Q, host_Q, single_head_bytes));
-    CHECK_CU(cuMemcpyHtoD(dev_K, host_K, single_head_bytes));
-    CHECK_CU(cuMemcpyHtoD(dev_V, host_V, single_head_bytes));
+    auto dQ = driver.device_alloc<float>(sh);
+    auto dK = driver.device_alloc<float>(sh);
+    auto dV = driver.device_alloc<float>(sh);
+    auto dO = driver.device_alloc<float>(sh);
+    driver.copy_h2d(dQ, hQ, sb);
+    driver.copy_h2d(dK, hK, sb);
+    driver.copy_h2d(dV, hV, sb);
 
-    // Launch flash_attn_1warp: one warp per query row
-    //   Grid:  (seq_len, 1, 1)
-    //   Block: (WARP_SIZE=32, 1, 1)
-    {
-        void *args[] = { &dev_Q, &dev_K, &dev_V, &dev_O, &seq_len, &scale };
-        CHECK_CU(cuLaunchKernel(single_head_func,
-            seq_len, 1, 1,  // grid
-            32, 1, 1,        // block: exactly one warp
-            0, NULL, args, NULL));
-        CHECK_CU(cuCtxSynchronize());
-    }
-    CHECK_CU(cuMemcpyDtoH(host_O_gpu, dev_O, single_head_bytes));
+    CUfunction fn_single = driver.load_kernel("flash_attn.sm_86.cubin", "flash_attn_1warp");
+    CUfunction fn_multi  = driver.load_kernel("flash_attn.sm_86.cubin", "flash_attn_multihead");
 
-    printf("Correctness (flash_attn_1warp vs CPU naive):\n");
-    auto correctness = check_fp32(host_O_gpu, host_O_ref, single_head_elements, 1e-3f, 1e-3f);
-    print_check_result("flash_attn_1warp", correctness);
-    printf("\n");
-
-    // =========================================================
-    // Part 2: Performance benchmark (multihead)
-    // =========================================================
-    printf("Performance benchmark (flash_attn_multihead):\n");
-    printf("  batch=%d  heads=%d  seq_len=%d  d_head=%d\n\n",
-           batch_size, num_heads, seq_len, d_head);
-
-    size_t multi_elements = (size_t)batch_size * num_heads * seq_len * d_head;
-    size_t multi_bytes    = multi_elements * sizeof(float);
-
-    CUdeviceptr dev_Q_multi, dev_K_multi, dev_V_multi, dev_O_multi;
-    CHECK_CU(cuMemAlloc(&dev_Q_multi, multi_bytes));
-    CHECK_CU(cuMemAlloc(&dev_K_multi, multi_bytes));
-    CHECK_CU(cuMemAlloc(&dev_V_multi, multi_bytes));
-    CHECK_CU(cuMemAlloc(&dev_O_multi, multi_bytes));
-
-    // Fill with random data (reuse Q/K/V host arrays for pattern)
-    float *host_multi = (float *)malloc(multi_bytes);
-    fill_random(host_multi, multi_elements, 99);
-    CHECK_CU(cuMemcpyHtoD(dev_Q_multi, host_multi, multi_bytes));
-    CHECK_CU(cuMemcpyHtoD(dev_K_multi, host_multi, multi_bytes));
-    CHECK_CU(cuMemcpyHtoD(dev_V_multi, host_multi, multi_bytes));
-    free(host_multi);
-
-    // Grid: (seq_len, num_heads, batch_size)
-    // Block: (32, 1, 1)
-    void *multi_args[] = {
-        &dev_Q_multi, &dev_K_multi, &dev_V_multi, &dev_O_multi,
-        &seq_len, &num_heads, &scale
-    };
-
-    int warmup_iters = 5;
-    int bench_iters  = 50;
-
-    // Warmup
-    for (int iter = 0; iter < warmup_iters; iter++) {
-        CHECK_CU(cuLaunchKernel(multihead_func,
-            seq_len, num_heads, batch_size,
-            32, 1, 1,
-            0, NULL, multi_args, NULL));
-    }
+    void *args1[] = { &dQ.ptr, &dK.ptr, &dV.ptr, &dO.ptr, &seq_len, &scale };
+    CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, sh));
+    CHECK_CU(cuLaunchKernel(fn_single, seq_len, 1, 1, 32, 1, 1, 0, nullptr, args1, nullptr));
     CHECK_CU(cuCtxSynchronize());
+    driver.copy_d2h(hOut, dO, sb);
+    driver.check(hOut.get(), hRef.get(), (int)sh, 1e-3f, 1e-3f, "flash_attn_1warp");
 
-    // Benchmark
-    float avg_ms;
-    {
-        BenchTimer timer;
-        timer.start();
-        for (int iter = 0; iter < bench_iters; iter++) {
-            CHECK_CU(cuLaunchKernel(multihead_func,
-                seq_len, num_heads, batch_size,
-                32, 1, 1,
-                0, NULL, multi_args, NULL));
-        }
-        avg_ms = timer.stop_ms() / bench_iters;
-    }
+    // Multi-head performance
+    size_t tot = (size_t)batch_size * num_heads * sh;
+    size_t tb  = tot * sizeof(float);
 
-    // Bandwidth: read 3 tensors (Q, K, V) + write 1 (O)
-    // Flash attention reads Q once, K and V multiple times (seq_len/BLOCK_KV iterations each)
-    // True reads: Q=1 pass, K=seq_len/BLOCK_KV passes, V=seq_len/BLOCK_KV passes
-    // For seq_len=512: 16 KV iterations → K read 16×, V read 16×
-    int kv_iterations = seq_len / block_kv;
-    double bytes_read  = (double)multi_bytes         // Q: read once
-                       + (double)multi_bytes * kv_iterations  // K: read kv_iterations times
-                       + (double)multi_bytes * kv_iterations; // V: read kv_iterations times
-    double bytes_write = (double)multi_bytes;         // O: write once
-    double total_bytes = bytes_read + bytes_write;
-    double bandwidth_gb_s = (total_bytes / 1e9) / (avg_ms / 1000.0);
+    auto dQm = driver.device_alloc<float>(tot);
+    auto dKm = driver.device_alloc<float>(tot);
+    auto dVm = driver.device_alloc<float>(tot);
+    auto dOm = driver.device_alloc<float>(tot);
 
-    // Effective compute: for each query, seq_len dot products of d_head dims (2 ops each)
-    // plus softmax (exp + weighted sum)
+    auto h_multi = driver.host_alloc<float>(tot);
+    fill_random(h_multi.get(), tot, 99);
+    driver.copy_h2d(dQm, h_multi, tb);
+    driver.copy_h2d(dKm, h_multi, tb);
+    driver.copy_h2d(dVm, h_multi, tb);
+
+    void *args_m[] = { &dQm.ptr, &dKm.ptr, &dVm.ptr, &dOm.ptr,
+                       &seq_len, &num_heads, &scale };
+
+    printf("\nPerformance (batch=%d, heads=%d, seq=%d):\n", batch_size, num_heads, seq_len);
+    float ms = driver.benchmark_kernel(fn_multi,
+        dim3(seq_len, num_heads, batch_size), dim3(32,1,1), 0, args_m, 5, 50);
+
+    int kv_iters = seq_len / block_kv;
+    double bytes_read  = (double)tb * (1.0 + 2.0 * kv_iters);
+    double total_bytes = bytes_read + tb;  // + O write
+    double bw = (total_bytes / 1e9) / (ms / 1000.0);
+    double ideal_bw = (4.0 * tb / 1e9) / (ms / 1000.0);
     double flops = (double)batch_size * num_heads * seq_len * (
-        (double)seq_len * d_head * 2 +    // QK^T: seq_len dot products
-        (double)seq_len * 5 +             // softmax per position: exp + rescale + sum
-        (double)seq_len * d_head * 2      // PV: seq_len weighted accumulations
-    );
-    double gflops = flops / (avg_ms / 1000.0) / 1e9;
+        (double)seq_len * d_head * 2 + (double)seq_len * 5 + (double)seq_len * d_head * 2);
+    double gflops = flops / (ms / 1000.0) / 1e9;
 
-    printf("  %-30s  %7.3f ms   %7.1f GB/s   %7.1f GFLOPS\n",
-           "flash_attn_multihead", avg_ms, bandwidth_gb_s, gflops);
-
-    // Also show the "idealized" bandwidth if we only counted input/output once
-    double ideal_bytes = 4.0 * multi_bytes;  // Q + K + V + O
-    double ideal_bw = (ideal_bytes / 1e9) / (avg_ms / 1000.0);
-    printf("  (ideal BW if K/V cached: %.1f GB/s — memory ceiling: 608 GB/s)\n", ideal_bw);
-
-    printf("\nTo inspect SASS:\n");
-    printf("  cuobjdump -sass flash_attn.sm_86.cubin | grep -E 'SHFL|MUFU|FMAX|FFMA'\n");
-    printf("  SHFL.BFLY  — 5× per score (offsets 16,8,4,2,1) × BLOCK_KV=%d scores = %d SHFL per Q row\n",
-           block_kv, 5 * block_kv);
-    printf("  MUFU.EX2   — 1 per weight + 1 for rescale factor\n");
-    printf("  MUFU.RCP   — 1 per Q row (final normalization)\n");
-
-    // --- Cleanup ---
-    cuMemFree(dev_Q);
-    cuMemFree(dev_K);
-    cuMemFree(dev_V);
-    cuMemFree(dev_O);
-    cuMemFree(dev_Q_multi);
-    cuMemFree(dev_K_multi);
-    cuMemFree(dev_V_multi);
-    cuMemFree(dev_O_multi);
-    cuModuleUnload(flash_module);
-    cuDevicePrimaryCtxRelease(cu_device);
-
-    free(host_Q); free(host_K); free(host_V);
-    free(host_O_gpu); free(host_O_ref); free(score_buf);
+    printf("  %-30s %7.3f ms  %7.1f GB/s  %7.1f GFLOPS\n",
+           "flash_attn_multihead", ms, bw, gflops);
+    printf("  (ideal BW if K/V cached: %.1f GB/s)\n", ideal_bw);
 
     return 0;
 }
