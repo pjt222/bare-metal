@@ -71,7 +71,8 @@ int main(int argc, char **argv) {
     CHECK_CU(cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, cu_dev));
     printf("Device: %s (%d SMs)\n\n", devname, num_sms);
 
-    CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
+    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(ctx));
 
     // Load cubins
     CUmodule mod_br16, mod_persist;
@@ -271,6 +272,6 @@ int main(int argc, char **argv) {
     cuMemFree(dev_tile_counter);
     cuModuleUnload(mod_br16);
     cuModuleUnload(mod_persist);
-    cuCtxDestroy(ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
     return 0;
 }

@@ -118,7 +118,8 @@ int main(void) {
 
     CHECK_CU(cuInit(0));
     CUdevice  cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    CUcontext cu_ctx; CHECK_CU(cuCtxCreate(&cu_ctx, 0, cu_dev));
+    CUcontext cu_ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&cu_ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(cu_ctx));
 
     CUmodule mod_explicit, mod_implicit;
     CHECK_CU(cuModuleLoad(&mod_explicit, "conv2d_im2col.sm_86.cubin"));
@@ -285,6 +286,6 @@ int main(void) {
 
     cuModuleUnload(mod_explicit);
     cuModuleUnload(mod_implicit);
-    cuCtxDestroy(cu_ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
     return 0;
 }

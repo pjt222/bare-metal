@@ -81,7 +81,8 @@ int main(int argc, char **argv) {
     char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
     printf("Device: %s\n\n", devname);
 
-    CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
+    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(ctx));
 
     // ---- Load cubins ----
     CUmodule mod_br16, mod_split;
@@ -348,7 +349,7 @@ int main(int argc, char **argv) {
 
     cuMemFree(dQm); cuMemFree(dKm); cuMemFree(dVm); cuMemFree(dOm);
     cuModuleUnload(mod_br16); cuModuleUnload(mod_split);
-    cuCtxDestroy(ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
 
     return 0;
 }

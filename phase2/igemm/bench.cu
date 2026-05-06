@@ -76,7 +76,8 @@ int main(int argc, char **argv) {
     printf("Device: %s\n\n", device_name);
 
     CUcontext cu_context;
-    CHECK_CU(cuCtxCreate(&cu_context, 0, cu_device));
+    CHECK_CU(cuDevicePrimaryCtxRetain(&cu_context, cu_device));
+    CHECK_CU(cuCtxSetCurrent(cu_context));
 
     // --- Load IGEMM kernel ---
     CUmodule   igemm_module;
@@ -1085,7 +1086,7 @@ int main(int argc, char **argv) {
     if (hgemm_module) cuModuleUnload(hgemm_module);
     if (hgemm_tiled_module) cuModuleUnload(hgemm_tiled_module);
     if (hgemm_16w_module) cuModuleUnload(hgemm_16w_module);
-    cuCtxDestroy(cu_context);
+    cuDevicePrimaryCtxRelease(cu_device);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_int8); free(host_b_int8);
 

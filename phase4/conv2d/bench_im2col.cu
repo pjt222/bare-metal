@@ -169,7 +169,8 @@ int main(int argc, char **argv) {
     // ---- CUDA setup ----
     CHECK_CU(cuInit(0));
     CUdevice  cu_dev;  CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    CUcontext cu_ctx;  CHECK_CU(cuCtxCreate(&cu_ctx, 0, cu_dev));
+    CUcontext cu_ctx;  CHECK_CU(cuDevicePrimaryCtxRetain(&cu_ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(cu_ctx));
 
     // Load cubins
     CUmodule mod_im2col, mod_gemm;
@@ -327,7 +328,7 @@ int main(int argc, char **argv) {
     // Cleanup
     cuMemFree(d_X); cuMemFree(d_col); cuMemFree(d_Wt); cuMemFree(d_Y);
     cuModuleUnload(mod_im2col);
-    cuCtxDestroy(cu_ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
 
     delete[] host_X; delete[] host_W; delete[] host_Y_ref;
     delete[] host_Y_gpu; delete[] host_Wt;

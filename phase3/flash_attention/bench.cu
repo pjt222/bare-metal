@@ -115,7 +115,8 @@ int main(int argc, char **argv) {
     printf("Device: %s\n\n", device_name);
 
     CUcontext cu_context;
-    CHECK_CU(cuCtxCreate(&cu_context, 0, cu_device));
+    CHECK_CU(cuDevicePrimaryCtxRetain(&cu_context, cu_device));
+    CHECK_CU(cuCtxSetCurrent(cu_context));
 
     // --- Load kernel cubin ---
     CUmodule   flash_module;
@@ -127,7 +128,7 @@ int main(int argc, char **argv) {
         cuGetErrorString(load_result, &err_str);
         fprintf(stderr, "Cannot load flash_attn.sm_86.cubin: %s\n", err_str);
         fprintf(stderr, "Build with: nvcc --cubin -arch=sm_86 -O2 -o flash_attn.sm_86.cubin flash_attn.cu\n");
-        cuCtxDestroy(cu_context);
+        cuDevicePrimaryCtxRelease(cu_device);
         return EXIT_FAILURE;
     }
     CHECK_CU(cuModuleGetFunction(&single_head_func, flash_module, "flash_attn_1warp"));
@@ -289,7 +290,7 @@ int main(int argc, char **argv) {
     cuMemFree(dev_V_multi);
     cuMemFree(dev_O_multi);
     cuModuleUnload(flash_module);
-    cuCtxDestroy(cu_context);
+    cuDevicePrimaryCtxRelease(cu_device);
 
     free(host_Q); free(host_K); free(host_V);
     free(host_O_gpu); free(host_O_ref); free(score_buf);

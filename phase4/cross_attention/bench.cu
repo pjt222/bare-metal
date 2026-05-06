@@ -98,7 +98,8 @@ int main(int argc, char **argv) {
     char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
     printf("Device: %s\n\n", devname);
 
-    CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
+    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(ctx));
 
     CUmodule mod;
     CUfunction fn;
@@ -251,6 +252,6 @@ int main(int argc, char **argv) {
     printf("  cuobjdump -sass cross_attn.sm_86.cubin | grep MUFU.EX2     → weights + rescale\n");
 
     cuMemFree(dQm); cuMemFree(dKm); cuMemFree(dVm); cuMemFree(dOm);
-    cuModuleUnload(mod); cuCtxDestroy(ctx);
+    cuModuleUnload(mod); cuDevicePrimaryCtxRelease(cu_dev);
     return 0;
 }

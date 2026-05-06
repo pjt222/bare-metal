@@ -107,7 +107,8 @@ int main(void) {
     // ---- CUDA setup ----
     CHECK_CU(cuInit(0));
     CUdevice  cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    CUcontext cu_ctx; CHECK_CU(cuCtxCreate(&cu_ctx, 0, cu_dev));
+    CUcontext cu_ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&cu_ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(cu_ctx));
 
     // Load cubins
     CUmodule  mod_base, mod_pipe;
@@ -270,6 +271,6 @@ int main(void) {
 
     cuModuleUnload(mod_base);
     cuModuleUnload(mod_pipe);
-    cuCtxDestroy(cu_ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
     return 0;
 }

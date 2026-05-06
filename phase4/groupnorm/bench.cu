@@ -157,7 +157,8 @@ int main(int argc, char **argv) {
     char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
     printf("Device: %s\n\n", devname);
 
-    CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
+    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(ctx));
 
     CUmodule mod;
     CUfunction fn_nhwc, fn_nchw;
@@ -330,7 +331,7 @@ int main(int argc, char **argv) {
     cuMemFree(dev_X); cuMemFree(dev_gamma); cuMemFree(dev_beta); cuMemFree(dev_Y);
     cuMemFree(dev_X_nchw); cuMemFree(dev_Y_nchw);
     cuModuleUnload(mod);
-    cuCtxDestroy(ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
 
     free(host_X); free(host_gamma); free(host_beta);
     free(host_Y); free(host_ref);

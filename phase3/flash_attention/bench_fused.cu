@@ -76,7 +76,8 @@ int main(int argc, char **argv) {
     CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
     char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
     printf("Device: %s\n\n", devname);
-    CUcontext ctx; CHECK_CU(cuCtxCreate(&ctx, 0, cu_dev));
+    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
+    CHECK_CU(cuCtxSetCurrent(ctx));
 
     CUmodule mod_br16, mod_fused;
     CUfunction fn_br16, fn_fused;
@@ -322,6 +323,6 @@ int main(int argc, char **argv) {
     cuMemFree(dQHm_bhsd); cuMemFree(dKHm_bhsd); cuMemFree(dVHm_bhsd); cuMemFree(dO_bhsd);
     cuMemFree(dQHm_bshd); cuMemFree(dKHm_bshd); cuMemFree(dVHm_bshd); cuMemFree(dO_bshd);
     cuModuleUnload(mod_br16); cuModuleUnload(mod_fused);
-    cuCtxDestroy(ctx);
+    cuDevicePrimaryCtxRelease(cu_dev);
     return 0;
 }
