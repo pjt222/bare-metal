@@ -95,10 +95,9 @@ void igemm_sparse_tiled(
     float scale_a, float scale_b
 ) {
     // Double-buffered shared memory
-    __shared__ __align__(16) int8_t smem_a[2][BM * STRIDE_A];     // 2 x 6 KB = 12 KB
-    __shared__ __align__(16) int8_t smem_b[2][BK * STRIDE_B];     // 2 x 9 KB = 18 KB
-    __shared__ __align__(16) uint32_t smem_meta[2][128];          // 2 x 512 bytes = 1 KB
-    // Total: 31 KB — under 50 KB cliff for 2 blocks/SM ✓
+    __shared__ __align__(16) int8_t smem_a[2][BM * STRIDE_A];     // 2 × 6 KB = 12 KB
+    __shared__ __align__(16) int8_t smem_b[2][BK * STRIDE_B];     // 2 × 9 KB = 18 KB
+    // Total: 30 KB — under 50 KB cliff for 2 blocks/SM ✓
 
     int thread_id = threadIdx.x;
     int warp_id   = thread_id / WARP_SIZE;
@@ -196,22 +195,8 @@ void igemm_sparse_tiled(
         }                                                                             \
     }
 
-    // LOAD_META_TILE: preload metadata for 8 M-tiles × 2 K-steps × 8 gids
-    // into smem_meta[128] = 512 bytes. 128 threads load 1 uint32_t each.
-    #define LOAD_META_TILE(buf, tile_idx)                                              \
-    {                                                                                 \
-        int _gk_start = (tile_idx) * (BK / WMMA_K);                                 \
-        int _flat     = thread_id;                                                   \
-        if (_flat < 128) {                                                          \
-            int _m_off  = _flat / 16;       /* 0..7: which M-tile in block */       \
-            int _gk_off = (_flat % 16) / 8; /* 0 or 1: which K-step */              \
-            int _gid    = _flat % 8;        /* 0..7 */                              \
-            int _m      = block_row / WMMA_M + _m_off;                             \
-            int _gk     = _gk_start + _gk_off;                                       \
-            smem_meta[buf][_flat] = metadata[(size_t)_m * K_steps_total * 8          \
-                                           + (size_t)_gk * 8 + _gid];               \
-        }                                                                            \
-    }
+    // ======================================================================
+    // COMPUTE_TILE: process one K-tile from shared memory using mma.sp
     //
     // A fragments: ldmatrix.sync.aligned.m8n8.x2.shared.b16
     //   Same formula as FP16: lane & 15 selects one of 16 rows.
@@ -237,7 +222,11 @@ void igemm_sparse_tiled(
         _Pragma("unroll")                                                            \
         for (int wi = 0; wi < WARP_TILES_M; wi++) {                                 \
             int a_base_row  = wy * 32 + wi * WMMA_M;                                \
-            uint32_t meta = smem_meta[buf][(wy * 2 + wi) * 16 + (_gk_idx % 2) * 8 + gid];                                                                \
+            int _m_tile_idx = block_row / WMMA_M + wy * WARP_TILES_M + wi;         \
+            uint32_t meta = metadata[                                                \
+                (size_t)_m_tile_idx * K_steps_total * 8                             \
+              + (size_t)_gk_idx     * 8                                             \
+              + gid];                                                                \
                                                                                      \
             /* A fragment via ldmatrix.m8n8.x2 */                                   \
             uint32_t fa0, fa1;                                                       \
@@ -324,7 +313,6 @@ void igemm_sparse_tiled(
 
     LOAD_A_TILE(0, 0);
     LOAD_B_TILE(0, 0);
-    LOAD_META_TILE(0, 0);
     __pipeline_commit();
     __pipeline_wait_prior(0);
     __syncthreads();
@@ -336,7 +324,6 @@ void igemm_sparse_tiled(
 
         LOAD_A_TILE(next_buf, next_k_base);
         LOAD_B_TILE(next_buf, next_k_base);
-        LOAD_META_TILE(next_buf, tile + 1);
         __pipeline_commit();
         COMPUTE_TILE(cur_buf, tile);
         __pipeline_wait_prior(0);
@@ -350,7 +337,6 @@ void igemm_sparse_tiled(
 
     #undef LOAD_A_TILE
     #undef LOAD_B_TILE
-    #undef LOAD_META_TILE
     #undef COMPUTE_TILE
 
     // ======================================================================
