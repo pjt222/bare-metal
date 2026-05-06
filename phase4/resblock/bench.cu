@@ -1,23 +1,10 @@
 /*
- * bench.cu — ResNet Block integration benchmark
+ * bench.cu — ResNet Block benchmark (BenchDriver refactor)
  *
- * Chains all Phase 4 primitives into a full ResNet block forward pass:
- *   x → GroupNorm+SiLU → Conv2d(3×3) → GroupNorm+SiLU → Conv2d(3×3) → + x
- *
- * Loads kernels from:
- *   resblock.sm_86.cubin   (groupnorm_silu_fused, residual_add)
- *   ../conv2d/conv2d.sm_86.cubin  (conv2d_nhwc)
+ * Chains: GroupNorm+SiLU -> Conv2d(3x3) -> GroupNorm+SiLU -> Conv2d(3x3) -> +x
  *
  * Build:
- *   # First build conv2d cubin (if not already built):
- *   nvcc --cubin -arch=sm_86 -O2 -o ../conv2d/conv2d.sm_86.cubin ../conv2d/conv2d.cu
- *   # Then:
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
- *
- * Usage:
- *   ./bench                      # N=1, C=64, H=32, W=32, G=8
- *   ./bench 1 320 16 16 32       # SD UNet block (320ch, 16×16 feature map)
- *   ./bench 2 128 64 64 8        # SD low-res block
  */
 
 #include <cstdio>
@@ -25,304 +12,194 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../phase2/common/bench_driver.h"
 
-// -----------------------------------------------------------------------
-// CPU SiLU activation
-// -----------------------------------------------------------------------
-static inline float cpu_silu(float x) {
-    return x / (1.0f + expf(-x));
-}
+static float cpu_silu(float x) { return x / (1.0f + expf(-x)); }
 
-// -----------------------------------------------------------------------
-// CPU GroupNorm + SiLU reference (NHWC)
-// -----------------------------------------------------------------------
 static void cpu_groupnorm_silu(
-    const float *X, const float *gamma, const float *beta,
+    const float *X, const float *g, const float *b,
     float *Y, int N, int C, int H, int W, int G, float eps
 ) {
-    int cpg = C / G;
-    int spatial = H * W;
+    int cpg = C / G, spatial = H * W;
     for (int n = 0; n < N; n++) {
-        for (int g = 0; g < G; g++) {
-            int cb = g * cpg;
-            int group_size = cpg * spatial;
+        for (int gi = 0; gi < G; gi++) {
+            int cb = gi * cpg, gsize = cpg * spatial;
             double sum = 0.0;
             for (int s = 0; s < spatial; s++)
                 for (int lc = 0; lc < cpg; lc++)
-                    sum += X[(size_t)n*H*W*C + s*C + cb+lc];
-            float mean = (float)(sum / group_size);
-
-            double var_sum = 0.0;
+                    sum += X[(size_t)n * spatial * C + s * C + cb + lc];
+            float mean = (float)(sum / gsize);
+            double var = 0.0;
             for (int s = 0; s < spatial; s++)
                 for (int lc = 0; lc < cpg; lc++) {
-                    float d = X[(size_t)n*H*W*C + s*C + cb+lc] - mean;
-                    var_sum += d*d;
+                    float d = X[(size_t)n * spatial * C + s * C + cb + lc] - mean;
+                    var += d * d;
                 }
-            float inv_std = 1.0f / sqrtf((float)(var_sum / group_size) + eps);
-
-            for (int s = 0; s < spatial; s++) {
+            float inv_std = 1.0f / sqrtf((float)(var / gsize) + eps);
+            for (int s = 0; s < spatial; s++)
                 for (int lc = 0; lc < cpg; lc++) {
                     int gc = cb + lc;
-                    size_t flat = (size_t)n*H*W*C + s*C + gc;
-                    float normalized = (X[flat] - mean) * inv_std;
-                    float scaled = gamma[gc] * normalized + beta[gc];
-                    Y[flat] = cpu_silu(scaled);
+                    size_t flat = (size_t)n * spatial * C + s * C + gc;
+                    Y[flat] = cpu_silu(g[gc] * ((X[flat] - mean) * inv_std) + b[gc]);
                 }
-            }
         }
     }
 }
 
-// -----------------------------------------------------------------------
-// CPU 3×3 convolution reference (NHWC, stride=1, pad=1)
-// -----------------------------------------------------------------------
 static void cpu_conv2d_nhwc(
     const float *X, const float *W, const float *bias, float *Y,
     int N, int H, int W_dim, int Cin, int Cout
 ) {
-    for (int n = 0; n < N; n++) {
-        for (int h = 0; h < H; h++) {
-            for (int w = 0; w < W_dim; w++) {
+    for (int n = 0; n < N; n++)
+        for (int h = 0; h < H; h++)
+            for (int w = 0; w < W_dim; w++)
                 for (int co = 0; co < Cout; co++) {
-                    double acc = (bias != nullptr) ? (double)bias[co] : 0.0;
-                    for (int kh = 0; kh < 3; kh++) {
+                    double acc = bias ? (double)bias[co] : 0.0;
+                    for (int kh = 0; kh < 3; kh++)
                         for (int kw = 0; kw < 3; kw++) {
-                            int h_in = h+kh-1, w_in = w+kw-1;
-                            if (h_in < 0 || h_in >= H || w_in < 0 || w_in >= W_dim) continue;
+                            int hi = h + kh - 1, wi = w + kw - 1;
+                            if (hi < 0 || hi >= H || wi < 0 || wi >= W_dim) continue;
                             for (int ci = 0; ci < Cin; ci++) {
-                                size_t xi = (size_t)n*H*W_dim*Cin + h_in*W_dim*Cin + w_in*Cin + ci;
-                                size_t wi = (size_t)co*9*Cin + (kh*3+kw)*Cin + ci;
-                                acc += X[xi] * W[wi];
+                                acc += (double)X[(size_t)n * H * W_dim * Cin + hi * W_dim * Cin + wi * Cin + ci]
+                                     * (double)W[(size_t)co * 9 * Cin + (kh * 3 + kw) * Cin + ci];
                             }
                         }
-                    }
-                    Y[(size_t)n*H*W_dim*Cout + h*W_dim*Cout + w*Cout + co] = (float)acc;
+                    Y[(size_t)n * H * W_dim * Cout + h * W_dim * Cout + w * Cout + co] = (float)acc;
                 }
-            }
-        }
-    }
 }
 
 int main(int argc, char **argv) {
-    int N   = (argc > 1) ? atoi(argv[1]) : 1;
-    int C   = (argc > 2) ? atoi(argv[2]) : 64;
-    int H   = (argc > 3) ? atoi(argv[3]) : 32;
-    int W   = (argc > 4) ? atoi(argv[4]) : 32;
-    int G   = (argc > 5) ? atoi(argv[5]) : 8;
+    int N = (argc > 1) ? atoi(argv[1]) : 1;
+    int C = (argc > 2) ? atoi(argv[2]) : 64;
+    int H = (argc > 3) ? atoi(argv[3]) : 32;
+    int W = (argc > 4) ? atoi(argv[4]) : 32;
+    int G = (argc > 5) ? atoi(argv[5]) : 8;
+    float eps = 1e-5f;
+    size_t elems = (size_t)N * H * W * C;
+    size_t w3 = (size_t)C * 9 * C;
 
     if (C % G != 0) { fprintf(stderr, "C must be divisible by G\n"); return 1; }
-    if ((C / G * H * W) % 32 != 0) {
-        fprintf(stderr, "group_size must be divisible by 32\n"); return 1;
-    }
+    if ((C / G * H * W) % 32 != 0) { fprintf(stderr, "group_size must be divisible by 32\n"); return 1; }
 
-    float eps = 1e-5f;
-    size_t nhwc_elems = (size_t)N * H * W * C;
-    size_t w3_elems   = (size_t)C * 9 * C;
+    printf("=== ResNet Block Benchmark (BenchDriver refactor) ===\n");
+    printf("N=%d C=%d H=%d W=%d G=%d\n", N, C, H, W, G);
+    printf("Total FLOPs: %.3f GFLOPS\n\n", 2.0 * 2 * N * H * W * C * C * 9 / 1e9);
 
-    printf("=== ResNet Block: GroupNorm+SiLU → Conv2d(3×3) × 2 → Residual Add ===\n");
-    printf("N=%d  C=%d  H=%d  W=%d  G=%d\n", N, C, H, W, G);
-    printf("Total FLOPs per forward pass: %.3f GFLOPS\n\n",
-           2.0 * 2 * N * H * W * C * C * 9 / 1e9);  // 2 convolutions
+    BenchDriver driver;
+    driver.init_context();
 
-    CHECK_CU(cuInit(0));
-    CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
-    printf("Device: %s\n\n", devname);
+    auto h_X = driver.host_alloc<float>(elems);
+    auto h_g = driver.host_alloc<float>(C);
+    auto h_b = driver.host_alloc<float>(C);
+    auto h_W1 = driver.host_alloc<float>(w3);
+    auto h_W2 = driver.host_alloc<float>(w3);
+    auto h_ref = driver.host_alloc<float>(elems);
 
-    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
-    CHECK_CU(cuCtxSetCurrent(ctx));
-
-    // Load both cubins
-    CUmodule mod_rb, mod_conv;
-    CUfunction fn_gn_silu, fn_residual, fn_conv;
-
-    if (cuModuleLoad(&mod_rb, "resblock.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load resblock.sm_86.cubin\n"); return 1;
-    }
-    if (cuModuleLoad(&mod_conv, "../conv2d/conv2d.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load ../conv2d/conv2d.sm_86.cubin\n"); return 1;
-    }
-    CHECK_CU(cuModuleGetFunction(&fn_gn_silu,  mod_rb,   "groupnorm_silu_fused"));
-    CHECK_CU(cuModuleGetFunction(&fn_residual, mod_rb,   "residual_add"));
-    CHECK_CU(cuModuleGetFunction(&fn_conv,     mod_conv, "conv2d_nhwc"));
-    printf("Kernels loaded.\n\n");
-
-    // Host buffers
-    float *host_X      = (float*)malloc(nhwc_elems * sizeof(float));
-    float *host_gamma  = (float*)malloc(C * sizeof(float));
-    float *host_beta   = (float*)malloc(C * sizeof(float));
-    float *host_W1     = (float*)malloc(w3_elems * sizeof(float));
-    float *host_W2     = (float*)malloc(w3_elems * sizeof(float));
-    float *host_bias   = (float*)malloc(C * sizeof(float));
-    float *host_Y_gpu  = (float*)malloc(nhwc_elems * sizeof(float));
-    float *host_Y_ref  = (float*)malloc(nhwc_elems * sizeof(float));
-
-    fill_random(host_X,     nhwc_elems, 1);
-    fill_random(host_gamma, C,          2);
-    fill_random(host_beta,  C,          3);
-    fill_random(host_W1,    w3_elems,   4);
-    fill_random(host_W2,    w3_elems,   5);
-    fill_random(host_bias,  C,          6);
-    // Scale gamma/W to keep values in range
-    for (int i = 0; i < C; i++) { host_gamma[i] = host_gamma[i]*0.5f + 1.0f; }
-    for (size_t i = 0; i < w3_elems; i++) { host_W1[i] *= 0.05f; host_W2[i] *= 0.05f; }
-    for (int i = 0; i < C; i++) host_bias[i] = 0.0f;  // zero bias for simplicity
+    fill_random(h_X.get(), elems, 1);
+    fill_random(h_g.get(), C, 2);
+    fill_random(h_b.get(), C, 3);
+    fill_random(h_W1.get(), w3, 4);
+    fill_random(h_W2.get(), w3, 5);
+    for (int i = 0; i < C; i++) h_g[i] = h_g[i] * 0.5f + 1.0f;
+    for (size_t i = 0; i < w3; i++) { h_W1[i] *= 0.05f; h_W2[i] *= 0.05f; }
 
     // Device buffers
-    CUdeviceptr dev_X, dev_gamma, dev_beta, dev_W1, dev_W2, dev_bias;
-    CUdeviceptr dev_tmp1, dev_tmp2, dev_Y;  // intermediate buffers
+    auto d_X   = driver.device_alloc<float>(elems);
+    auto d_g   = driver.device_alloc<float>(C);
+    auto d_b   = driver.device_alloc<float>(C);
+    auto d_W1  = driver.device_alloc<float>(w3);
+    auto d_W2  = driver.device_alloc<float>(w3);
+    auto d_t1  = driver.device_alloc<float>(elems);  // tmp1
+    auto d_t2  = driver.device_alloc<float>(elems);  // tmp2
+    auto d_Y   = driver.device_alloc<float>(elems);
 
-    CHECK_CU(cuMemAlloc(&dev_X,     nhwc_elems * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_gamma, C * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_beta,  C * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_W1,    w3_elems * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_W2,    w3_elems * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_bias,  C * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&dev_tmp1,  nhwc_elems * sizeof(float)));  // after GN+SiLU
-    CHECK_CU(cuMemAlloc(&dev_tmp2,  nhwc_elems * sizeof(float)));  // after Conv2d
-    CHECK_CU(cuMemAlloc(&dev_Y,     nhwc_elems * sizeof(float)));  // final output
+    driver.copy_h2d(d_X, h_X, elems * sizeof(float));
+    driver.copy_h2d(d_g, h_g, C * sizeof(float));
+    driver.copy_h2d(d_b, h_b, C * sizeof(float));
+    driver.copy_h2d(d_W1, h_W1, w3 * sizeof(float));
+    driver.copy_h2d(d_W2, h_W2, w3 * sizeof(float));
 
-    CHECK_CU(cuMemcpyHtoD(dev_X,     host_X,     nhwc_elems * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(dev_gamma, host_gamma, C * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(dev_beta,  host_beta,  C * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(dev_W1,    host_W1,    w3_elems * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(dev_W2,    host_W2,    w3_elems * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(dev_bias,  host_bias,  C * sizeof(float)));
+    // Load kernels from two cubins
+    CUmodule mod_rb, mod_conv;
+    CHECK_CU(cuModuleLoad(&mod_rb, "resblock.sm_86.cubin"));
+    CHECK_CU(cuModuleLoad(&mod_conv, "../conv2d/conv2d.sm_86.cubin"));
+    CUfunction fn_gn_silu, fn_residual, fn_conv;
+    CHECK_CU(cuModuleGetFunction(&fn_gn_silu, mod_rb, "groupnorm_silu_fused"));
+    CHECK_CU(cuModuleGetFunction(&fn_residual, mod_rb, "residual_add"));
+    CHECK_CU(cuModuleGetFunction(&fn_conv, mod_conv, "conv2d_nhwc"));
 
-    // Grid dimensions
     int gn_grid  = N * G;
     int hw_tiles = (H * W + 15) / 16;
     int c_tiles  = (C + 7) / 8;
-    int res_grid = ((int)nhwc_elems + 255) / 256;
-    CUdeviceptr dev_bias_null = 0;  // NULL bias for conv
+    int res_grid = ((int)elems + 255) / 256;
+    CUdeviceptr dev_bias_null = 0;
 
-    // Helper: run one full ResNet block forward pass
-    auto run_resblock = [&]() {
-        // Step 1: GroupNorm + SiLU (X → tmp1)
-        void *gn1_args[] = { &dev_X, &dev_gamma, &dev_beta, &dev_tmp1,
-                             &N, &C, &H, &W, &G, &eps };
-        CHECK_CU(cuLaunchKernel(fn_gn_silu,
-            gn_grid, 1, 1,   32, 1, 1,   0, NULL, gn1_args, NULL));
-
-        // Step 2: Conv2d 3×3 (tmp1 → tmp2)
-        void *conv1_args[] = { &dev_tmp1, &dev_W1, &dev_bias_null, &dev_tmp2,
-                               &N, &H, &W, &C, &C };
-        CHECK_CU(cuLaunchKernel(fn_conv,
-            N, hw_tiles, c_tiles,
-            16, 8, 1,
-            0, NULL, conv1_args, NULL));
-
-        // Step 3: GroupNorm + SiLU (tmp2 → tmp1, reuse buffer)
-        void *gn2_args[] = { &dev_tmp2, &dev_gamma, &dev_beta, &dev_tmp1,
-                             &N, &C, &H, &W, &G, &eps };
-        CHECK_CU(cuLaunchKernel(fn_gn_silu,
-            gn_grid, 1, 1,   32, 1, 1,   0, NULL, gn2_args, NULL));
-
-        // Step 4: Conv2d 3×3 (tmp1 → tmp2)
-        void *conv2_args[] = { &dev_tmp1, &dev_W2, &dev_bias_null, &dev_tmp2,
-                               &N, &H, &W, &C, &C };
-        CHECK_CU(cuLaunchKernel(fn_conv,
-            N, hw_tiles, c_tiles,
-            16, 8, 1,
-            0, NULL, conv2_args, NULL));
-
-        // Step 5: Residual add (tmp2 + X → Y)
-        int total = (int)nhwc_elems;
-        void *res_args[] = { &dev_tmp2, &dev_X, &dev_Y, &total };
-        CHECK_CU(cuLaunchKernel(fn_residual,
-            res_grid, 1, 1,   256, 1, 1,   0, NULL, res_args, NULL));
+    auto run_block = [&]() {
+        void *a1[] = { &d_X.ptr, &d_g.ptr, &d_b.ptr, &d_t1.ptr, &N, &C, &H, &W, &G, &eps };
+        CHECK_CU(cuLaunchKernel(fn_gn_silu, gn_grid, 1, 1, 32, 1, 1, 0, nullptr, a1, nullptr));
+        void *c1[] = { &d_t1.ptr, &d_W1.ptr, &dev_bias_null, &d_t2.ptr,
+                       &N, &H, &W, &C, &C };
+        CHECK_CU(cuLaunchKernel(fn_conv, N, hw_tiles, c_tiles, 16, 8, 1, 0, nullptr, c1, nullptr));
+        void *a2[] = { &d_t2.ptr, &d_g.ptr, &d_b.ptr, &d_t1.ptr, &N, &C, &H, &W, &G, &eps };
+        CHECK_CU(cuLaunchKernel(fn_gn_silu, gn_grid, 1, 1, 32, 1, 1, 0, nullptr, a2, nullptr));
+        void *c2[] = { &d_t1.ptr, &d_W2.ptr, &dev_bias_null, &d_t2.ptr,
+                       &N, &H, &W, &C, &C };
+        CHECK_CU(cuLaunchKernel(fn_conv, N, hw_tiles, c_tiles, 16, 8, 1, 0, nullptr, c2, nullptr));
+        int total = (int)elems;
+        void *r[] = { &d_t2.ptr, &d_X.ptr, &d_Y.ptr, &total };
+        CHECK_CU(cuLaunchKernel(fn_residual, res_grid, 1, 1, 256, 1, 1, 0, nullptr, r, nullptr));
     };
 
-    // =========================================================
+    // =====================================================================
     // Correctness
-    // =========================================================
+    // =====================================================================
     printf("Correctness:\n");
-
-    // CPU forward pass
-    float *cpu_tmp1 = (float*)malloc(nhwc_elems * sizeof(float));
-    float *cpu_tmp2 = (float*)malloc(nhwc_elems * sizeof(float));
-
-    cpu_groupnorm_silu(host_X, host_gamma, host_beta,
-                       cpu_tmp1, N, C, H, W, G, eps);
-
-    // Only run CPU conv if problem is small enough
-    bool run_cpu_ref = ((double)N * H * W * C * C * 9 <= 5e8);
-    if (run_cpu_ref) {
-        cpu_conv2d_nhwc(cpu_tmp1, host_W1, nullptr, cpu_tmp2, N, H, W, C, C);
-        cpu_groupnorm_silu(cpu_tmp2, host_gamma, host_beta,
-                           cpu_tmp1, N, C, H, W, G, eps);
-        cpu_conv2d_nhwc(cpu_tmp1, host_W2, nullptr, cpu_tmp2, N, H, W, C, C);
-        // Residual add
-        for (size_t i = 0; i < nhwc_elems; i++) {
-            host_Y_ref[i] = cpu_tmp2[i] + host_X[i];
-        }
+    bool have_ref = ((double)N * H * W * C * C * 9 <= 5e8);
+    if (have_ref) {
+        auto h_tmp1 = driver.host_alloc<float>(elems);
+        auto h_tmp2 = driver.host_alloc<float>(elems);
+        cpu_groupnorm_silu(h_X.get(), h_g.get(), h_b.get(), h_tmp1.get(), N, C, H, W, G, eps);
+        cpu_conv2d_nhwc(h_tmp1.get(), h_W1.get(), nullptr, h_tmp2.get(), N, H, W, C, C);
+        cpu_groupnorm_silu(h_tmp2.get(), h_g.get(), h_b.get(), h_tmp1.get(), N, C, H, W, G, eps);
+        cpu_conv2d_nhwc(h_tmp1.get(), h_W2.get(), nullptr, h_tmp2.get(), N, H, W, C, C);
+        for (size_t i = 0; i < elems; i++) h_ref[i] = h_tmp2[i] + h_X[i];
     } else {
-        printf("  [CPU reference skipped — config too large for in-time CPU verification]\n");
+        printf("  [CPU ref skipped — config too large]\n");
     }
 
-    // GPU forward pass
-    run_resblock();
+    run_block();
     CHECK_CU(cuCtxSynchronize());
-    CHECK_CU(cuMemcpyDtoH(host_Y_gpu, dev_Y, nhwc_elems * sizeof(float)));
 
-    if (run_cpu_ref) {
-        // Conv2d accumulates many floats: 9 × Cin products per element → larger absolute error
-        float abs_tol = 1e-2f * (float)sqrtf((float)C);  // scales with Cin depth
-        auto result = check_fp32(host_Y_gpu, host_Y_ref, nhwc_elems, abs_tol, 0.1f);
-        print_check_result("ResNet Block (GN+SiLU × 2 + Conv2d × 2 + add)", result);
+    if (have_ref) {
+        auto h_out = driver.host_alloc<float>(elems);
+        driver.copy_d2h(h_out, d_Y, elems * sizeof(float));
+        float abs_tol = 1e-2f * (float)sqrtf((float)C);
+        driver.check(h_out.get(), h_ref.get(), (int)elems, abs_tol, 0.1f,
+                     "ResNet Block (GN+SiLU x2 + Conv2d x2 + add)");
     }
 
-    // =========================================================
+    // =====================================================================
     // Performance
-    // =========================================================
+    // =====================================================================
     printf("\nPerformance:\n");
-
-    int warmup = 5, bench_iters = 100;
-    for (int i = 0; i < warmup; i++) run_resblock();
+    for (int i = 0; i < 5; i++) run_block();
     CHECK_CU(cuCtxSynchronize());
 
-    float avg_ms;
-    {
-        BenchTimer timer;
-        timer.start();
-        for (int i = 0; i < bench_iters; i++) run_resblock();
-        avg_ms = timer.stop_ms() / bench_iters;
-    }
+    BenchTimer timer;
+    timer.start();
+    int bench_iters = 100;
+    for (int i = 0; i < bench_iters; i++) run_block();
+    CHECK_CU(cuCtxSynchronize());
+    float avg_ms = timer.stop_ms() / bench_iters;
 
-    double total_flops = 2.0 * 2.0 * N * H * W * C * C * 9;  // 2 conv passes
+    double total_flops = 2.0 * 2.0 * N * H * W * C * C * 9;
     double gflops = total_flops / 1e9 / (avg_ms / 1000.0);
-    // Memory: 5 kernel launches × roughly 3× tensor size each
-    double bytes = (double)nhwc_elems * sizeof(float) * 3 * 5;
-    double gb_s  = bytes / 1e9 / (avg_ms / 1000.0);
-
+    double bytes = (double)elems * sizeof(float) * 3 * 5;
+    double gb_s = bytes / 1e9 / (avg_ms / 1000.0);
     printf("  %-45s %7.3f ms  %7.1f GFLOPS  (~%.0f GB/s BW)\n",
-           "Full ResNet Block (5 kernel launches)", avg_ms, gflops, gb_s);
+           "Full ResNet Block (5 kernels)", avg_ms, gflops, gb_s);
 
-    printf("\nKernel breakdown (estimated from individual runs):\n");
-    printf("  groupnorm_silu_fused × 2  (SHFL.BFLY + MUFU.RSQ + MUFU.EX2)\n");
-    printf("  conv2d_nhwc × 2           (FFMA × 310, 9×unrolled, weight-tiled)\n");
-    printf("  residual_add × 1          (FADD, memory-bandwidth limited)\n");
-
-    printf("\nSASS primitives in this block:\n");
-    printf("  SHFL.BFLY  — Welford warp reduction (GroupNorm, 5 rounds each)\n");
-    printf("  MUFU.RSQ   — rsqrtf(var + eps) (GroupNorm)\n");
-    printf("  MUFU.EX2   — exp2f(-x * log2e) for SiLU sigmoid\n");
-    printf("  MUFU.RCP   — 1/(1 + exp2f(...)) for SiLU sigmoid\n");
-    printf("  FFMA       — Conv2d 3×3 inner loop accumulation\n");
-    printf("  FADD       — Residual skip connection add\n");
-
-    // Cleanup
-    cuMemFree(dev_X); cuMemFree(dev_gamma); cuMemFree(dev_beta);
-    cuMemFree(dev_W1); cuMemFree(dev_W2); cuMemFree(dev_bias);
-    cuMemFree(dev_tmp1); cuMemFree(dev_tmp2); cuMemFree(dev_Y);
-    cuModuleUnload(mod_rb); cuModuleUnload(mod_conv);
-    cuDevicePrimaryCtxRelease(cu_dev);
-
-    free(host_X); free(host_gamma); free(host_beta);
-    free(host_W1); free(host_W2); free(host_bias);
-    free(host_Y_gpu); free(host_Y_ref);
-    free(cpu_tmp1); free(cpu_tmp2);
+    cuModuleUnload(mod_rb);
+    cuModuleUnload(mod_conv);
     return 0;
 }
