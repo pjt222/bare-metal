@@ -45,8 +45,7 @@ int main(int argc, char **argv) {
     printf("Device: %s\n\n", device_name);
 
     CUcontext cu_context;
-    CHECK_CU(cuDevicePrimaryCtxRetain(&cu_context, cu_device));
-    CHECK_CU(cuCtxSetCurrent(cu_context));
+    CHECK_CU(cuCtxCreate(&cu_context, 0, cu_device));
 
     // --- Load naive HGEMM kernel ---
     CUmodule   naive_module = NULL;
@@ -341,7 +340,7 @@ int main(int argc, char **argv) {
     if (direct_module) cuModuleUnload(direct_module);
     if (w16_module) cuModuleUnload(w16_module);
     if (w16e_module) cuModuleUnload(w16e_module);
-    cuDevicePrimaryCtxRelease(cu_device);
+    cuCtxDestroy(cu_context);
     free(host_a_fp32); free(host_b_fp32); free(host_c_fp32);
     free(host_ref); free(host_a_fp16); free(host_b_fp16);
 
