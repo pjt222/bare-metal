@@ -1,26 +1,12 @@
 /*
- * bench.cu — Benchmark: sparse HGEMM (mma.sp) naive vs tiled
+ * bench.cu — Sparse HGEMM benchmark (BenchDriver refactor)
  *
  * Tests 2:4 structured sparsity on GA104 (RTX 3070 Ti, sm_86).
  *
- * Two test sections:
- *   1. Fixed pattern {0,1}: tests naive + tiled kernels (baseline, all prior results)
- *   2. Arbitrary random 2:4 patterns: tests tiled kernel with dynamic metadata
- *      (see sparse_meta.h for metadata format and constraint documentation)
- *
- * Kernels:
- *   - hgemm_sparse_naive:  1 warp, no shared memory tiling, hardcoded metadata
- *   - hgemm_sparse_tiled:  16 warps, 128×128 tiles, dynamic metadata parameter
- *
  * Build:
- *   # In phase2/hgemm_sparse/
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_naive.sm_86.cubin hgemm_sparse_naive.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_sparse_tiled.sm_86.cubin hgemm_sparse_tiled.cu
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
- *
- * Usage:
- *   ./bench              # M=N=K=256 (small for correctness)
- *   ./bench 4096 4096 4096
  */
 
 #include <cstdio>
@@ -29,13 +15,11 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../common/bench.h"
-#include "../common/check.h"
+#include "../common/bench_driver.h"
 #include "sparse_meta.h"
 
 // -----------------------------------------------------------------------
-// compress_2_4_fixed: fixed-pattern compression (positions {0,1} always)
-// Used for the naive kernel correctness/perf tests (backward compat).
+// Fixed-pattern helpers
 // -----------------------------------------------------------------------
 static void compress_2_4_fixed(
     const float *A_dense, __half *A_compressed,
@@ -54,14 +38,8 @@ static void compress_2_4_fixed(
     }
 }
 
-// -----------------------------------------------------------------------
-// cpu_sparse_gemm_fixed: CPU reference for fixed {0,1} pattern
-// Loop order: row × k × col — cache-friendly (B row, C row both contiguous)
-// -----------------------------------------------------------------------
 static void cpu_sparse_gemm_fixed(
-    const float *A_dense,
-    const float *B,
-    float *C,
+    const float *A_dense, const float *B, float *C,
     int M, int N, int K
 ) {
     memset(C, 0, (size_t)M * N * sizeof(float));
@@ -71,13 +49,22 @@ static void cpu_sparse_gemm_fixed(
                 float a_val = A_dense[(size_t)row * K + k];
                 const float *b_row = &B[(size_t)k * N];
                 float       *c_row = &C[(size_t)row * N];
-                for (int col = 0; col < N; col++) {
-                    c_row[col] += a_val * b_row[col];
-                }
+                for (int col = 0; col < N; col++) c_row[col] += a_val * b_row[col];
             }
         }
     }
 }
+
+// -----------------------------------------------------------------------
+// Variant descriptor
+// -----------------------------------------------------------------------
+struct Variant {
+    const char *name;
+    const char *cubin;
+    const char *sym;
+    dim3 grid, block;
+    bool required;
+};
 
 int main(int argc, char **argv) {
     int M = (argc > 1) ? atoi(argv[1]) : 256;
@@ -89,352 +76,155 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("=== Sparse HGEMM (2:4 mma.sp) — Proof of Concept ===\n");
+    printf("=== Sparse HGEMM Benchmark (BenchDriver refactor) ===\n");
     printf("M=%d  N=%d  K=%d\n\n", M, N, K);
 
-    CHECK_CU(cuInit(0));
-    CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
-    printf("Device: %s\n\n", devname);
+    BenchDriver driver;
+    driver.init_context();
 
-    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
-  CHECK_CU(cuCtxSetCurrent(ctx));
+    size_t elems_a      = (size_t)M * K;
+    size_t elems_b      = (size_t)K * N;
+    size_t elems_c      = (size_t)M * N;
+    int    K_stored     = K / 2;
+    size_t elems_a_comp = (size_t)M * K_stored;
+    size_t meta_count   = sparse_meta_count(M, K);
 
-    // =========================================================
-    // Load naive cubin
-    // =========================================================
-    CUmodule mod_naive;
-    CUfunction fn_naive;
-    if (cuModuleLoad(&mod_naive, "hgemm_sparse_naive.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load hgemm_sparse_naive.sm_86.cubin. Build first.\n");
-        return 1;
-    }
-    CHECK_CU(cuModuleGetFunction(&fn_naive, mod_naive, "hgemm_sparse_naive"));
+    auto h_A    = driver.host_alloc<float>(elems_a);
+    auto h_B    = driver.host_alloc<float>(elems_b);
+    auto h_ref  = driver.host_alloc<float>(elems_c);
+    auto h_out  = driver.host_alloc<float>(elems_c);
+    auto h_A_c  = driver.host_alloc<__half>(elems_a_comp);
+    auto h_B_fp = driver.host_alloc<__half>(elems_b);
+    auto h_meta = driver.host_alloc<uint32_t>(meta_count);
 
-    int naive_regs = 0;
-    cuFuncGetAttribute(&naive_regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_naive);
-    printf("Naive  kernel registers: %d\n", naive_regs);
+    fill_random(h_A.get(), elems_a, 42);
+    fill_random(h_B.get(), elems_b, 137);
+    for (size_t i = 0; i < elems_b; i++) h_B_fp[i] = __float2half(h_B[i]);
 
-    // =========================================================
-    // Load tiled cubin (optional — skip if not built yet)
-    // =========================================================
-    CUmodule mod_tiled;
-    CUfunction fn_tiled;
-    bool have_tiled = false;
-    int tiled_regs = 0;
+    auto d_A_c = driver.device_alloc<__half>(elems_a_comp);
+    auto d_B   = driver.device_alloc<__half>(elems_b);
+    auto d_C   = driver.device_alloc<float>(elems_c);
+    auto d_meta = driver.device_alloc<uint32_t>(meta_count);
 
-    CUresult tiled_load_result = cuModuleLoad(&mod_tiled, "hgemm_sparse_tiled.sm_86.cubin");
-    if (tiled_load_result == CUDA_SUCCESS) {
-        CHECK_CU(cuModuleGetFunction(&fn_tiled, mod_tiled, "hgemm_sparse_tiled"));
-        cuFuncGetAttribute(&tiled_regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn_tiled);
-        printf("Tiled  kernel registers: %d\n", tiled_regs);
-        have_tiled = true;
-    } else {
-        printf("WARNING: hgemm_sparse_tiled.sm_86.cubin not found — skipping tiled kernel.\n");
-    }
+    driver.copy_h2d(d_B, h_B_fp, elems_b * sizeof(__half));
 
-    printf("(Inspect SASS: cuobjdump -sass hgemm_sparse_naive.sm_86.cubin | grep HMMA)\n\n");
-
-    // =========================================================
-    // Allocate and initialize host data
-    // =========================================================
-    size_t elems_a = (size_t)M * K;
-    size_t elems_b = (size_t)K * N;
-    size_t elems_c = (size_t)M * N;
-    int K_stored = K / 2;
-    size_t elems_a_compressed = (size_t)M * K_stored;
-
-    float *host_a = (float*)malloc(elems_a * sizeof(float));
-    float *host_b = (float*)malloc(elems_b * sizeof(float));
-    float *host_ref = (float*)malloc(elems_c * sizeof(float));
-    float *host_out = (float*)malloc(elems_c * sizeof(float));
-    __half *host_a_compressed = (__half*)malloc(elems_a_compressed * sizeof(__half));
-    __half *host_b_fp16 = (__half*)malloc(elems_b * sizeof(__half));
-
-    // Fill A and B with random FP32
-    fill_random(host_a, elems_a, 42);
-    fill_random(host_b, elems_b, 137);
-
-    // Section 1: fixed {0,1} pattern (naive + tiled baseline)
-    compress_2_4_fixed(host_a, host_a_compressed, M, K);
-
-    // Convert B to FP16
-    for (size_t i = 0; i < elems_b; i++)
-        host_b_fp16[i] = __float2half(host_b[i]);
-
-    // CPU reference for fixed pattern
-    printf("Computing CPU reference (fixed {0,1} pattern)...\n");
-    cpu_sparse_gemm_fixed(host_a, host_b, host_ref, M, N, K);
-    printf("Done.\n\n");
-
-    // =========================================================
-    // GPU: allocate and copy
-    // =========================================================
-    CUdeviceptr d_a_compressed, d_b, d_c;
-    CHECK_CU(cuMemAlloc(&d_a_compressed, elems_a_compressed * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&d_b, elems_b * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&d_c, elems_c * sizeof(float)));
-
-    CHECK_CU(cuMemcpyHtoD(d_a_compressed, host_a_compressed,
-                           elems_a_compressed * sizeof(__half)));
-    CHECK_CU(cuMemcpyHtoD(d_b, host_b_fp16, elems_b * sizeof(__half)));
-
-    // Fixed-pattern metadata: all 0x44444444 (positions {0,1})
-    // Used for naive kernel (which has hardcoded meta) and as tiled baseline.
-    size_t meta_count = sparse_meta_count(M, K);
-    uint32_t *host_meta_fixed = (uint32_t*)malloc(meta_count * sizeof(uint32_t));
-    for (size_t i = 0; i < meta_count; i++) host_meta_fixed[i] = 0x44444444u;
-
-    CUdeviceptr d_meta;
-    CHECK_CU(cuMemAlloc(&d_meta, meta_count * sizeof(uint32_t)));
-    CHECK_CU(cuMemcpyHtoD(d_meta, host_meta_fixed,
-                           meta_count * sizeof(uint32_t)));
-
-    // =========================================================
-    // Section 1: Fixed {0,1} pattern — correctness tests
-    // =========================================================
+    // =====================================================================
+    // Section 1: Fixed {0,1} pattern — correctness (naive + tiled)
+    // =====================================================================
     printf("=== Section 1: Fixed pattern {0,1} ===\n");
-    printf("Correctness tests:\n");
-    CHECK_CU(cuMemsetD32(d_c, 0, elems_c));
 
-    void *args_naive[] = { &d_a_compressed, &d_b, &d_c, &M, &N, &K };
-    int naive_grid_x = N / 16;
-    int naive_grid_y = M / 16;
+    compress_2_4_fixed(h_A.get(), h_A_c.get(), M, K);
+    for (size_t i = 0; i < meta_count; i++) h_meta[i] = 0x44444444u;
 
-    CHECK_CU(cuLaunchKernel(fn_naive,
-        naive_grid_x, naive_grid_y, 1,
-        32, 1, 1,
-        0, NULL, args_naive, NULL));
-    CHECK_CU(cuCtxSynchronize());
-    CHECK_CU(cuMemcpyDtoH(host_out, d_c, elems_c * sizeof(float)));
+    driver.copy_h2d(d_A_c, h_A_c, elems_a_comp * sizeof(__half));
+    driver.copy_h2d(d_meta, h_meta, meta_count * sizeof(uint32_t));
 
-    auto naive_result = check_fp32(host_out, host_ref, elems_c, 1e-1f, 1e-1f);
-    print_check_result("hgemm_sparse_naive (mma.sp, FP16, fixed {0,1})", naive_result);
+    cpu_sparse_gemm_fixed(h_A.get(), h_B.get(), h_ref.get(), M, N, K);
 
-    if (naive_result.num_errors > 0 && naive_result.num_errors <= 20) {
-        printf("\n  First errors:\n");
-        int shown = 0;
-        for (size_t i = 0; i < elems_c && shown < 10; i++) {
-            float abs_err = fabsf(host_out[i] - host_ref[i]);
-            float ref_abs = fabsf(host_ref[i]);
-            float rel_err = (ref_abs > 1e-8f) ? (abs_err / ref_abs) : abs_err;
-            if (abs_err > 1e-1f && rel_err > 1e-1f) {
-                int r = i / N, c = i % N;
-                printf("    [%zu] row=%d col=%d GPU=%.4f REF=%.4f abs=%.2e\n",
-                       i, r, c, host_out[i], host_ref[i], abs_err);
-                shown++;
-            }
-        }
-    }
+    std::vector<Variant> variants = {
+        {"naive", "hgemm_sparse_naive.sm_86.cubin",
+         "hgemm_sparse_naive", dim3(N/16, M/16, 1), dim3(32,1,1), true},
+        {"tiled", "hgemm_sparse_tiled.sm_86.cubin",
+         "hgemm_sparse_tiled", dim3((N+127)/128, (M+127)/128, 1), dim3(512,1,1), false},
+    };
 
-    if (have_tiled) {
-        CHECK_CU(cuMemsetD32(d_c, 0, elems_c));
+    for (auto &v : variants) {
+        CUfunction fn = driver.load_kernel(v.cubin, v.sym, v.required);
+        if (!fn) { printf("  %-30s not found\n", v.name); continue; }
 
-        int tiled_grid_x = (N + 127) / 128;
-        int tiled_grid_y = (M + 127) / 128;
-        // Tiled kernel now takes metadata as 4th arg; fixed meta = all 0x44444444
-        void *args_tiled[] = { &d_a_compressed, &d_b, &d_c, &d_meta, &M, &N, &K };
-
-        CHECK_CU(cuLaunchKernel(fn_tiled,
-            tiled_grid_x, tiled_grid_y, 1,
-            512, 1, 1,
-            0, NULL, args_tiled, NULL));
-        CHECK_CU(cuCtxSynchronize());
-        CHECK_CU(cuMemcpyDtoH(host_out, d_c, elems_c * sizeof(float)));
-
-        auto tiled_result = check_fp32(host_out, host_ref, elems_c, 1e-1f, 1e-1f);
-        print_check_result("hgemm_sparse_tiled (mma.sp, FP16, fixed {0,1})", tiled_result);
-
-        if (tiled_result.num_errors > 0 && tiled_result.num_errors <= 20) {
-            printf("\n  First errors:\n");
-            int shown = 0;
-            for (size_t i = 0; i < elems_c && shown < 10; i++) {
-                float abs_err = fabsf(host_out[i] - host_ref[i]);
-                float ref_abs = fabsf(host_ref[i]);
-                float rel_err = (ref_abs > 1e-8f) ? (abs_err / ref_abs) : abs_err;
-                if (abs_err > 1e-1f && rel_err > 1e-1f) {
-                    int r = i / N, c = i % N;
-                    printf("    [%zu] row=%d col=%d GPU=%.4f REF=%.4f abs=%.2e\n",
-                           i, r, c, host_out[i], host_ref[i], abs_err);
-                    shown++;
-                }
-            }
+        // Naive: 6 args (A, B, C, M, N, K)
+        // Tiled: 7 args (A, B, C, meta, M, N, K)
+        if (strcmp(v.name, "naive") == 0) {
+            void *args[] = { &d_A_c.ptr, &d_B.ptr, &d_C.ptr, &M, &N, &K };
+            CHECK_CU(cuMemsetD32((CUdeviceptr)d_C.ptr, 0, elems_c));
+            CHECK_CU(cuLaunchKernel(fn, v.grid.x, v.grid.y, v.grid.z,
+                                    v.block.x, v.block.y, v.block.z,
+                                    0, nullptr, args, nullptr));
+            CHECK_CU(cuCtxSynchronize());
+            driver.copy_d2h(h_out, d_C, elems_c * sizeof(float));
+            driver.check(h_out.get(), h_ref.get(), (int)elems_c,
+                         1e-1f, 1e-1f, "hgemm_sparse_naive (fixed {0,1})");
+        } else {
+            void *args[] = { &d_A_c.ptr, &d_B.ptr, &d_C.ptr, &d_meta.ptr, &M, &N, &K };
+            CHECK_CU(cuMemsetD32((CUdeviceptr)d_C.ptr, 0, elems_c));
+            CHECK_CU(cuLaunchKernel(fn, v.grid.x, v.grid.y, v.grid.z,
+                                    v.block.x, v.block.y, v.block.z,
+                                    0, nullptr, args, nullptr));
+            CHECK_CU(cuCtxSynchronize());
+            driver.copy_d2h(h_out, d_C, elems_c * sizeof(float));
+            driver.check(h_out.get(), h_ref.get(), (int)elems_c,
+                         1e-1f, 1e-1f, "hgemm_sparse_tiled (fixed {0,1})");
         }
     }
     printf("\n");
 
-    // =========================================================
-    // Section 2: Arbitrary random 2:4 pattern — tiled kernel only
-    //
-    // Uses gen_random_sparse_2_4 + compress_2_4_arbitrary from sparse_meta.h.
-    // The naive kernel is NOT tested here — it has hardcoded 0x44444444 and
-    // will produce wrong results for non-{0,1} patterns.
-    //
-    // Validates the dynamic metadata implementation (issue #34).
-    // IMPORTANT: metadata bit layout is derived from first principles; this
-    // test provides the first hardware validation of arbitrary-pattern support.
-    // =========================================================
-    if (have_tiled) {
-        printf("=== Section 2: Arbitrary random 2:4 pattern (tiled kernel) ===\n");
+    // =====================================================================
+    // Section 2: Arbitrary random 2:4 pattern — tiled only
+    // =====================================================================
+    CUfunction fn_tiled = driver.load_kernel(
+        "hgemm_sparse_tiled.sm_86.cubin", "hgemm_sparse_tiled", false);
+    if (fn_tiled) {
+        printf("=== Section 2: Arbitrary random 2:4 pattern ===\n");
 
-        // Generate random sparse A (rows within gid-pair share same pattern)
-        float    *host_a_rand   = (float*)malloc(elems_a * sizeof(float));
-        __half   *host_a_rand_c = (__half*)malloc(elems_a_compressed * sizeof(__half));
-        uint32_t *host_meta_rand = (uint32_t*)malloc(meta_count * sizeof(uint32_t));
-        float    *host_ref_rand  = (float*)malloc(elems_c * sizeof(float));
+        auto h_A_rand   = driver.host_alloc<float>(elems_a);
+        auto h_A_rand_c = driver.host_alloc<__half>(elems_a_comp);
+        auto h_meta_r   = driver.host_alloc<uint32_t>(meta_count);
+        auto h_ref_r    = driver.host_alloc<float>(elems_c);
 
-        gen_random_sparse_2_4(host_a_rand, M, K, /*seed=*/999);
-        compress_2_4_arbitrary(host_a_rand, M, K, host_a_rand_c, host_meta_rand);
+        gen_random_sparse_2_4(h_A_rand.get(), M, K, /*seed=*/999);
+        compress_2_4_arbitrary(h_A_rand.get(), M, K, h_A_rand_c.get(), h_meta_r.get());
 
-        // CPU reference using the actual zero pattern in A_rand
-        printf("Computing CPU reference (arbitrary pattern)...\n");
-        cpu_sparse_gemm_arbitrary(host_a_rand, host_b, host_ref_rand, M, N, K);
-        printf("Done.\n\n");
+        auto d_A_rand = driver.device_alloc<__half>(elems_a_comp);
+        auto d_meta_r = driver.device_alloc<uint32_t>(meta_count);
+        driver.copy_h2d(d_A_rand, h_A_rand_c, elems_a_comp * sizeof(__half));
+        driver.copy_h2d(d_meta_r, h_meta_r, meta_count * sizeof(uint32_t));
 
-        // Upload random compressed A and metadata
-        CUdeviceptr d_a_rand, d_meta_rand;
-        CHECK_CU(cuMemAlloc(&d_a_rand,    elems_a_compressed * sizeof(__half)));
-        CHECK_CU(cuMemAlloc(&d_meta_rand, meta_count          * sizeof(uint32_t)));
-        CHECK_CU(cuMemcpyHtoD(d_a_rand,    host_a_rand_c,
-                               elems_a_compressed * sizeof(__half)));
-        CHECK_CU(cuMemcpyHtoD(d_meta_rand, host_meta_rand,
-                               meta_count * sizeof(uint32_t)));
+        cpu_sparse_gemm_arbitrary(h_A_rand.get(), h_B.get(), h_ref_r.get(), M, N, K);
 
-        CHECK_CU(cuMemsetD32(d_c, 0, elems_c));
-        int tiled_grid_x = (N + 127) / 128;
-        int tiled_grid_y = (M + 127) / 128;
-        void *args_rand[] = { &d_a_rand, &d_b, &d_c, &d_meta_rand, &M, &N, &K };
-
+        void *args_r[] = { &d_A_rand.ptr, &d_B.ptr, &d_C.ptr,
+                           &d_meta_r.ptr, &M, &N, &K };
+        CHECK_CU(cuMemsetD32((CUdeviceptr)d_C.ptr, 0, elems_c));
         CHECK_CU(cuLaunchKernel(fn_tiled,
-            tiled_grid_x, tiled_grid_y, 1,
-            512, 1, 1,
-            0, NULL, args_rand, NULL));
+                                (N+127)/128, (M+127)/128, 1,
+                                512, 1, 1,
+                                0, nullptr, args_r, nullptr));
         CHECK_CU(cuCtxSynchronize());
-        CHECK_CU(cuMemcpyDtoH(host_out, d_c, elems_c * sizeof(float)));
-
-        auto rand_result = check_fp32(host_out, host_ref_rand, elems_c, 1e-1f, 1e-1f);
-        print_check_result("hgemm_sparse_tiled (mma.sp, FP16, arbitrary pattern)", rand_result);
-
-        if (rand_result.num_errors > 0 && rand_result.num_errors <= 20) {
-            printf("\n  First errors:\n");
-            int shown = 0;
-            for (size_t i = 0; i < elems_c && shown < 10; i++) {
-                float abs_err = fabsf(host_out[i] - host_ref_rand[i]);
-                float ref_abs = fabsf(host_ref_rand[i]);
-                float rel_err = (ref_abs > 1e-8f) ? (abs_err / ref_abs) : abs_err;
-                if (abs_err > 1e-1f && rel_err > 1e-1f) {
-                    int r = i / N, c = i % N;
-                    printf("    [%zu] row=%d col=%d GPU=%.4f REF=%.4f abs=%.2e\n",
-                           i, r, c, host_out[i], host_ref_rand[i], abs_err);
-                    shown++;
-                }
-            }
-        } else if (rand_result.num_errors == 0) {
-            printf("  PASS — dynamic metadata layout confirmed on hardware.\n");
-        }
-        printf("\n");
-
-        cuMemFree(d_a_rand);
-        cuMemFree(d_meta_rand);
-        free(host_a_rand); free(host_a_rand_c);
-        free(host_meta_rand); free(host_ref_rand);
+        driver.copy_d2h(h_out, d_C, elems_c * sizeof(float));
+        driver.check(h_out.get(), h_ref_r.get(), (int)elems_c,
+                     1e-1f, 1e-1f, "hgemm_sparse_tiled (arbitrary)");
+        printf("  PASS — dynamic metadata layout confirmed on hardware.\n\n");
     }
 
-    // =========================================================
-    // Performance benchmark (if M >= 512)
-    // =========================================================
+    // =====================================================================
+    // Performance benchmark (M >= 512 only)
+    // =====================================================================
     if (M >= 512) {
         printf("Performance (M=%d, N=%d, K=%d):\n", M, N, K);
-        printf("  %-32s %9s  %11s  %15s\n", "Kernel", "Time(ms)", "Eff.GFLOPS", "Dense-eq GFLOPS");
-        printf("  %-32s %9s  %11s  %15s\n", "------", "--------", "----------", "---------------");
+        printf("  %-32s %9s  %11s  %15s\n",
+               "Kernel", "Time(ms)", "Eff.GFLOPS", "Dense-eq GFLOPS");
 
-        int warmup_iters = 5, bench_iters = 50;
+        double eff_flops = 2.0 * M * N * (K / 2.0);
+        double dense_flops = 2.0 * M * N * K;
 
-        // GFLOPS: count only the non-zero operations (K/2 effective mults per output element)
-        double effective_flops = 2.0 * M * N * (K / 2);  // sparse: half the K dimension
-        // Also report "equivalent dense GFLOPS" for comparison
-        double dense_equiv_flops = 2.0 * M * N * K;
+        for (auto &v : variants) {
+            CUfunction fn = driver.load_kernel(v.cubin, v.sym, false);
+            if (!fn) continue;
 
-        // --- Benchmark naive kernel ---
-        for (int i = 0; i < warmup_iters; i++) {
-            CHECK_CU(cuLaunchKernel(fn_naive,
-                naive_grid_x, naive_grid_y, 1, 32, 1, 1, 0, NULL, args_naive, NULL));
-        }
-        CHECK_CU(cuCtxSynchronize());
+            void *naive_args[] = { &d_A_c.ptr, &d_B.ptr, &d_C.ptr, &M, &N, &K };
+            void *tiled_args[] = { &d_A_c.ptr, &d_B.ptr, &d_C.ptr,
+                                   &d_meta.ptr, &M, &N, &K };
+            void **args = (strcmp(v.name, "naive") == 0) ? naive_args : tiled_args;
 
-        float naive_avg_ms;
-        {
-            BenchTimer timer;
-            timer.start();
-            for (int i = 0; i < bench_iters; i++) {
-                CHECK_CU(cuLaunchKernel(fn_naive,
-                    naive_grid_x, naive_grid_y, 1, 32, 1, 1, 0, NULL, args_naive, NULL));
-            }
-            naive_avg_ms = timer.stop_ms() / bench_iters;
-        }
-
-        double naive_eff_gflops = effective_flops / (naive_avg_ms / 1000.0) / 1e9;
-        double naive_equiv_gflops = dense_equiv_flops / (naive_avg_ms / 1000.0) / 1e9;
-        printf("  %-32s %9.3f  %11.0f  %15.0f\n",
-               "hgemm_sparse_naive", naive_avg_ms, naive_eff_gflops, naive_equiv_gflops);
-
-        // --- Benchmark tiled kernel ---
-        float tiled_avg_ms = 0.0f;
-        double tiled_eff_gflops = 0.0;
-        double tiled_equiv_gflops = 0.0;
-
-        if (have_tiled) {
-            int tiled_grid_x = (N + 127) / 128;
-            int tiled_grid_y = (M + 127) / 128;
-            void *args_tiled_bench[] = { &d_a_compressed, &d_b, &d_c,
-                                         &d_meta, &M, &N, &K };
-
-            for (int i = 0; i < warmup_iters; i++) {
-                CHECK_CU(cuLaunchKernel(fn_tiled,
-                    tiled_grid_x, tiled_grid_y, 1, 512, 1, 1,
-                    0, NULL, args_tiled_bench, NULL));
-            }
-            CHECK_CU(cuCtxSynchronize());
-
-            {
-                BenchTimer timer;
-                timer.start();
-                for (int i = 0; i < bench_iters; i++) {
-                    CHECK_CU(cuLaunchKernel(fn_tiled,
-                        tiled_grid_x, tiled_grid_y, 1, 512, 1, 1,
-                        0, NULL, args_tiled_bench, NULL));
-                }
-                tiled_avg_ms = timer.stop_ms() / bench_iters;
-            }
-
-            tiled_eff_gflops = effective_flops / (tiled_avg_ms / 1000.0) / 1e9;
-            tiled_equiv_gflops = dense_equiv_flops / (tiled_avg_ms / 1000.0) / 1e9;
+            float ms = driver.benchmark_kernel(fn, v.grid, v.block, 0, args, 5, 50);
+            double eff_gflops   = eff_flops   / (ms / 1000.0) / 1e9;
+            double dense_gflops = dense_flops / (ms / 1000.0) / 1e9;
             printf("  %-32s %9.3f  %11.0f  %15.0f\n",
-                   "hgemm_sparse_tiled", tiled_avg_ms, tiled_eff_gflops, tiled_equiv_gflops);
+                   v.name, ms, eff_gflops, dense_gflops);
         }
 
-        // --- Summary ---
         printf("  %-32s %9s  %11s  %15.0f\n",
                "Dense baseline (ref)", "", "", 31910.0);
-
-        if (have_tiled && tiled_avg_ms > 0.0f) {
-            printf("\n  Speedup (tiled/naive):          %.1fx\n",
-                   naive_avg_ms / tiled_avg_ms);
-        }
     }
-
-    // Cleanup
-    cuMemFree(d_a_compressed);
-    cuMemFree(d_b);
-    cuMemFree(d_c);
-    cuMemFree(d_meta);
-    cuModuleUnload(mod_naive);
-    if (have_tiled) cuModuleUnload(mod_tiled);
-    cuDevicePrimaryCtxRelease(cu_dev);
-
-    free(host_a); free(host_b); free(host_ref); free(host_out);
-    free(host_a_compressed); free(host_b_fp16);
-    free(host_meta_fixed);
 
     return 0;
 }
