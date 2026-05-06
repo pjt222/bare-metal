@@ -1,18 +1,12 @@
 /*
- * bench_split_q.cu — Benchmark: flash_attn_split_q vs flash_attn_br16
+ * bench_split_q.cu — Split-Q Flash Attention benchmark (BenchDriver)
  *
- * Tests correctness of split-Q against CPU reference, then benchmarks
- * split-Q at multiple split counts versus the br16 baseline.
+ * Tests flash_attn_split_q + reduce vs flash_attn_br16 baseline.
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_split_q.sm_86.cubin flash_attn_split_q.cu
  *   nvcc -arch=sm_86 -O2 -o bench_split_q bench_split_q.cu -lcuda -I../../phase2/common
- *
- * Usage:
- *   ./bench_split_q                   # seq=1024, batch=8, heads=8
- *   ./bench_split_q 2048 4 8          # seq=2048, batch=4, heads=8
- *   ./bench_split_q 1024 8 8 4        # seq=1024, batch=8, heads=8, num_splits=4 (single test)
  */
 
 #include <cstdio>
@@ -22,31 +16,30 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../phase2/common/bench_driver.h"
 
-// -----------------------------------------------------------------------
-// CPU reference: numerically stable scaled dot-product attention (FP32)
-// -----------------------------------------------------------------------
 static void cpu_attention(
-    const float *Qf, const float *Kf, const float *Vf, float *Of,
-    float *sbuf, int seq, int d, float scale
+    const float *Q, const float *K, const float *V, float *O,
+    float *score_buf, int seq, int d, float scale
 ) {
     for (int q = 0; q < seq; q++) {
         float row_max = -3.402823466e+38f;
         for (int k = 0; k < seq; k++) {
             float dot = 0.0f;
-            for (int dd = 0; dd < d; dd++) dot += Qf[q*d+dd] * Kf[k*d+dd];
-            sbuf[k] = dot * scale;
-            row_max = fmaxf(row_max, sbuf[k]);
+            for (int i = 0; i < d; i++) dot += Q[q * d + i] * K[k * d + i];
+            score_buf[k] = dot * scale;
+            row_max = fmaxf(row_max, score_buf[k]);
         }
-        float sum = 0.0f;
-        for (int k = 0; k < seq; k++) { sbuf[k] = expf(sbuf[k] - row_max); sum += sbuf[k]; }
-        float rcp = 1.0f / sum;
-        for (int dd = 0; dd < d; dd++) Of[q*d+dd] = 0.0f;
+        float exp_sum = 0.0f;
         for (int k = 0; k < seq; k++) {
-            float w = sbuf[k] * rcp;
-            for (int dd = 0; dd < d; dd++) Of[q*d+dd] += w * Vf[k*d+dd];
+            score_buf[k] = expf(score_buf[k] - row_max);
+            exp_sum += score_buf[k];
+        }
+        for (int i = 0; i < d; i++) O[q * d + i] = 0.0f;
+        float rcp = 1.0f / exp_sum;
+        for (int k = 0; k < seq; k++) {
+            float w = score_buf[k] * rcp;
+            for (int i = 0; i < d; i++) O[q * d + i] += w * V[k * d + i];
         }
     }
 }
@@ -56,300 +49,183 @@ static void fp32_to_fp16(const float *src, __half *dst, size_t n) {
 }
 
 int main(int argc, char **argv) {
-    int seq       = (argc > 1) ? atoi(argv[1]) : 1024;
-    int batch     = (argc > 2) ? atoi(argv[2]) : 8;
-    int num_heads = (argc > 3) ? atoi(argv[3]) : 8;
-    int force_splits = (argc > 4) ? atoi(argv[4]) : 0;  // 0 = sweep
-
-    const int d        = 64;
-    const int Br_block = 64;
-    const int Bc_val   = 64;
-
-    if (seq % Br_block != 0) {
-        fprintf(stderr, "seq=%d must be divisible by Br_block=%d\n", seq, Br_block);
-        return 1;
-    }
-
+    int seq   = (argc > 1) ? atoi(argv[1]) : 1024;
+    int batch = (argc > 2) ? atoi(argv[2]) : 8;
+    int heads = (argc > 3) ? atoi(argv[3]) : 8;
+    int force = (argc > 4) ? atoi(argv[4]) : 0;
+    const int d = 64, Br = 64, Bc = 64;
     float scale = 1.0f / sqrtf((float)d);
-    int num_kv_tiles = seq / Bc_val;
+    int num_kv = seq / Bc;
 
-    printf("=== Split-Q Flash Attention vs br16 Baseline ===\n");
-    printf("seq=%d  d=%d  batch=%d  heads=%d  kv_tiles=%d\n\n", seq, d, batch, num_heads, num_kv_tiles);
+    if (seq % Br != 0) { fprintf(stderr, "seq must divide %d\n", Br); return 1; }
 
-    CHECK_CU(cuInit(0));
-    CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
-    printf("Device: %s\n\n", devname);
+    printf("=== Split-Q Flash Attention vs br16 ===\n");
+    printf("seq=%d d=%d batch=%d heads=%d kv_tiles=%d\n\n", seq, d, batch, heads, num_kv);
 
-    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
-    CHECK_CU(cuCtxSetCurrent(ctx));
+    BenchDriver driver;
+    driver.init_context();
 
-    // ---- Load cubins ----
-    CUmodule mod_br16, mod_split;
-    CUfunction fn_br16, fn_split_q, fn_reduce;
+    CUfunction fn_br16   = driver.load_kernel("flash_br16.sm_86.cubin", "flash_attn_br16");
 
-    if (cuModuleLoad(&mod_br16, "flash_br16.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load flash_br16.sm_86.cubin\n");
-        fprintf(stderr, "Build: nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu\n");
-        return 1;
-    }
+    // Manual module load for split-q (need 2 kernels from 1 module)
+    CUmodule mod_split;
+    CUfunction fn_split, fn_reduce;
     if (cuModuleLoad(&mod_split, "flash_split_q.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load flash_split_q.sm_86.cubin\n");
-        fprintf(stderr, "Build: nvcc --cubin -arch=sm_86 -O2 -o flash_split_q.sm_86.cubin flash_attn_split_q.cu\n");
-        return 1;
+        fprintf(stderr, "Cannot load flash_split_q.sm_86.cubin\n"); return 1;
     }
-    CHECK_CU(cuModuleGetFunction(&fn_br16,    mod_br16,  "flash_attn_br16"));
-    CHECK_CU(cuModuleGetFunction(&fn_split_q, mod_split, "flash_attn_split_q"));
-    CHECK_CU(cuModuleGetFunction(&fn_reduce,  mod_split, "flash_attn_split_q_reduce"));
+    CHECK_CU(cuModuleGetFunction(&fn_split, mod_split, "flash_attn_split_q"));
+    CHECK_CU(cuModuleGetFunction(&fn_reduce, mod_split, "flash_attn_split_q_reduce"));
 
-    // Set shared memory for br16 and split-Q (both use 48 KB)
-    size_t smem_size = 2 * Bc_val * d * sizeof(short)       // K+V tiles FP16
-                     + Br_block * Bc_val * sizeof(float)     // smem_work FP32
-                     + Br_block * d * sizeof(float);         // smem_pv FP32
-    CHECK_CU(cuFuncSetAttribute(fn_br16,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem_size));
-    CHECK_CU(cuFuncSetAttribute(fn_split_q,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem_size));
-    printf("Shared memory per block: %zu bytes (%.1f KB)\n\n", smem_size, smem_size/1024.0);
+    size_t smem = 2 * Bc * d * sizeof(__half) + Br * Bc * sizeof(float) + Br * d * sizeof(float);
+    CHECK_CU(cuFuncSetAttribute(fn_br16,  CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
+    CHECK_CU(cuFuncSetAttribute(fn_split, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
+    printf("Shared memory: %zu bytes (%.1f KB)\n\n", smem, smem / 1024.0f);
 
-    // =========================================================
-    // Correctness test (single head, single batch)
-    // =========================================================
+    // --- Correctness (single head) ---
     {
-        size_t n_elems = (size_t)seq * d;
-        size_t n_bytes_f32 = n_elems * sizeof(float);
-        size_t n_bytes_f16 = n_elems * sizeof(__half);
+        size_t ne = (size_t)seq * d;
 
-        float *hQf  = (float*)malloc(n_bytes_f32);
-        float *hKf  = (float*)malloc(n_bytes_f32);
-        float *hVf  = (float*)malloc(n_bytes_f32);
-        float *hRef = (float*)malloc(n_bytes_f32);
-        float *hOut = (float*)malloc(n_bytes_f32);
-        float *sBuf = (float*)malloc(seq * sizeof(float));
+        auto hQ  = driver.host_alloc<float>(ne);
+        auto hK  = driver.host_alloc<float>(ne);
+        auto hV  = driver.host_alloc<float>(ne);
+        auto hRef= driver.host_alloc<float>(ne);
+        auto hOut= driver.host_alloc<float>(ne);
+        auto sBuf= driver.host_alloc<float>(seq);
 
-        fill_random(hQf, n_elems, 30);
-        fill_random(hKf, n_elems, 31);
-        fill_random(hVf, n_elems, 32);
+        fill_random(hQ.get(), ne, 30);
+        fill_random(hK.get(), ne, 31);
+        fill_random(hV.get(), ne, 32);
+        cpu_attention(hQ.get(), hK.get(), hV.get(), hRef.get(), sBuf.get(), seq, d, scale);
 
-        printf("Computing CPU reference (seq=%d, single head)...\n", seq);
-        cpu_attention(hQf, hKf, hVf, hRef, sBuf, seq, d, scale);
-        printf("Done.\n\n");
+        auto hQh = driver.host_alloc<__half>(ne);
+        auto hKh = driver.host_alloc<__half>(ne);
+        auto hVh = driver.host_alloc<__half>(ne);
+        fp32_to_fp16(hQ.get(), hQh.get(), ne);
+        fp32_to_fp16(hK.get(), hKh.get(), ne);
+        fp32_to_fp16(hV.get(), hVh.get(), ne);
 
-        __half *hQh = (__half*)malloc(n_bytes_f16);
-        __half *hKh = (__half*)malloc(n_bytes_f16);
-        __half *hVh = (__half*)malloc(n_bytes_f16);
-        fp32_to_fp16(hQf, hQh, n_elems);
-        fp32_to_fp16(hKf, hKh, n_elems);
-        fp32_to_fp16(hVf, hVh, n_elems);
+        auto dQh = driver.device_alloc<__half>(ne);
+        auto dKh = driver.device_alloc<__half>(ne);
+        auto dVh = driver.device_alloc<__half>(ne);
+        auto dO  = driver.device_alloc<float>(ne);
+        driver.copy_h2d(dQh, hQh, ne * sizeof(__half));
+        driver.copy_h2d(dKh, hKh, ne * sizeof(__half));
+        driver.copy_h2d(dVh, hVh, ne * sizeof(__half));
 
-        CUdeviceptr dQh, dKh, dVh, dO;
-        CHECK_CU(cuMemAlloc(&dQh, n_bytes_f16));
-        CHECK_CU(cuMemAlloc(&dKh, n_bytes_f16));
-        CHECK_CU(cuMemAlloc(&dVh, n_bytes_f16));
-        CHECK_CU(cuMemAlloc(&dO,  n_bytes_f32));
+        int one = 1;
+        void *a[] = { &dQh.ptr, &dKh.ptr, &dVh.ptr, &dO.ptr, &seq, &one, &scale };
 
-        CHECK_CU(cuMemcpyHtoD(dQh, hQh, n_bytes_f16));
-        CHECK_CU(cuMemcpyHtoD(dKh, hKh, n_bytes_f16));
-        CHECK_CU(cuMemcpyHtoD(dVh, hVh, n_bytes_f16));
+        printf("Correctness:\n");
+        CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
+        CHECK_CU(cuLaunchKernel(fn_br16, seq / Br, 1, 1, 128, 1, 1, (unsigned)smem, nullptr, a, nullptr));
+        CHECK_CU(cuCtxSynchronize());
+        driver.copy_d2h(hOut, dO, ne * sizeof(float));
+        driver.check(hOut.get(), hRef.get(), (int)ne, 1e-2f, 1.0f, "  br16 baseline");
 
-        int one_head = 1;
+        int t[] = {2, 4, num_kv};
+        for (int ti = 0; ti < 3; ti++) {
+            int ns = (t[ti] > num_kv) ? num_kv : t[ti];
+            size_t pm = (size_t)ns * seq;
+            size_t po = pm * d;
 
-        // Test br16
-        {
-            CHECK_CU(cuMemsetD32(dO, 0, n_elems));
-            void *args[] = { &dQh, &dKh, &dVh, &dO, &seq, &one_head, &scale };
-            CHECK_CU(cuLaunchKernel(fn_br16,
-                seq / Br_block, 1, 1,   128, 1, 1,
-                (unsigned)smem_size, NULL, args, NULL));
+            auto dPm = driver.device_alloc<float>(pm);
+            auto dPl = driver.device_alloc<float>(pm);
+            auto dPo = driver.device_alloc<float>(po);
+
+            void *sa[] = { &dQh.ptr, &dKh.ptr, &dVh.ptr, &dPo.ptr, &dPm.ptr, &dPl.ptr, &seq, &one, &ns, &scale };
+            void *ra[] = { &dPo.ptr, &dPm.ptr, &dPl.ptr, &dO.ptr, &seq, &one, &ns };
+
+            CHECK_CU(cuLaunchKernel(fn_split, ns, 1, 1, 128, 1, 1, (unsigned)smem, nullptr, sa, nullptr));
             CHECK_CU(cuCtxSynchronize());
-            CHECK_CU(cuMemcpyDtoH(hOut, dO, n_bytes_f32));
-
-            printf("Correctness (vs CPU FP32 naive):\n");
-            auto r = check_fp32(hOut, hRef, n_elems, 1e-2f, 1e-0f);
-            print_check_result("  br16 baseline (FP16 HMMA)  ", r);
-        }
-
-        // Test split-Q at various split counts
-        int test_splits[] = {2, 4, num_kv_tiles};
-        int num_test_configs = 3;
-
-        for (int ti = 0; ti < num_test_configs; ti++) {
-            int ns = test_splits[ti];
-            if (ns > num_kv_tiles) ns = num_kv_tiles;
-
-            // Allocate partial buffers
-            size_t partial_ml_elems = (size_t)ns * 1 * 1 * seq;  // single batch, single head
-            size_t partial_o_elems  = partial_ml_elems * d;
-
-            CUdeviceptr dPm, dPl, dPo;
-            CHECK_CU(cuMemAlloc(&dPm, partial_ml_elems * sizeof(float)));
-            CHECK_CU(cuMemAlloc(&dPl, partial_ml_elems * sizeof(float)));
-            CHECK_CU(cuMemAlloc(&dPo, partial_o_elems  * sizeof(float)));
-
-            // Launch split-Q kernel
-            void *split_args[] = { &dQh, &dKh, &dVh, &dPo, &dPm, &dPl, &seq, &one_head, &ns, &scale };
-            CHECK_CU(cuLaunchKernel(fn_split_q,
-                ns, 1, 1,   128, 1, 1,
-                (unsigned)smem_size, NULL, split_args, NULL));
+            CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
+            CHECK_CU(cuLaunchKernel(fn_reduce, seq / Br, 1, 1, 128, 1, 1, 0, nullptr, ra, nullptr));
             CHECK_CU(cuCtxSynchronize());
+            driver.copy_d2h(hOut, dO, ne * sizeof(float));
 
-            // Launch reduce kernel
-            CHECK_CU(cuMemsetD32(dO, 0, n_elems));
-            void *reduce_args[] = { &dPo, &dPm, &dPl, &dO, &seq, &one_head, &ns };
-            CHECK_CU(cuLaunchKernel(fn_reduce,
-                seq / Br_block, 1, 1,   128, 1, 1,
-                0, NULL, reduce_args, NULL));
-            CHECK_CU(cuCtxSynchronize());
-            CHECK_CU(cuMemcpyDtoH(hOut, dO, n_bytes_f32));
-
-            char label[64];
-            snprintf(label, sizeof(label), "  split-Q (splits=%d)", ns);
-            auto r = check_fp32(hOut, hRef, n_elems, 1e-2f, 1e-0f);
-            print_check_result(label, r);
-
-            cuMemFree(dPm); cuMemFree(dPl); cuMemFree(dPo);
+            char label[64]; snprintf(label, sizeof(label), "  split-Q (splits=%d)", ns);
+            driver.check(hOut.get(), hRef.get(), (int)ne, 1e-2f, 1.0f, label);
         }
         printf("\n");
-
-        cuMemFree(dQh); cuMemFree(dKh); cuMemFree(dVh); cuMemFree(dO);
-        free(hQf); free(hKf); free(hVf); free(hRef); free(hOut); free(sBuf);
-        free(hQh); free(hKh); free(hVh);
     }
 
-    // =========================================================
-    // Performance benchmark (multi-head, multi-batch)
-    // =========================================================
-    printf("Performance (batch=%d, heads=%d, seq=%d):\n\n", batch, num_heads, seq);
+    // --- Performance ---
+    printf("Performance (batch=%d, heads=%d, seq=%d):\n\n", batch, heads, seq);
 
-    size_t total_elems_f16 = (size_t)batch * num_heads * seq * d;
-    size_t total_elems_f32 = total_elems_f16;
+    size_t tot = (size_t)batch * heads * seq * d;
+    auto dQm = driver.device_alloc<__half>(tot);
+    auto dKm = driver.device_alloc<__half>(tot);
+    auto dVm = driver.device_alloc<__half>(tot);
+    auto dOm = driver.device_alloc<float>(tot);
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dQm.ptr, 0x3800, tot));
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dKm.ptr, 0x3800, tot));
+    CHECK_CU(cuMemsetD16((CUdeviceptr)dVm.ptr, 0x3800, tot));
 
-    CUdeviceptr dQm, dKm, dVm, dOm;
-    CHECK_CU(cuMemAlloc(&dQm, total_elems_f16 * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dKm, total_elems_f16 * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dVm, total_elems_f16 * sizeof(__half)));
-    CHECK_CU(cuMemAlloc(&dOm, total_elems_f32 * sizeof(float)));
+    double flops = (double)batch * heads * seq * ((double)seq * d * 2 + (double)seq * 5 + (double)seq * d * 2);
 
-    // Fill with 0.5 in FP16
-    CHECK_CU(cuMemsetD16(dQm, 0x3800, total_elems_f16));
-    CHECK_CU(cuMemsetD16(dKm, 0x3800, total_elems_f16));
-    CHECK_CU(cuMemsetD16(dVm, 0x3800, total_elems_f16));
+    // br16
+    void *a_br[] = { &dQm.ptr, &dKm.ptr, &dVm.ptr, &dOm.ptr, &seq, &heads, &scale };
+    for (int i = 0; i < 5; i++)
+        CHECK_CU(cuLaunchKernel(fn_br16, seq / Br, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, a_br, nullptr));
+    CHECK_CU(cuCtxSynchronize());
+    BenchTimer t1; t1.start();
+    for (int i = 0; i < 50; i++)
+        CHECK_CU(cuLaunchKernel(fn_br16, seq / Br, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, a_br, nullptr));
+    CHECK_CU(cuCtxSynchronize());
+    float ms_br = t1.stop_ms() / 50.0f;
+    double gflops_br = flops / (ms_br / 1000.0) / 1e9;
+    printf("  %-45s %7.3f ms  %7.1f GFLOPS\n", "br16 baseline", ms_br, gflops_br);
 
-    int warmup_iters = 5;
-    int bench_iters  = 50;
+    // split-Q sweep
+    int sweep[4]; int nsweep = 0;
+    if (force > 0) { sweep[0] = force; nsweep = 1; }
+    else {
+        sweep[nsweep++] = 2;
+        if (num_kv >= 4) sweep[nsweep++] = 4;
+        if (num_kv >= 8) sweep[nsweep++] = 8;
+        if (num_kv > 8)  sweep[nsweep++] = num_kv;
+    }
 
-    // FLOPS formula: batch * heads * seq * (2*seq*d [QK^T] + 5*seq [softmax] + 2*seq*d [PV])
-    double total_flops = (double)batch * num_heads * seq * (
-        (double)seq * d * 2 +
-        (double)seq * 5 +
-        (double)seq * d * 2
-    );
+    for (int si = 0; si < nsweep; si++) {
+        int ns = sweep[si];
+        if (ns > num_kv) ns = num_kv;
 
-    // ---- Benchmark br16 baseline ----
-    {
-        void *args[] = { &dQm, &dKm, &dVm, &dOm, &seq, &num_heads, &scale };
+        size_t pm = (size_t)ns * batch * heads * seq;
+        size_t po = pm * d;
+        size_t pb = 2 * pm * sizeof(float) + po * sizeof(float);
 
-        for (int i = 0; i < warmup_iters; i++)
-            CHECK_CU(cuLaunchKernel(fn_br16,
-                seq / Br_block, num_heads, batch,   128, 1, 1,
-                (unsigned)smem_size, NULL, args, NULL));
+        size_t free_mem = 0, total_mem = 0;
+        cuMemGetInfo(&free_mem, &total_mem);
+        if (pb > free_mem * 0.8) {
+            printf("  split-Q (splits=%d) — skipped (%.0f MB > %.0f MB free)\n",
+                   ns, pb / 1e6, free_mem / 1e6);
+            continue;
+        }
+
+        auto dPm = driver.device_alloc<float>(pm);
+        auto dPl = driver.device_alloc<float>(pm);
+        auto dPo = driver.device_alloc<float>(po);
+
+        void *sa[] = { &dQm.ptr, &dKm.ptr, &dVm.ptr, &dPo.ptr, &dPm.ptr, &dPl.ptr, &seq, &heads, &ns, &scale };
+        void *ra[] = { &dPo.ptr, &dPm.ptr, &dPl.ptr, &dOm.ptr, &seq, &heads, &ns };
+
+        for (int i = 0; i < 5; i++) {
+            CHECK_CU(cuLaunchKernel(fn_split, ns, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, sa, nullptr));
+            CHECK_CU(cuLaunchKernel(fn_reduce, seq / Br, heads, batch, 128, 1, 1, 0, nullptr, ra, nullptr));
+        }
         CHECK_CU(cuCtxSynchronize());
-
-        BenchTimer timer;
-        timer.start();
-        for (int i = 0; i < bench_iters; i++)
-            CHECK_CU(cuLaunchKernel(fn_br16,
-                seq / Br_block, num_heads, batch,   128, 1, 1,
-                (unsigned)smem_size, NULL, args, NULL));
-        float br16_ms = timer.stop_ms() / bench_iters;
-        double br16_gflops = total_flops / (br16_ms / 1000.0) / 1e9;
-
-        printf("  %-45s %7.3f ms  %7.1f GFLOPS\n", "br16 baseline", br16_ms, br16_gflops);
-
-        // ---- Benchmark split-Q at various split counts ----
-        int sweep_splits[5];
-        int num_sweep = 0;
-
-        if (force_splits > 0) {
-            sweep_splits[0] = force_splits;
-            num_sweep = 1;
-        } else {
-            // Sweep: 2, 4, 8, num_kv_tiles (if unique)
-            sweep_splits[num_sweep++] = 2;
-            if (num_kv_tiles >= 4)  sweep_splits[num_sweep++] = 4;
-            if (num_kv_tiles >= 8)  sweep_splits[num_sweep++] = 8;
-            if (num_kv_tiles > 8)   sweep_splits[num_sweep++] = num_kv_tiles;
+        BenchTimer t2; t2.start();
+        for (int i = 0; i < 50; i++) {
+            CHECK_CU(cuLaunchKernel(fn_split, ns, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, sa, nullptr));
+            CHECK_CU(cuLaunchKernel(fn_reduce, seq / Br, heads, batch, 128, 1, 1, 0, nullptr, ra, nullptr));
         }
+        CHECK_CU(cuCtxSynchronize());
+        float ms_sp = t2.stop_ms() / 50.0f;
+        double gflops_sp = flops / (ms_sp / 1000.0) / 1e9;
 
-        for (int si = 0; si < num_sweep; si++) {
-            int ns = sweep_splits[si];
-            if (ns > num_kv_tiles) ns = num_kv_tiles;
-
-            size_t partial_ml_elems = (size_t)ns * batch * num_heads * seq;
-            size_t partial_o_elems  = partial_ml_elems * d;
-            size_t partial_ml_bytes = partial_ml_elems * sizeof(float);
-            size_t partial_o_bytes  = partial_o_elems  * sizeof(float);
-
-            // Check VRAM availability
-            size_t total_partial = 2 * partial_ml_bytes + partial_o_bytes;
-            size_t free_mem = 0, total_mem = 0;
-            cuMemGetInfo(&free_mem, &total_mem);
-            if (total_partial > free_mem * 0.8) {
-                printf("  split-Q (splits=%-3d) — skipped (%.0f MB partial > %.0f MB free)\n",
-                       ns, total_partial / 1e6, free_mem / 1e6);
-                continue;
-            }
-
-            CUdeviceptr dPm, dPl, dPo;
-            CHECK_CU(cuMemAlloc(&dPm, partial_ml_bytes));
-            CHECK_CU(cuMemAlloc(&dPl, partial_ml_bytes));
-            CHECK_CU(cuMemAlloc(&dPo, partial_o_bytes));
-
-            void *split_args[] = { &dQm, &dKm, &dVm, &dPo, &dPm, &dPl, &seq, &num_heads, &ns, &scale };
-            void *reduce_args[] = { &dPo, &dPm, &dPl, &dOm, &seq, &num_heads, &ns };
-
-            // Warmup
-            for (int i = 0; i < warmup_iters; i++) {
-                CHECK_CU(cuLaunchKernel(fn_split_q,
-                    ns, num_heads, batch,   128, 1, 1,
-                    (unsigned)smem_size, NULL, split_args, NULL));
-                CHECK_CU(cuLaunchKernel(fn_reduce,
-                    seq / Br_block, num_heads, batch,   128, 1, 1,
-                    0, NULL, reduce_args, NULL));
-            }
-            CHECK_CU(cuCtxSynchronize());
-
-            // Benchmark (both kernels together)
-            BenchTimer timer2;
-            timer2.start();
-            for (int i = 0; i < bench_iters; i++) {
-                CHECK_CU(cuLaunchKernel(fn_split_q,
-                    ns, num_heads, batch,   128, 1, 1,
-                    (unsigned)smem_size, NULL, split_args, NULL));
-                CHECK_CU(cuLaunchKernel(fn_reduce,
-                    seq / Br_block, num_heads, batch,   128, 1, 1,
-                    0, NULL, reduce_args, NULL));
-            }
-            float split_ms = timer2.stop_ms() / bench_iters;
-            double split_gflops = total_flops / (split_ms / 1000.0) / 1e9;
-            float speedup = br16_ms / split_ms;
-
-            char label[64];
-            snprintf(label, sizeof(label), "split-Q (splits=%-3d, %.0f MB partial)",
-                     ns, total_partial / 1e6);
-            printf("  %-45s %7.3f ms  %7.1f GFLOPS  %.2fx\n",
-                   label, split_ms, split_gflops, speedup);
-
-            cuMemFree(dPm); cuMemFree(dPl); cuMemFree(dPo);
-        }
+        char label[64]; snprintf(label, sizeof(label), "split-Q (splits=%d, %.0f MB)", ns, pb / 1e6);
+        printf("  %-45s %7.3f ms  %7.1f GFLOPS  %.2fx\n", label, ms_sp, gflops_sp, ms_br / ms_sp);
     }
 
-    printf("\nExpected SASS:\n");
-    printf("  cuobjdump -sass flash_split_q.sm_86.cubin | grep HMMA\n");
-
-    cuMemFree(dQm); cuMemFree(dKm); cuMemFree(dVm); cuMemFree(dOm);
-    cuModuleUnload(mod_br16); cuModuleUnload(mod_split);
-    cuDevicePrimaryCtxRelease(cu_dev);
-
+    cuModuleUnload(mod_split);
     return 0;
 }

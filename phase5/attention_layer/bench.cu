@@ -1,59 +1,8 @@
 /*
- * bench.cu — End-to-end Transformer self-attention layer pipeline
- *
- * Chains bare-metal kernels into a complete forward pass.
- *
- * Two pipeline variants are benchmarked:
- *
- * ORIGINAL (11 steps):
- *     1. LayerNorm(X)           → X_norm  [B*S × D]   FP32
- *     2. fp32_to_fp16           → X_fp16  [B*S × D]   FP16
- *   3-5. Q,K,V = X_fp16 @ W    → flat    [B*S × D]   FP32  (3× HGEMM)
- *     6. 3×(fp32_to_fp16 + transpose [B,S,H,D]→[B,H,S,D]) for Q,K,V
- *     7. O = FlashAttention(Q,K,V) → [B,H,S,D] FP32
- *     8. transpose_bhsd [B,H,S,D]→[B,S,H,D] = [B*S × D] FP32
- *     9. fp32_to_fp16           → O_fp16  [B*S × D]   FP16
- *    10. Out = O_fp16 @ W_out   → Out     [B*S × D]   FP32  (HGEMM)
- *    11. Result = Out + X       → Result  [B*S × D]   FP32  (residual add)
- *
- * FUSED (10 steps — eliminates all 4 transposes):
- *     1. LayerNorm(X)           → X_norm  [B*S × D]   FP32
- *     2. fp32_to_fp16           → X_fp16  [B*S × D]   FP16
- *   3-5. Q,K,V = X_fp16 @ W    → flat    [B*S × D]   FP32  (3× HGEMM)
- *   6-8. 3× fp32_to_fp16       → Q,K,V   [B*S × D]   FP16  (no transpose!)
- *     9. O = FlashAttnFused(Q,K,V [B,S,H,D] FP16) → [B,S,H,D] FP32
- *    10. fp32_to_fp16           → O_fp16  [B*S × D]   FP16  (no transpose!)
- *    11. Out = O_fp16 @ W_out   → Out     [B*S × D]   FP32  (HGEMM)
- *    12. Result = Out + X       → Result  [B*S × D]   FP32  (residual add)
- *
- * Cubins loaded:
- *   ../../phase2/layernorm/layernorm.sm_86.cubin  (layernorm_block)
- *   ../../phase2/hgemm/hgemm.sm_86.cubin          (hgemm_wmma)
- *   ../../phase3/flash_attention/flash_br16.sm_86.cubin  (flash_attn_br16)
- *   ../../phase3/flash_attention/flash_fused.sm_86.cubin (flash_attn_fused)
- *   utils.sm_86.cubin                              (fp32_to_fp16, fp16_to_fp32,
- *                                                   transpose_bshd, transpose_bhsd,
- *                                                   residual_add)
- *
- * Constraints:
- *   D_HEAD = 64 (flash_attn_br16 requirement)
- *   d_model = heads × D_HEAD (e.g., 8 × 64 = 512)
- *   seq_len must be multiple of 64 (flash Br_BLOCK)
- *   d_model must be multiple of 16 (WMMA requirement)
+ * bench.cu — Attention layer pipeline benchmark (BenchDriver refactor)
  *
  * Build:
- *   # Build all prerequisite cubins first (from their directories):
- *   #   phase2/layernorm: nvcc --cubin -arch=sm_86 -O2 -o layernorm.sm_86.cubin layernorm.cu
- *   #   phase2/hgemm:     nvcc --cubin -arch=sm_86 -O2 -o hgemm.sm_86.cubin hgemm.cu
- *   #   phase3/flash_attention: nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
- *   #   phase3/flash_attention: nvcc --cubin -arch=sm_86 -O2 -o flash_fused.sm_86.cubin flash_attn_fused.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o utils.sm_86.cubin utils.cu
  *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
- *
- * Usage:
- *   ./bench                        # batch=1, seq=256, heads=8, d_model=512
- *   ./bench 8 1024                 # batch=8, seq=1024
- *   ./bench 1 256 8 512            # batch=1, seq=256, heads=8, d_model=512
  */
 
 #include <cstdio>
@@ -63,636 +12,392 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../phase2/common/bench_driver.h"
 
-// -----------------------------------------------------------------------
-// CPU reference: single-head attention (FP32, naive)
-// For correctness validation at small sizes only.
-// -----------------------------------------------------------------------
-static void cpu_attention_layer(
-    const float *X,           // [B*S × D]
-    const float *gamma,       // [D]
-    const float *beta,        // [D]
-    const float *W_q,         // [D × D]
-    const float *W_k,
-    const float *W_v,
-    const float *W_out,
-    float       *result,      // [B*S × D]
-    int batch, int seq, int heads, int d_head, float epsilon
-) {
-    int d_model = heads * d_head;
-    int BS = batch * seq;
-    float scale = 1.0f / sqrtf((float)d_head);
+static void cpu_layer(const float *X, const float *g, const float *b,
+    const float *Wq, const float *Wk, const float *Wv, const float *Wo,
+    float *res, int batch, int seq, int heads, int dh, float eps)
+{
+    int D = heads * dh, BS = batch * seq;
+    float *nrm = (float*)malloc(BS * D * sizeof(float));
+    float *Q = (float*)malloc(BS * D * sizeof(float));
+    float *Kv = (float*)malloc(BS * D * sizeof(float));
+    float *Vv = (float*)malloc(BS * D * sizeof(float));
+    float *O = (float*)malloc(BS * D * sizeof(float));
+    float *Pr = (float*)malloc(BS * D * sizeof(float));
+    float *sc = (float*)malloc(seq * seq * sizeof(float));
+    float sca = 1.0f / sqrtf((float)dh);
 
-    float *x_norm = (float*)malloc(BS * d_model * sizeof(float));
-    float *Q      = (float*)malloc(BS * d_model * sizeof(float));
-    float *K_mat  = (float*)malloc(BS * d_model * sizeof(float));
-    float *V_mat  = (float*)malloc(BS * d_model * sizeof(float));
-    float *O      = (float*)malloc(BS * d_model * sizeof(float));
-    float *proj   = (float*)malloc(BS * d_model * sizeof(float));
-    float *scores = (float*)malloc(seq * seq * sizeof(float));
-
-    // 1. LayerNorm
-    for (int row = 0; row < BS; row++) {
-        float mean = 0.0f;
-        for (int d = 0; d < d_model; d++) mean += X[row * d_model + d];
-        mean /= d_model;
-        float var = 0.0f;
-        for (int d = 0; d < d_model; d++) {
-            float diff = X[row * d_model + d] - mean;
-            var += diff * diff;
-        }
-        var /= d_model;
-        float rsqrt_var = 1.0f / sqrtf(var + epsilon);
-        for (int d = 0; d < d_model; d++) {
-            float norm = (X[row * d_model + d] - mean) * rsqrt_var;
-            x_norm[row * d_model + d] = gamma[d] * norm + beta[d];
-        }
+    for (int r = 0; r < BS; r++) {
+        float mn = 0.0f, vr = 0.0f;
+        for (int d = 0; d < D; d++) mn += X[r * D + d];
+        mn /= D;
+        for (int d = 0; d < D; d++) { float df = X[r * D + d] - mn; vr += df * df; }
+        vr = 1.0f / sqrtf(vr / D + eps);
+        for (int d = 0; d < D; d++) nrm[r * D + d] = g[d] * (X[r * D + d] - mn) * vr + b[d];
     }
+    cpu_sgemm(BS, D, D, 1.0f, nrm, D, Wq, D, 0.0f, Q, D);
+    cpu_sgemm(BS, D, D, 1.0f, nrm, D, Wk, D, 0.0f, Kv, D);
+    cpu_sgemm(BS, D, D, 1.0f, nrm, D, Wv, D, 0.0f, Vv, D);
 
-    // 2. QKV projections (simple GEMM)
-    cpu_sgemm(BS, d_model, d_model, 1.0f, x_norm, d_model, W_q, d_model, 0.0f, Q, d_model);
-    cpu_sgemm(BS, d_model, d_model, 1.0f, x_norm, d_model, W_k, d_model, 0.0f, K_mat, d_model);
-    cpu_sgemm(BS, d_model, d_model, 1.0f, x_norm, d_model, W_v, d_model, 0.0f, V_mat, d_model);
-
-    // 3. Attention per head (naive two-pass softmax)
-    for (int b = 0; b < batch; b++) {
-        for (int h = 0; h < heads; h++) {
+    for (int bi = 0; bi < batch; bi++)
+        for (int h = 0; h < heads; h++)
             for (int qi = 0; qi < seq; qi++) {
-                // Score row
-                float row_max = -3.402823466e+38f;
+                float rmx = -1e38f;
                 for (int ki = 0; ki < seq; ki++) {
                     float dot = 0.0f;
-                    for (int d = 0; d < d_head; d++) {
-                        int q_idx = (b * seq + qi) * d_model + h * d_head + d;
-                        int k_idx = (b * seq + ki) * d_model + h * d_head + d;
-                        dot += Q[q_idx] * K_mat[k_idx];
-                    }
-                    scores[qi * seq + ki] = dot * scale;
-                    row_max = fmaxf(row_max, scores[qi * seq + ki]);
+                    for (int d = 0; d < dh; d++)
+                        dot += Q[((bi * seq + qi) * heads + h) * dh + d] *
+                               Kv[((bi * seq + ki) * heads + h) * dh + d];
+                    sc[qi * seq + ki] = dot * sca;
+                    rmx = fmaxf(rmx, sc[qi * seq + ki]);
                 }
-                float sum = 0.0f;
-                for (int ki = 0; ki < seq; ki++) {
-                    scores[qi * seq + ki] = expf(scores[qi * seq + ki] - row_max);
-                    sum += scores[qi * seq + ki];
-                }
-                float rcp = 1.0f / sum;
-                // Weighted V sum
-                for (int d = 0; d < d_head; d++) {
-                    float acc = 0.0f;
-                    for (int ki = 0; ki < seq; ki++) {
-                        int v_idx = (b * seq + ki) * d_model + h * d_head + d;
-                        acc += scores[qi * seq + ki] * rcp * V_mat[v_idx];
-                    }
-                    int o_idx = (b * seq + qi) * d_model + h * d_head + d;
-                    O[o_idx] = acc;
+                float sm = 0.0f;
+                for (int ki = 0; ki < seq; ki++) { sc[qi * seq + ki] = expf(sc[qi * seq + ki] - rmx); sm += sc[qi * seq + ki]; }
+                float rc = 1.0f / sm;
+                for (int d = 0; d < dh; d++) {
+                    float ac = 0.0f;
+                    for (int ki = 0; ki < seq; ki++)
+                        ac += sc[qi * seq + ki] * rc * Vv[((bi * seq + ki) * heads + h) * dh + d];
+                    O[((bi * seq + qi) * heads + h) * dh + d] = ac;
                 }
             }
-        }
-    }
 
-    // 4. Output projection
-    cpu_sgemm(BS, d_model, d_model, 1.0f, O, d_model, W_out, d_model, 0.0f, proj, d_model);
-
-    // 5. Residual add
-    for (int i = 0; i < BS * d_model; i++) result[i] = proj[i] + X[i];
-
-    free(x_norm); free(Q); free(K_mat); free(V_mat); free(O); free(proj); free(scores);
+    cpu_sgemm(BS, D, D, 1.0f, O, D, Wo, D, 0.0f, Pr, D);
+    for (int i = 0; i < BS * D; i++) res[i] = Pr[i] + X[i];
+    free(nrm); free(Q); free(Kv); free(Vv); free(O); free(Pr); free(sc);
 }
 
-// -----------------------------------------------------------------------
-// FP32 → FP16 host conversion
-// -----------------------------------------------------------------------
-static void fp32_to_fp16_host(const float *src, unsigned short *dst, int n) {
-    for (int i = 0; i < n; i++) {
-        unsigned int bits;
-        memcpy(&bits, &src[i], 4);
-        unsigned short sign = (bits >> 31) & 0x1;
-        int exp = ((bits >> 23) & 0xFF) - 127 + 15;
-        unsigned int mant = (bits >> 13) & 0x3FF;
-        if (exp <= 0) { dst[i] = sign << 15; continue; }
-        if (exp >= 31) exp = 31;
-        dst[i] = (unsigned short)((sign << 15) | (exp << 10) | mant);
-    }
+static void f2h_host(const float *s, unsigned short *d, int n) {
+    for (int i = 0; i < n; i++) { __half h = __float2half(s[i]); memcpy(&d[i], &h, 2); }
 }
 
-// -----------------------------------------------------------------------
-// Helper: compute grid size for utils kernels
-// -----------------------------------------------------------------------
-static int utils_grid(int n) { return (n + 256 * 4 - 1) / (256 * 4); }
+static int ugrid(int n) { return (n + 1023) / 1024; }
 
-// -----------------------------------------------------------------------
-// Main
-// -----------------------------------------------------------------------
 int main(int argc, char **argv) {
-    int batch   = (argc > 1) ? atoi(argv[1]) : 1;
-    int seq     = (argc > 2) ? atoi(argv[2]) : 256;
-    int heads   = (argc > 3) ? atoi(argv[3]) : 8;
-    int d_model = (argc > 4) ? atoi(argv[4]) : 512;
+    int batch = (argc > 1) ? atoi(argv[1]) : 1;
+    int seq   = (argc > 2) ? atoi(argv[2]) : 256;
+    int heads = (argc > 3) ? atoi(argv[3]) : 8;
+    int D     = (argc > 4) ? atoi(argv[4]) : 512;
+    int dh    = 64;
 
-    int d_head = 64;   // flash_attn_br16 requirement
-    if (d_model != heads * d_head) {
-        fprintf(stderr, "d_model (%d) must equal heads (%d) × D_HEAD (%d) = %d\n",
-                d_model, heads, d_head, heads * d_head);
-        return 1;
-    }
-    if (seq % 64 != 0) {
-        fprintf(stderr, "seq (%d) must be multiple of 64 (flash Br_BLOCK)\n", seq);
-        return 1;
-    }
+    if (D != heads * dh) { fprintf(stderr, "d_model != heads*64\n"); return 1; }
+    if (seq % 64 != 0) { fprintf(stderr, "seq must be multiple of 64\n"); return 1; }
 
     int BS = batch * seq;
-    int D  = d_model;
-    float epsilon = 1e-5f;
-    float attn_scale = 1.0f / sqrtf((float)d_head);
+    float eps = 1e-5f, attn_sc = 1.0f / sqrtf((float)dh);
+    size_t bsd = (size_t)BS * D, dd = (size_t)D * D;
 
-    printf("=== Transformer Self-Attention Layer — End-to-End Pipeline ===\n");
-    printf("batch=%d  seq=%d  heads=%d  d_model=%d  D_HEAD=%d\n", batch, seq, heads, D, d_head);
-    printf("Tokens: %d  Parameters: %d (4 weight matrices)\n\n", BS, 4 * D * D);
+    printf("=== Attention Layer Pipeline (BenchDriver) ===\n");
+    printf("batch=%d seq=%d heads=%d d_model=%d\n\n", batch, seq, heads, D);
 
-    CHECK_CU(cuInit(0));
-    CUdevice cu_dev; CHECK_CU(cuDeviceGet(&cu_dev, 0));
-    char devname[256]; CHECK_CU(cuDeviceGetName(devname, sizeof(devname), cu_dev));
-    printf("Device: %s\n\n", devname);
-    CUcontext ctx; CHECK_CU(cuDevicePrimaryCtxRetain(&ctx, cu_dev));
-    CHECK_CU(cuCtxSetCurrent(ctx));
+    BenchDriver driver;
+    driver.init_context();
 
-    // ---- Load cubins ----
-    CUmodule mod_ln, mod_hgemm, mod_flash, mod_fused, mod_utils;
-    CUfunction fn_layernorm, fn_hgemm, fn_flash, fn_flash_fused, fn_f2h, fn_h2f,
-               fn_tr_bshd, fn_tr_bhsd, fn_residual;
+    // Load modules manually (multiple fns per module needed)
+    CUmodule mod_ln, mod_hg, mod_fl, mod_fu, mod_ut;
+    auto ld = [&](const char* p) { CUmodule m; if (cuModuleLoad(&m,p)!=CUDA_SUCCESS){fprintf(stderr,"Cannot load %s\n",p);exit(1);} return m; };
+    mod_ln = ld("../../phase2/layernorm/layernorm.sm_86.cubin");
+    mod_hg = ld("../../phase2/hgemm/hgemm.sm_86.cubin");
+    mod_fl = ld("../../phase3/flash_attention/flash_br16.sm_86.cubin");
+    mod_fu = ld("../../phase3/flash_attention/flash_fused.sm_86.cubin");
+    mod_ut = ld("utils.sm_86.cubin");
 
-    auto load_or_die = [](CUmodule *mod, const char *path) {
-        if (cuModuleLoad(mod, path) != CUDA_SUCCESS) {
-            fprintf(stderr, "Cannot load %s\n", path);
-            exit(1);
-        }
-    };
+    CUfunction fn_ln, fn_hg, fn_fl, fn_fu, fn_f2h, fn_tr_bshd, fn_tr_bhsd, fn_res;
+    CHECK_CU(cuModuleGetFunction(&fn_ln, mod_ln, "layernorm_block"));
+    CHECK_CU(cuModuleGetFunction(&fn_hg, mod_hg, "hgemm_wmma"));
+    CHECK_CU(cuModuleGetFunction(&fn_fl, mod_fl, "flash_attn_br16"));
+    CHECK_CU(cuModuleGetFunction(&fn_fu, mod_fu, "flash_attn_fused"));
+    CHECK_CU(cuModuleGetFunction(&fn_f2h,   mod_ut, "fp32_to_fp16"));
+    CHECK_CU(cuModuleGetFunction(&fn_tr_bshd, mod_ut, "transpose_bshd"));
+    CHECK_CU(cuModuleGetFunction(&fn_tr_bhsd, mod_ut, "transpose_bhsd"));
+    CHECK_CU(cuModuleGetFunction(&fn_res,   mod_ut, "residual_add"));
 
-    load_or_die(&mod_ln,    "../../phase2/layernorm/layernorm.sm_86.cubin");
-    load_or_die(&mod_hgemm, "../../phase2/hgemm/hgemm.sm_86.cubin");
-    load_or_die(&mod_flash, "../../phase3/flash_attention/flash_br16.sm_86.cubin");
-    load_or_die(&mod_fused, "../../phase3/flash_attention/flash_fused.sm_86.cubin");
-    load_or_die(&mod_utils, "utils.sm_86.cubin");
+    size_t fsmem = 2 * 64 * 64 * 2 + 64 * 64 * 4 + 64 * 64 * 4;
+    CHECK_CU(cuFuncSetAttribute(fn_fl, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)fsmem));
+    CHECK_CU(cuFuncSetAttribute(fn_fu, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)fsmem));
 
-    CHECK_CU(cuModuleGetFunction(&fn_layernorm,    mod_ln,    "layernorm_block"));
-    CHECK_CU(cuModuleGetFunction(&fn_hgemm,        mod_hgemm, "hgemm_wmma"));
-    CHECK_CU(cuModuleGetFunction(&fn_flash,        mod_flash, "flash_attn_br16"));
-    CHECK_CU(cuModuleGetFunction(&fn_flash_fused,  mod_fused, "flash_attn_fused"));
-    CHECK_CU(cuModuleGetFunction(&fn_f2h,          mod_utils, "fp32_to_fp16"));
-    CHECK_CU(cuModuleGetFunction(&fn_h2f,          mod_utils, "fp16_to_fp32"));
-    CHECK_CU(cuModuleGetFunction(&fn_tr_bshd,      mod_utils, "transpose_bshd"));
-    CHECK_CU(cuModuleGetFunction(&fn_tr_bhsd,      mod_utils, "transpose_bhsd"));
-    CHECK_CU(cuModuleGetFunction(&fn_residual,     mod_utils, "residual_add"));
+    // Host data
+    auto h_X  = driver.host_alloc<float>(bsd);
+    auto h_g  = driver.host_alloc<float>(D);
+    auto h_b  = driver.host_alloc<float>(D);
+    auto h_Wq = driver.host_alloc<float>(dd);
+    auto h_Wk = driver.host_alloc<float>(dd);
+    auto h_Wv = driver.host_alloc<float>(dd);
+    auto h_Wo = driver.host_alloc<float>(dd);
+    auto h_r  = driver.host_alloc<float>(bsd);
+    auto h_rf = driver.host_alloc<float>(bsd);
+    fill_random(h_X.get(), bsd, 42);
+    fill_random(h_Wq.get(), dd, 50);
+    fill_random(h_Wk.get(), dd, 51);
+    fill_random(h_Wv.get(), dd, 52);
+    fill_random(h_Wo.get(), dd, 53);
+    for (int i = 0; i < D; i++) { h_g[i] = 1.0f; h_b[i] = 0.0f; }
 
-    // Flash attention smem: both use 48 KB (Q loaded from global, not smem)
-    size_t flash_smem = 2 * 64 * 64 * sizeof(short)      // K+V tiles FP16
-                      + 64 * 64 * sizeof(float)           // smem_work FP32
-                      + 64 * 64 * sizeof(float);          // smem_pv FP32
-    CHECK_CU(cuFuncSetAttribute(fn_flash,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)flash_smem));
-    CHECK_CU(cuFuncSetAttribute(fn_flash_fused,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)flash_smem));
+    auto h_Wqf = driver.host_alloc<unsigned short>(dd);
+    auto h_Wkf = driver.host_alloc<unsigned short>(dd);
+    auto h_Wvf = driver.host_alloc<unsigned short>(dd);
+    auto h_Wof = driver.host_alloc<unsigned short>(dd);
+    f2h_host(h_Wq.get(), h_Wqf.get(), (int)dd);
+    f2h_host(h_Wk.get(), h_Wkf.get(), (int)dd);
+    f2h_host(h_Wv.get(), h_Wvf.get(), (int)dd);
+    f2h_host(h_Wo.get(), h_Wof.get(), (int)dd);
 
-    printf("All cubins loaded. Flash smem: %zu bytes (48 KB, both kernels).\n\n",
-           flash_smem);
-
-    // ---- Allocate host memory ----
-    size_t bsd   = (size_t)BS * D;
-    size_t dd    = (size_t)D * D;
-
-    float *h_X     = (float*)malloc(bsd * sizeof(float));
-    float *h_gamma = (float*)malloc(D * sizeof(float));
-    float *h_beta  = (float*)malloc(D * sizeof(float));
-    float *h_Wq    = (float*)malloc(dd * sizeof(float));
-    float *h_Wk    = (float*)malloc(dd * sizeof(float));
-    float *h_Wv    = (float*)malloc(dd * sizeof(float));
-    float *h_Wout  = (float*)malloc(dd * sizeof(float));
-    float *h_result = (float*)malloc(bsd * sizeof(float));
-    float *h_ref    = (float*)malloc(bsd * sizeof(float));
-
-    fill_random(h_X,    bsd, 42);
-    fill_random(h_Wq,   dd,  50);
-    fill_random(h_Wk,   dd,  51);
-    fill_random(h_Wv,   dd,  52);
-    fill_random(h_Wout, dd,  53);
-    // gamma=1, beta=0 (identity affine — simplifies correctness comparison)
-    for (int i = 0; i < D; i++) { h_gamma[i] = 1.0f; h_beta[i] = 0.0f; }
-
-    // Convert weight matrices to FP16 on host
-    unsigned short *h_Wq_fp16  = (unsigned short*)malloc(dd * sizeof(short));
-    unsigned short *h_Wk_fp16  = (unsigned short*)malloc(dd * sizeof(short));
-    unsigned short *h_Wv_fp16  = (unsigned short*)malloc(dd * sizeof(short));
-    unsigned short *h_Wout_fp16 = (unsigned short*)malloc(dd * sizeof(short));
-    fp32_to_fp16_host(h_Wq,  h_Wq_fp16,  dd);
-    fp32_to_fp16_host(h_Wk,  h_Wk_fp16,  dd);
-    fp32_to_fp16_host(h_Wv,  h_Wv_fp16,  dd);
-    fp32_to_fp16_host(h_Wout, h_Wout_fp16, dd);
-
-    // ---- CPU reference (small configs only) ----
-    bool run_ref = (BS <= 512 && seq <= 256);
-    if (run_ref) {
-        printf("Computing CPU reference...\n");
-        cpu_attention_layer(h_X, h_gamma, h_beta, h_Wq, h_Wk, h_Wv, h_Wout,
-                            h_ref, batch, seq, heads, d_head, epsilon);
-        printf("Done.\n\n");
+    // CPU ref (small sizes)
+    bool run_cpu = (BS <= 512 && seq <= 256);
+    if (run_cpu) {
+        printf("Computing CPU ref... "); fflush(stdout);
+        cpu_layer(h_X.get(), h_g.get(), h_b.get(), h_Wq.get(), h_Wk.get(), h_Wv.get(), h_Wo.get(),
+                  h_r.get(), batch, seq, heads, dh, eps);
+        printf("done.\n\n");
     } else {
-        printf("CPU reference skipped (too large — use batch=1 seq=256 for correctness).\n\n");
+        printf("CPU ref skipped (too large).\n\n");
     }
 
-    // ---- Allocate device memory ----
-    // Persistent: X, weights, gamma, beta, final result
-    CUdeviceptr d_X, d_gamma, d_beta;
-    CUdeviceptr d_Wq, d_Wk, d_Wv, d_Wout;
-    CUdeviceptr d_result;
+    // Device data
+    auto d_X  = driver.device_alloc<float>(bsd);
+    auto d_g  = driver.device_alloc<float>(D);
+    auto d_b  = driver.device_alloc<float>(D);
+    auto d_Wq = driver.device_alloc<unsigned short>(dd);
+    auto d_Wk = driver.device_alloc<unsigned short>(dd);
+    auto d_Wv = driver.device_alloc<unsigned short>(dd);
+    auto d_Wo = driver.device_alloc<unsigned short>(dd);
+    auto d_res = driver.device_alloc<float>(bsd);
+    driver.copy_h2d(d_X, h_X, bsd * sizeof(float));
+    driver.copy_h2d(d_g, h_g, D * sizeof(float));
+    driver.copy_h2d(d_b, h_b, D * sizeof(float));
+    driver.copy_h2d(d_Wq, h_Wqf, dd * 2);
+    driver.copy_h2d(d_Wk, h_Wkf, dd * 2);
+    driver.copy_h2d(d_Wv, h_Wvf, dd * 2);
+    driver.copy_h2d(d_Wo, h_Wof, dd * 2);
 
-    CHECK_CU(cuMemAlloc(&d_X,      bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_gamma,  D * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_beta,   D * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_Wq,     dd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_Wk,     dd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_Wv,     dd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_Wout,   dd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_result, bsd * sizeof(float)));
+    // Intermediates
+    auto d_xn   = driver.device_alloc<float>(bsd);
+    auto d_xnh  = driver.device_alloc<unsigned short>(bsd);
+    auto d_qf   = driver.device_alloc<float>(bsd);
+    auto d_kf   = driver.device_alloc<float>(bsd);
+    auto d_vf   = driver.device_alloc<float>(bsd);
+    auto d_qh   = driver.device_alloc<unsigned short>(bsd);
+    auto d_kh   = driver.device_alloc<unsigned short>(bsd);
+    auto d_vh   = driver.device_alloc<unsigned short>(bsd);
+    auto d_ob   = driver.device_alloc<float>(bsd);
+    auto d_of   = driver.device_alloc<float>(bsd);
+    auto d_ofh  = driver.device_alloc<unsigned short>(bsd);
+    auto d_out  = driver.device_alloc<float>(bsd);
 
-    CHECK_CU(cuMemcpyHtoD(d_X,     h_X,     bsd * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(d_gamma, h_gamma, D * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(d_beta,  h_beta,  D * sizeof(float)));
-    CHECK_CU(cuMemcpyHtoD(d_Wq,    h_Wq_fp16,  dd * sizeof(short)));
-    CHECK_CU(cuMemcpyHtoD(d_Wk,    h_Wk_fp16,  dd * sizeof(short)));
-    CHECK_CU(cuMemcpyHtoD(d_Wv,    h_Wv_fp16,  dd * sizeof(short)));
-    CHECK_CU(cuMemcpyHtoD(d_Wout,  h_Wout_fp16, dd * sizeof(short)));
+    printf("VRAM: ~%.1f MB\n\n", (4*dd*2 + bsd*4*5 + bsd*2*4)/1e6f);
 
-    // Intermediate buffers
-    CUdeviceptr d_xnorm;    // [BS × D] FP32  (layernorm output)
-    CUdeviceptr d_xnorm_h;  // [BS × D] FP16  (converted)
-    CUdeviceptr d_qflat, d_kflat, d_vflat;  // [BS × D] FP32 (HGEMM output)
-    CUdeviceptr d_q_h, d_k_h, d_v_h;        // [B,H,S,D] FP16 (transposed)
-    CUdeviceptr d_o_bhsd;   // [B,H,S,D] FP32  (flash output)
-    CUdeviceptr d_o_flat;   // [BS × D] FP32   (transposed back)
-    CUdeviceptr d_o_flat_h; // [BS × D] FP16   (converted for output proj)
-    CUdeviceptr d_out;      // [BS × D] FP32   (output projection result)
+    int nb = (int)bsd;
+    int ug = ugrid(nb);
+    int hgx = (D + 31) / 32, hgy = (BS + 31) / 32;
+    int fgx = seq / 64;
+    auto trg = (nb + 255) / 256;
 
-    CHECK_CU(cuMemAlloc(&d_xnorm,   bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_xnorm_h, bsd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_qflat,   bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_kflat,   bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_vflat,   bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_q_h,     bsd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_k_h,     bsd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_v_h,     bsd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_o_bhsd,  bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_o_flat,  bsd * sizeof(float)));
-    CHECK_CU(cuMemAlloc(&d_o_flat_h,bsd * sizeof(short)));
-    CHECK_CU(cuMemAlloc(&d_out,     bsd * sizeof(float)));
+    auto pipe_orig = [&]() {
+        void *a_ln[] = { &d_X.ptr, &d_g.ptr, &d_b.ptr, &d_xn.ptr, &BS, &D, &eps };
+        CHECK_CU(cuLaunchKernel(fn_ln, BS, 1, 1, 128, 1, 1, 0, nullptr, a_ln, nullptr));
 
-    // ---- VRAM usage ----
-    size_t vram_weights = 4 * dd * 2;  // 4 weight matrices FP16
-    size_t vram_buffers = (5 * bsd * 4) + (4 * bsd * 2) + (3 * bsd * 4);
-    printf("VRAM: weights=%.1f MB  buffers=%.1f MB  total=%.1f MB\n\n",
-           vram_weights / 1e6, vram_buffers / 1e6, (vram_weights + vram_buffers) / 1e6);
+        void *a_f2h[] = { &d_xn.ptr, &d_xnh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_f2h, nullptr));
 
-    // ---- Helper: launch a utils kernel ----
-    int n_bsd = (int)bsd;
-    int ug = utils_grid(n_bsd);
+        void *aq[] = { &d_xnh.ptr, &d_Wq.ptr, &d_qf.ptr, &BS, &D, &D };
+        void *ak[] = { &d_xnh.ptr, &d_Wk.ptr, &d_kf.ptr, &BS, &D, &D };
+        void *av[] = { &d_xnh.ptr, &d_Wv.ptr, &d_vf.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, aq, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, ak, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, av, nullptr));
 
-    // HGEMM grid
-    int hgemm_gx = (D + 31) / 32;
-    int hgemm_gy = (BS + 31) / 32;
+        // reuse d_ofh as tmp
+        void *a_qa[] = { &d_qf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_qa, nullptr));
+        void *a_trq[] = { &d_ofh.ptr, &d_qh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, a_trq, nullptr));
+        void *a_ka[] = { &d_kf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_ka, nullptr));
+        void *a_trk[] = { &d_ofh.ptr, &d_kh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, a_trk, nullptr));
+        void *a_va[] = { &d_vf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_va, nullptr));
+        void *a_trv[] = { &d_ofh.ptr, &d_vh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, a_trv, nullptr));
 
-    // Flash grid
-    int flash_gx = seq / 64;
+        void *a_fl[] = { &d_qh.ptr, &d_kh.ptr, &d_vh.ptr, &d_ob.ptr, &seq, &heads, &attn_sc };
+        CHECK_CU(cuLaunchKernel(fn_fl, fgx, heads, batch, 128, 1, 1, (unsigned)fsmem, nullptr, a_fl, nullptr));
 
-    // ====================================================================
-    // Run the pipeline
-    // ====================================================================
-    auto run_pipeline = [&]() {
-        // 1. LayerNorm: X → x_norm (FP32)
-        {
-            int num_rows = BS;
-            int row_width = D;
-            void *args[] = { &d_X, &d_gamma, &d_beta, &d_xnorm, &num_rows, &row_width, &epsilon };
-            CHECK_CU(cuLaunchKernel(fn_layernorm,
-                BS, 1, 1,   128, 1, 1,   0, NULL, args, NULL));
-        }
+        void *a_tr[] = { &d_ob.ptr, &d_of.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bhsd, trg, 1, 1, 256, 1, 1, 0, nullptr, a_tr, nullptr));
 
-        // 2. fp32→fp16: x_norm → xnorm_h
-        {
-            void *args[] = { &d_xnorm, &d_xnorm_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
+        void *a_ofh[] = { &d_of.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_ofh, nullptr));
 
-        // 3-5. Q/K/V projections: xnorm_h @ W → flat FP32
-        {
-            void *args_q[] = { &d_xnorm_h, &d_Wq, &d_qflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args_q, NULL));
-            void *args_k[] = { &d_xnorm_h, &d_Wk, &d_kflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args_k, NULL));
-            void *args_v[] = { &d_xnorm_h, &d_Wv, &d_vflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args_v, NULL));
-        }
+        void *a_wo[] = { &d_ofh.ptr, &d_Wo.ptr, &d_out.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, a_wo, nullptr));
 
-        // 6. fp32→fp16 + transpose [B,S,H,D]→[B,H,S,D] for Q,K,V
-        //    HGEMM output is [BS × D] FP32. Viewed as [B, S, H, D_HEAD].
-        //    Flash attention needs [B, H, S, D_HEAD] FP16.
-        //    Step a: fp32→fp16 (elementwise, layout unchanged)
-        //    Step b: transpose_bshd (FP16)
-        {
-            // Temporary FP16 buffer (reuse d_o_flat_h as scratch)
-            CUdeviceptr d_tmp_h = d_o_flat_h;  // safe to reuse, not needed until step 9
-
-            // Q
-            void *f2h_q[] = { &d_qflat, &d_tmp_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, f2h_q, NULL));
-            int tr_grid = (n_bsd + 255) / 256;
-            void *tr_q[] = { &d_tmp_h, &d_q_h, &batch, &seq, &heads, &d_head };
-            CHECK_CU(cuLaunchKernel(fn_tr_bshd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, tr_q, NULL));
-
-            // K
-            void *f2h_k[] = { &d_kflat, &d_tmp_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, f2h_k, NULL));
-            void *tr_k[] = { &d_tmp_h, &d_k_h, &batch, &seq, &heads, &d_head };
-            CHECK_CU(cuLaunchKernel(fn_tr_bshd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, tr_k, NULL));
-
-            // V
-            void *f2h_v[] = { &d_vflat, &d_tmp_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, f2h_v, NULL));
-            void *tr_v[] = { &d_tmp_h, &d_v_h, &batch, &seq, &heads, &d_head };
-            CHECK_CU(cuLaunchKernel(fn_tr_bshd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, tr_v, NULL));
-        }
-
-        // 7. Flash Attention: Q,K,V [B,H,S,D] FP16 → O [B,H,S,D] FP32
-        {
-            void *args[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_bhsd, &seq, &heads, &attn_scale };
-            CHECK_CU(cuLaunchKernel(fn_flash,
-                flash_gx, heads, batch,   128, 1, 1,
-                (unsigned)flash_smem, NULL, args, NULL));
-        }
-
-        // 8. transpose_bhsd: O [B,H,S,D] FP32 → [B,S,H,D] = [BS × D] FP32
-        {
-            int tr_grid = (n_bsd + 255) / 256;
-            void *args[] = { &d_o_bhsd, &d_o_flat, &batch, &seq, &heads, &d_head };
-            CHECK_CU(cuLaunchKernel(fn_tr_bhsd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
-
-        // 9. fp32→fp16: O_flat → O_flat_h
-        {
-            void *args[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
-
-        // 10. Output projection: O_flat_h @ W_out → Out [BS × D] FP32
-        {
-            void *args[] = { &d_o_flat_h, &d_Wout, &d_out, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args, NULL));
-        }
-
-        // 11. Residual add: result = Out + X
-        {
-            void *args[] = { &d_out, &d_X, &d_result, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_residual, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
+        void *a_rs[] = { &d_out.ptr, &d_X.ptr, &d_res.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_res, ug, 1, 1, 256, 1, 1, 0, nullptr, a_rs, nullptr));
     };
 
-    // ====================================================================
-    // Fused pipeline: eliminates all transposes.
-    //   QKV HGEMM outputs [BS×D] FP32 = [B,S,H,D] naturally.
-    //   fp32→fp16 converts without layout change.
-    //   flash_attn_fused reads FP16 [B,S,H,D] directly (stride = d_model).
-    //   Output: FP32 [B,S,H,D] = [BS×D], ready for fp32→fp16 + HGEMM.
-    //
-    // Pipeline: LN → f2h → 3×HGEMM → 3×f2h → Flash(BSHD) → f2h → HGEMM → res_add
-    // vs original: LN → f2h → 3×HGEMM → 3×(f2h+tr) → Flash(BHSD) → tr → f2h → HGEMM → res_add
-    //
-    // Reuses d_q_h/d_k_h/d_v_h as FP16 [BS×D] = [B,S,H,D] (no transpose needed).
-    // ====================================================================
-    auto run_pipeline_fused = [&]() {
-        // 1. LayerNorm
-        {
-            int num_rows = BS; int row_width = D;
-            void *args[] = { &d_X, &d_gamma, &d_beta, &d_xnorm, &num_rows, &row_width, &epsilon };
-            CHECK_CU(cuLaunchKernel(fn_layernorm,
-                BS, 1, 1,   128, 1, 1,   0, NULL, args, NULL));
-        }
-        // 2. fp32→fp16 (x_norm)
-        {
-            void *args[] = { &d_xnorm, &d_xnorm_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
-        // 3-5. QKV projections → FP32 [BS×D]
-        {
-            void *aq[] = { &d_xnorm_h, &d_Wq, &d_qflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, aq, NULL));
-            void *ak[] = { &d_xnorm_h, &d_Wk, &d_kflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, ak, NULL));
-            void *av[] = { &d_xnorm_h, &d_Wv, &d_vflat, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, av, NULL));
-        }
-        // 6. fp32→fp16 for Q,K,V (no transpose — BSHD stays BSHD)
-        {
-            void *fq[] = { &d_qflat, &d_q_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fq, NULL));
-            void *fk[] = { &d_kflat, &d_k_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fk, NULL));
-            void *fv[] = { &d_vflat, &d_v_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fv, NULL));
-        }
-        // 7. Flash Attention (BSHD): FP16 [B,S,H,D] → FP32 [B,S,H,D]
-        {
-            void *args[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_flat,
-                             &seq, &heads, &attn_scale };
-            CHECK_CU(cuLaunchKernel(fn_flash_fused,
-                flash_gx, heads, batch,   128, 1, 1,
-                (unsigned)flash_smem, NULL, args, NULL));
-        }
-        // 8. fp32→fp16: O_flat → O_flat_h
-        {
-            void *args[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
-        // 9. Output projection
-        {
-            void *args[] = { &d_o_flat_h, &d_Wout, &d_out, &BS, &D, &D };
-            CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, args, NULL));
-        }
-        // 10. Residual add
-        {
-            void *args[] = { &d_out, &d_X, &d_result, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_residual, ug, 1, 1, 256, 1, 1, 0, NULL, args, NULL));
-        }
+    auto pipe_fused = [&]() {
+        void *a_ln[] = { &d_X.ptr, &d_g.ptr, &d_b.ptr, &d_xn.ptr, &BS, &D, &eps };
+        CHECK_CU(cuLaunchKernel(fn_ln, BS, 1, 1, 128, 1, 1, 0, nullptr, a_ln, nullptr));
+
+        void *a_f[] = { &d_xn.ptr, &d_xnh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_f, nullptr));
+
+        void *aq[] = { &d_xnh.ptr, &d_Wq.ptr, &d_qf.ptr, &BS, &D, &D };
+        void *ak[] = { &d_xnh.ptr, &d_Wk.ptr, &d_kf.ptr, &BS, &D, &D };
+        void *av[] = { &d_xnh.ptr, &d_Wv.ptr, &d_vf.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, aq, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, ak, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, av, nullptr));
+
+        void *a_fq[] = { &d_qf.ptr, &d_qh.ptr, &nb };
+        void *a_fk[] = { &d_kf.ptr, &d_kh.ptr, &nb };
+        void *a_fv[] = { &d_vf.ptr, &d_vh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_fq, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_fk, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_fv, nullptr));
+
+        void *a_fu[] = { &d_qh.ptr, &d_kh.ptr, &d_vh.ptr, &d_of.ptr, &seq, &heads, &attn_sc };
+        CHECK_CU(cuLaunchKernel(fn_fu, fgx, heads, batch, 128, 1, 1, (unsigned)fsmem, nullptr, a_fu, nullptr));
+
+        void *a_ofh[] = { &d_of.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a_ofh, nullptr));
+
+        void *a_wo[] = { &d_ofh.ptr, &d_Wo.ptr, &d_out.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, a_wo, nullptr));
+
+        void *a_rs[] = { &d_out.ptr, &d_X.ptr, &d_res.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_res, ug, 1, 1, 256, 1, 1, 0, nullptr, a_rs, nullptr));
     };
 
-    // ---- Correctness check ----
-    if (run_ref) {
-        run_pipeline();
+    // Correctness
+    if (run_cpu) {
+        pipe_orig();
         CHECK_CU(cuCtxSynchronize());
-        CHECK_CU(cuMemcpyDtoH(h_result, d_result, bsd * sizeof(float)));
+        auto h_out = driver.host_alloc<float>(bsd);
+        driver.copy_d2h(h_out, d_res, bsd * sizeof(float));
+        auto r = check_fp32(h_out.get(), h_r.get(), bsd, 0.5f, 0.5f);
+        print_check_result("original pipeline", r);
 
-        printf("Correctness (GPU pipeline vs CPU reference):\n");
-        auto r = check_fp32(h_result, h_ref, bsd, 0.5f, 0.5f);
-        print_check_result("original pipeline (11 steps)", r);
-
-        // Fused pipeline correctness
-        run_pipeline_fused();
+        pipe_fused();
         CHECK_CU(cuCtxSynchronize());
-        CHECK_CU(cuMemcpyDtoH(h_result, d_result, bsd * sizeof(float)));
-        auto rf = check_fp32(h_result, h_ref, bsd, 0.5f, 0.5f);
-        print_check_result("fused pipeline    (7 steps) ", rf);
-        printf("  Note: FP16 projections + online softmax accumulation → loose tolerance\n\n");
+        driver.copy_d2h(h_out, d_res, bsd * sizeof(float));
+        auto rf = check_fp32(h_out.get(), h_r.get(), bsd, 0.5f, 0.5f);
+        print_check_result("fused pipeline", rf);
+        printf("  FP16 accumulation → loose tolerance expected\n\n");
     }
 
-    // ---- Performance benchmark ----
-    int warmup = 5, bench_n = 20;
-    printf("Performance (avg of %d runs, %d warmup):\n\n", bench_n, warmup);
+    // Perf
+    int wu = 5, bn = 20;
+    printf("Performance (avg of %d runs, %d warmup):\n\n", bn, wu);
 
-    // Warmup
-    for (int i = 0; i < warmup; i++) run_pipeline();
+    for (int i = 0; i < wu; i++) pipe_orig();
     CHECK_CU(cuCtxSynchronize());
-
-    // Total pipeline timing: original
-    float total_ms;
-    {
-        BenchTimer timer;
-        timer.start();
-        for (int i = 0; i < bench_n; i++) run_pipeline();
-        total_ms = timer.stop_ms() / bench_n;
-    }
-
-    // Total pipeline timing: fused
-    for (int i = 0; i < warmup; i++) run_pipeline_fused();
+    BenchTimer t1; t1.start();
+    for (int i = 0; i < bn; i++) pipe_orig();
     CHECK_CU(cuCtxSynchronize());
-    float fused_total_ms;
-    {
-        BenchTimer timer;
-        timer.start();
-        for (int i = 0; i < bench_n; i++) run_pipeline_fused();
-        fused_total_ms = timer.stop_ms() / bench_n;
-    }
+    float ms_o = t1.stop_ms() / bn;
 
-    // Per-stage timing
-    auto time_stage = [&](const char *label, auto stage_fn) {
-        for (int i = 0; i < warmup; i++) stage_fn();
+    for (int i = 0; i < wu; i++) pipe_fused();
+    CHECK_CU(cuCtxSynchronize());
+    BenchTimer t2; t2.start();
+    for (int i = 0; i < bn; i++) pipe_fused();
+    CHECK_CU(cuCtxSynchronize());
+    float ms_f = t2.stop_ms() / bn;
+
+    printf("  ORIGINAL (11 steps)       %7.3f ms  (100%%)\n", ms_o);
+    printf("  FUSED (no transpose)      %7.3f ms  (%+.1f%%)\n\n",
+           ms_f, 100.0f * (ms_f - ms_o) / ms_o);
+
+    // Stage timing helper
+    auto time_stage = [&](const char* name, auto fn) {
+        for (int i = 0; i < wu; i++) fn();
         CHECK_CU(cuCtxSynchronize());
-        float ms;
-        {
-            BenchTimer t;
-            t.start();
-            for (int i = 0; i < bench_n; i++) stage_fn();
-            ms = t.stop_ms() / bench_n;
-        }
-        printf("  %-30s %7.3f ms  (%4.1f%%)\n", label, ms, 100.0 * ms / total_ms);
+        BenchTimer t; t.start();
+        for (int i = 0; i < bn; i++) fn();
+        CHECK_CU(cuCtxSynchronize());
+        float ms = t.stop_ms() / bn;
+        printf("  %-28s %6.3f ms  (%4.1f%%)\n", name, ms, 100.0f * ms / ms_o);
         return ms;
     };
 
-    printf("  %-30s %7.3f ms  (100%%)\n", "ORIGINAL PIPELINE (11 steps)", total_ms);
-    printf("  %-30s %7.3f ms  (%+.1f%%)\n\n",
-           "FUSED PIPELINE    (no transpose)",
-           fused_total_ms,
-           100.0 * (fused_total_ms - total_ms) / total_ms);
-
+    // Original stages
     time_stage("LayerNorm", [&]() {
-        int num_rows = BS, row_width = D;
-        void *a[] = { &d_X, &d_gamma, &d_beta, &d_xnorm, &num_rows, &row_width, &epsilon };
-        CHECK_CU(cuLaunchKernel(fn_layernorm, BS, 1, 1, 128, 1, 1, 0, NULL, a, NULL));
+        void *a[] = { &d_X.ptr, &d_g.ptr, &d_b.ptr, &d_xn.ptr, &BS, &D, &eps };
+        CHECK_CU(cuLaunchKernel(fn_ln, BS, 1, 1, 128, 1, 1, 0, nullptr, a, nullptr));
     });
-
-    time_stage("fp32→fp16 (X_norm)", [&]() {
-        void *a[] = { &d_xnorm, &d_xnorm_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, a, NULL));
+    time_stage("f2h (x_norm)", [&]() {
+        void *a[] = { &d_xn.ptr, &d_xnh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a, nullptr));
     });
-
-    time_stage("3× HGEMM (Q,K,V proj)", [&]() {
-        void *aq[] = { &d_xnorm_h, &d_Wq, &d_qflat, &BS, &D, &D };
-        void *ak[] = { &d_xnorm_h, &d_Wk, &d_kflat, &BS, &D, &D };
-        void *av[] = { &d_xnorm_h, &d_Wv, &d_vflat, &BS, &D, &D };
-        CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, aq, NULL));
-        CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, ak, NULL));
-        CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, av, NULL));
+    time_stage("3x HGEMM QKV", [&]() {
+        void *aq[] = { &d_xnh.ptr, &d_Wq.ptr, &d_qf.ptr, &BS, &D, &D };
+        void *ak[] = { &d_xnh.ptr, &d_Wk.ptr, &d_kf.ptr, &BS, &D, &D };
+        void *av[] = { &d_xnh.ptr, &d_Wv.ptr, &d_vf.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, aq, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, ak, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, av, nullptr));
     });
-
-    time_stage("fp32→fp16 + transpose Q,K,V", [&]() {
-        CUdeviceptr d_tmp_h = d_o_flat_h;
-        int tr_grid = (n_bsd + 255) / 256;
-        for (int i = 0; i < 3; i++) {
-            CUdeviceptr src = (i == 0) ? d_qflat : (i == 1) ? d_kflat : d_vflat;
-            CUdeviceptr dst = (i == 0) ? d_q_h   : (i == 1) ? d_k_h   : d_v_h;
-            void *f[] = { &src, &d_tmp_h, &n_bsd };
-            CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, f, NULL));
-            void *t[] = { &d_tmp_h, &dst, &batch, &seq, &heads, &d_head };
-            CHECK_CU(cuLaunchKernel(fn_tr_bshd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, t, NULL));
-        }
+    time_stage("f2h + transpose Q,K,V", [&]() {
+        void *qf[] = { &d_qf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, qf, nullptr));
+        void *tq[] = { &d_ofh.ptr, &d_qh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, tq, nullptr));
+        void *kf[] = { &d_kf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, kf, nullptr));
+        void *tk[] = { &d_ofh.ptr, &d_kh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, tk, nullptr));
+        void *vf[] = { &d_vf.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, vf, nullptr));
+        void *tv[] = { &d_ofh.ptr, &d_vh.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bshd, trg, 1, 1, 256, 1, 1, 0, nullptr, tv, nullptr));
     });
-
     time_stage("Flash Attention", [&]() {
-        void *a[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_bhsd, &seq, &heads, &attn_scale };
-        CHECK_CU(cuLaunchKernel(fn_flash, flash_gx, heads, batch, 128, 1, 1,
-                 (unsigned)flash_smem, NULL, a, NULL));
+        void *a[] = { &d_qh.ptr, &d_kh.ptr, &d_vh.ptr, &d_ob.ptr, &seq, &heads, &attn_sc };
+        CHECK_CU(cuLaunchKernel(fn_fl, fgx, heads, batch, 128, 1, 1, (unsigned)fsmem, nullptr, a, nullptr));
     });
-
-    time_stage("transpose O + fp32→fp16", [&]() {
-        int tr_grid = (n_bsd + 255) / 256;
-        void *t[] = { &d_o_bhsd, &d_o_flat, &batch, &seq, &heads, &d_head };
-        CHECK_CU(cuLaunchKernel(fn_tr_bhsd, tr_grid, 1, 1, 256, 1, 1, 0, NULL, t, NULL));
-        void *f[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, f, NULL));
+    time_stage("transpose + f2h O", [&]() {
+        void *a[] = { &d_ob.ptr, &d_of.ptr, &batch, &seq, &heads, &dh };
+        CHECK_CU(cuLaunchKernel(fn_tr_bhsd, trg, 1, 1, 256, 1, 1, 0, nullptr, a, nullptr));
+        void *b[] = { &d_of.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, b, nullptr));
     });
-
-    time_stage("HGEMM (output proj)", [&]() {
-        void *a[] = { &d_o_flat_h, &d_Wout, &d_out, &BS, &D, &D };
-        CHECK_CU(cuLaunchKernel(fn_hgemm, hgemm_gx, hgemm_gy, 1, 64, 2, 1, 0, NULL, a, NULL));
+    time_stage("HGEMM output proj", [&]() {
+        void *a[] = { &d_ofh.ptr, &d_Wo.ptr, &d_out.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, a, nullptr));
     });
-
     time_stage("Residual add", [&]() {
-        void *a[] = { &d_out, &d_X, &d_result, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_residual, ug, 1, 1, 256, 1, 1, 0, NULL, a, NULL));
+        void *a[] = { &d_out.ptr, &d_X.ptr, &d_res.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_res, ug, 1, 1, 256, 1, 1, 0, nullptr, a, nullptr));
+    });
+    printf("\n  Fused pipeline stages:\n");
+    time_stage("fused: 3x f2h Q,K,V", [&]() {
+        void *fq[] = { &d_qf.ptr, &d_qh.ptr, &nb };
+        void *fk[] = { &d_kf.ptr, &d_kh.ptr, &nb };
+        void *fv[] = { &d_vf.ptr, &d_vh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, fq, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, fk, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, fv, nullptr));
+    });
+    time_stage("fused: Flash BSHD", [&]() {
+        void *a[] = { &d_qh.ptr, &d_kh.ptr, &d_vh.ptr, &d_of.ptr, &seq, &heads, &attn_sc };
+        CHECK_CU(cuLaunchKernel(fn_fu, fgx, heads, batch, 128, 1, 1, (unsigned)fsmem, nullptr, a, nullptr));
+    });
+    time_stage("fused: f2h O", [&]() {
+        void *a[] = { &d_of.ptr, &d_ofh.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, nullptr, a, nullptr));
+    });
+    time_stage("fused: HGEMM out", [&]() {
+        void *a[] = { &d_ofh.ptr, &d_Wo.ptr, &d_out.ptr, &BS, &D, &D };
+        CHECK_CU(cuLaunchKernel(fn_hg, hgx, hgy, 1, 64, 2, 1, 0, nullptr, a, nullptr));
+    });
+    time_stage("fused: Residual", [&]() {
+        void *a[] = { &d_out.ptr, &d_X.ptr, &d_res.ptr, &nb };
+        CHECK_CU(cuLaunchKernel(fn_res, ug, 1, 1, 256, 1, 1, 0, nullptr, a, nullptr));
     });
 
-    printf("\n  --- Fused pipeline stages (no transposes) ---\n\n");
-
-    time_stage("(fused) 3× fp32→fp16 Q,K,V", [&]() {
-        void *fq[] = { &d_qflat, &d_q_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fq, NULL));
-        void *fk[] = { &d_kflat, &d_k_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fk, NULL));
-        void *fv[] = { &d_vflat, &d_v_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, fv, NULL));
-    });
-
-    time_stage("(fused) Flash Attention BSHD", [&]() {
-        void *a[] = { &d_q_h, &d_k_h, &d_v_h, &d_o_flat,
-                      &seq, &heads, &attn_scale };
-        CHECK_CU(cuLaunchKernel(fn_flash_fused, flash_gx, heads, batch, 128, 1, 1,
-                 (unsigned)flash_smem, NULL, a, NULL));
-    });
-
-    time_stage("(fused) fp32→fp16 (O)", [&]() {
-        void *a[] = { &d_o_flat, &d_o_flat_h, &n_bsd };
-        CHECK_CU(cuLaunchKernel(fn_f2h, ug, 1, 1, 256, 1, 1, 0, NULL, a, NULL));
-    });
-
-    printf("\n  Sum of stages may exceed total (per-stage warmup re-caches data).\n");
-    printf("  Total pipeline time is the authoritative measurement.\n");
-
-    // ---- Cleanup ----
-    cuMemFree(d_X); cuMemFree(d_gamma); cuMemFree(d_beta);
-    cuMemFree(d_Wq); cuMemFree(d_Wk); cuMemFree(d_Wv); cuMemFree(d_Wout);
-    cuMemFree(d_result);
-    cuMemFree(d_xnorm); cuMemFree(d_xnorm_h);
-    cuMemFree(d_qflat); cuMemFree(d_kflat); cuMemFree(d_vflat);
-    cuMemFree(d_q_h); cuMemFree(d_k_h); cuMemFree(d_v_h);
-    cuMemFree(d_o_bhsd); cuMemFree(d_o_flat); cuMemFree(d_o_flat_h);
-    cuMemFree(d_out);
-
-    cuModuleUnload(mod_ln); cuModuleUnload(mod_hgemm);
-    cuModuleUnload(mod_flash); cuModuleUnload(mod_fused); cuModuleUnload(mod_utils);
-    cuDevicePrimaryCtxRelease(cu_dev);
-
-    free(h_X); free(h_gamma); free(h_beta);
-    free(h_Wq); free(h_Wk); free(h_Wv); free(h_Wout);
-    free(h_result); free(h_ref);
-    free(h_Wq_fp16); free(h_Wk_fp16); free(h_Wv_fp16); free(h_Wout_fp16);
-
+    cuModuleUnload(mod_ln); cuModuleUnload(mod_hg);
+    cuModuleUnload(mod_fl); cuModuleUnload(mod_fu); cuModuleUnload(mod_ut);
     return 0;
 }
