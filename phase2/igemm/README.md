@@ -23,12 +23,17 @@ INT8 is the inference workhorse: weights and activations quantized to 8-bit, acc
 | Register-blocked 128×128 | 10.8 ms | 12,741 | 1.8% | 1.16× |
 | Pipelined LDG (double-buffer) | 7.6 ms | 18,054 | 2.6% | 1.64× |
 | **Pipelined cp.async (double-buffer)** | **6.6 ms** | **20,688** | **3.0%** | **1.88×** |
+| 8-warp 128×128 (1 blk/SM) | 5.6 ms | 24,533 | 3.5% | 2.21× |
+| 8-warp 128×256 (1 blk/SM) | **5.0 ms** | **27,591** | **4.0%** | **2.49×** |
+| Persistent 128×256 (L2) | 5.0 ms | 27,383 | 4.0% | 2.47× |
 
-FP16 HGEMM reference: 7,853 GFLOPS at 4096³. Pipelined cp.async INT8 is 2.63× faster.
+FP16 HGEMM reference: **31,910 GFLOPS** at 4096³ (hgemm_16warp).
 
 **Why tiled 64×64 beats register-blocked 128×128:** The 128×128 kernel's inner loop has 16 mma_sync calls per K-step (vs 4 for 64×64). This long IMMA chain reduces warp switching frequency. With only 8 warps/SM (4 warps × 2 blocks), the scheduler can't fully hide Tensor Core pipeline latency (S08 stalls). The 64×64 version's shorter inner loop allows faster warp interleaving — same lesson as the Bc=128 Flash Attention experiment.
 
-**Why only 3.0% of INT8 peak?** The tiled kernel without pipelining was fully bandwidth-bound: 2 GB at 608 GB/s = ~3.3 ms floor vs 9.0 ms total. Software pipelining (double-buffered smem) overlaps LDG for tile N+1 with IMMA compute on tile N, reclaiming ~2.4 ms of pipeline bubble. The remaining gap to the 0.2 ms compute minimum is still dominated by DRAM bandwidth — the kernel achieves ~308 GB/s effective bandwidth (51% of 608 GB/s peak).
+**Why only 4.0% of INT8 peak?** The tiled kernel without pipelining was fully bandwidth-bound: 2 GB at 608 GB/s = ~3.3 ms floor vs 9.0 ms total. Software pipelining (double-buffered smem) overlaps LDG for tile N+1 with IMMA compute on tile N, reclaiming ~2.4 ms of pipeline bubble. The 128×256 variant with 1 block/SM (8 warps) achieves the best balance of compute density vs occupancy. The remaining gap to the 0.2 ms compute minimum is still dominated by DRAM bandwidth.
+
+See [`docs/gpu_reflections.md`](../docs/gpu_reflections.md) for the full optimization timeline (Insight 12: "IMMA pipelining is memory-bound until tile size grows", Insight 20: "L2 reuse from persistent grid is negligible").
 
 ## CuAssembler Hand-Tuning (Issue #2)
 
@@ -211,3 +216,24 @@ nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
 cuobjdump -sass igemm.sm_86.cubin | grep IMMA
 cuobjdump -sass igemm.sm_86.cubin | grep I2F
 ```
+
+## Phase 5: Online FP16 → INT8 Quantization & Sparse GEMM
+
+### Online Quantization
+
+Quantizes FP16 inputs on-the-fly inside the kernel:
+
+| Variant | 4096³ Time | GFLOPS | vs Naive HGEMM |
+|---------|-----------|--------|----------------|
+| Online-quant in-place | 8.3 ms | **16,646** | **2.12×** |
+| Bank-conflict-free | 8.05 ms | **17,070** | **2.18×** |
+
+See `phase5/online_quant/` for implementation.
+
+### Sparse INT8 GEMM
+
+| Variant | 2048³ Dense-equiv | 4096³ |
+|---------|-------------------|-------|
+| Sparse INT8 tiled | **39,674 TOPS** | **31,835 TOPS** |
+
+Uses `mma.sp.m16n8k32` with 2:4 sparsity. Metadata preload to smem recovered +24.5% at 4096³. See [`docs/int8_sparse_4096_regression_analysis.md`](../docs/int8_sparse_4096_regression_analysis.md).

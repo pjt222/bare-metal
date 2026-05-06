@@ -15,10 +15,12 @@ The HMMA instruction gives 8× more throughput than FFMA for the same power budg
 | Matrix | GFLOPS | vs FP32 tiled |
 |---|---|---|
 | 512×512×512 | 5,438 | 5.3× |
-| 4096×4096×4096 | 7,853 | 7.6× |
+| 4096×4096×4096 | **31,910** | **41×** |
 
-At 4096³ we get 4.5% of the 174 TFLOPS theoretical peak.
-The gap is closed by: larger tiles, double-buffering, `LDG.E.128` loads — all achievable in SASS.
+At 4096³ the 16-warp (2 blocks/SM) kernel achieves **31,910 GFLOPS** (18.3% of FP16 peak).
+Earlier variants peaked at 7,853 GFLOPS via WMMA API — the gap is closed by:
+larger tiles, double-buffering `LDG.E.128`, and pipelined smem loads.
+See [`docs/gpu_reflections.md`](../docs/gpu_reflections.md) for the full optimization timeline.
 
 ## The Key SASS Instruction
 

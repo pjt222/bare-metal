@@ -70,8 +70,8 @@ Run `python scripts/verify_setup.py` to confirm everything is working.
 
 | Kernel | Highlight | Peak Result |
 |--------|-----------|-------------|
-| Sparse HGEMM 2:4 | `mma.sp` with ldmatrix | 41,930 dense-equiv GFLOPS |
-| Sparse IGEMM 2:4 | INT8 sparse Tensor Cores | 39,745 dense-equiv TOPS at 2048³ |
+| Sparse HGEMM 2:4 | `mma.sp` with ldmatrix | 41,721 dense-equiv GFLOPS |
+| Sparse IGEMM 2:4 | INT8 sparse Tensor Cores | 39,674 dense-equiv TOPS at 2048³ |
 | Online FP16→INT8 | Quantize on-the-fly in kernel | 16,646 GFLOPS (2.1× vs naive HGEMM) |
 | Bank-conflict-free INT8 | Optimized smem epilogue | 17,070 GFLOPS |
 
@@ -84,9 +84,11 @@ Run `python scripts/verify_setup.py` to confirm everything is working.
 |--------|------|-------------|--------|
 | HGEMM 16-warp | 4096³ | **31,910 GFLOPS** | 18.3% |
 | HGEMM sparse 2:4 | 2048³ | **41,930** dense-equiv GFLOPS | — |
+| IGEMM 128×256 (1 blk/SM) | 4096³ | **27,591 TOPS** | 4.0% |
 | IGEMM pipelined cp.async | 4096³ | **20,688 TOPS** | 3.0% |
 | IGEMM 128×256 (1 blk/SM) | 4096³ | **27,591 TOPS** | 4.0% |
-| Online FP16→INT8 quant | 4096³ | **16,646 GFLOPS** | 9.6% |
+| Online FP16→INT8 quant | 4096³ | **17,070 GFLOPS** | 9.6% |
+| Sparse INT8 mma.sp | 2048³ | **39,674 dense-equiv TOPS** | — |
 
 ### Flash Attention
 | Kernel | Config | Time | GFLOPS |

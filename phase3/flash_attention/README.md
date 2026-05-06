@@ -230,3 +230,18 @@ The persistent kernel helps at **moderate-to-large tile counts** (512+), NOT at 
 - **When tiles >> grid (512-1024 tiles, 92 blocks):** +10% improvement. The standard grid's last "wave" underutilizes SMs (e.g., 1024 mod 92 = 12 blocks on 46 SMs). The persistent grid eliminates this tail effect.
 
 The benefit is **tail-wave elimination**, not SM utilization improvement at small batch.
+
+---
+
+## Phase 3c — Br=16 HMMA (Best Result)
+
+The scalar kernels above are succeeded by `flash_attn_br16_regpv.cu`, which uses HMMA.16816.F32 Tensor Cores with Br=16, Bc=64:
+
+| Config | Time | GFLOPS | vs Scalar |
+|--------|------|--------|-----------|
+| seq=1024, batch=8, heads=8 | **2.81 ms** | **6,112** | **18.9×** |
+| seq=1024, batch=8, heads=8 (Bc=128) | 3.37 ms | 5,098 | 15.7× |
+
+SASS: 64 HMMA per block (32 for QK^T + 32 for PV), SHFL.BFLY for online softmax reduction, MUFU.EX2 for attention weights.
+
+Bc=128 crosses the 50 KB smem cliff → 1 block/SM occupancy regression. Bc=64 stays under cliff → 2 blocks/SM optimal. See [`docs/gpu_reflections.md`](../docs/gpu_reflections.md) for full analysis.
