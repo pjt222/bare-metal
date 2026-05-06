@@ -70,7 +70,23 @@ The CuAssembler control code format:
 ```
 See `docs/control_codes.md` for field meanings.
 
-## Before Submitting a PR
+### Benchmark Regression Check
+
+Install the pre-push hook to catch performance regressions before they reach CI:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+This configures a `pre-push` hook that:
+1. Runs `make test` to build and smoke-test benches
+2. Runs `scripts/bench_regress.py` to detect performance regressions against `docs/baselines.json`
+3. Blocks the push if any kernel regresses beyond tolerance
+
+**Bypass** (for WIP or when you know baseline is stale):
+```bash
+git push --no-verify
+```
 
 - [ ] `python3 scripts/verify_setup.py` passes
 - [ ] All new kernels bench correctly against CPU reference

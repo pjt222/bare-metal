@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — Block push if benchmarks regress
+#
+# Install: bash scripts/install-hooks.sh
+# Bypass:  git push --no-verify
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "========================================"
+echo "  bare-metal pre-push hook"
+echo "  (bypass with: git push --no-verify)"
+echo "========================================"
+
+# Only run on the main repo (not externals)
+if [ ! -f "scripts/bench_regress.py" ]; then
+    echo -e "${YELLOW}WARNING: bench_regress.py not found — skipping${NC}"
+    exit 0
+fi
+
+# Attempt to build benchmarks (best-effort; don't block push on build failure)
+echo ""
+echo "--- Building benchmarks (make test) ---"
+if make test 2>/dev/null; then
+    echo -e "${GREEN}Build + smoke tests passed${NC}"
+else
+    echo -e "${YELLOW}WARNING: make test failed or some benches unbuildable."
+    echo "  Regression check will still run on already-built executables.${NC}"
+fi
+
+# Run performance regression checker
+echo ""
+echo "--- Running bench_regress.py ---"
+if python3 scripts/bench_regress.py; then
+    echo ""
+    echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"
+    exit 0
+else
+    echo ""
+    echo -e "${RED}BENCHMARK REGRESSION DETECTED${NC}"
+    echo ""
+    echo "To investigate:"
+    echo "  python3 scripts/bench_regress.py --kernel <kernel_path>"
+    echo "  python3 scripts/bench_regress.py --tolerance 0.20"
+    echo ""
+    echo "To update baselines after legitimate improvements:"
+    echo "  edit docs/baselines.json"
+    echo ""
+    echo "To bypass (for WIP commits):"
+    echo "  git push --no-verify"
+    exit 1
+fi
