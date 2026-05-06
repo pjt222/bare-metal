@@ -1,48 +1,39 @@
 # Continue Here
 
-> Last updated: 2026-05-05  
-> Session: GitHub issues cleanup & kernel optimization  
+> Last updated: 2026-05-06  
+> Session: Bench migration to BenchDriver (12 files this session)  
 > Branch: main | Clean (all changes pushed)
 
 ---
 
 ## What This Session Did
 
-### Issues Closed (8)
+### Bench Migrations to BenchDriver (12 total)
 
-| Issue | Title | Key Result |
-|-------|-------|------------|
-| #55-64 | 10 duplicate issues | Marked duplicate of already-closed #35-44 |
-| #68 | Track hand-tuned binary | `git add igemm_tiled_handtuned.sm_86.cubin` |
-| #33 | Optimize sparse HGEMM >60% dense | Verified 41,721 dense-equiv GFLOPS at 4096³ (131% of dense) |
-| #69 | Benchmark CI pre-push hook | `.githooks/pre-push` + `scripts/install-hooks.sh` |
-| #65 | Metadata preload to smem (INT8) | `smem_meta[2][128]` double-buffered, +24.5% at 4096³ |
-| #44 | README consolidation | Updated all 3 READMEs with validated numbers |
+Original 5 migrated in prior sessions: activations, softmax, layernorm, timestep_emb, sgemm.
 
-### Bugs Fixed Along the Way
+**This session (8 new migrations):**
 
-1. **`phase2/common/bench.h`** — `CHECK_CU` macro was missing closing `}` for `if`-block. Broke ALL compilations. Fixed.
-2. **`phase2/common/bench_driver.h`** — `cuCtxCreate` broken on CUDA 12.8 (redirects to `cuCtxCreate_v4`). Replaced with `cuDevicePrimaryCtxRetain` + `cuCtxSetCurrent`.
-3. **`Makefile`** — `make test` tried to build `bench_refactored.cu` files that lack build rules. Fixed dependency.
-4. **18 bench files** — Batch-fixed CUDA 12.8 context API via `scripts/fix_cuda_context.py`. Files in phase2-5.
+| File | Lines Saved | Correctness | Performance Validated |
+|------|-------------|-------------|----------------------|
+| phase2/hgemm_sparse/bench.cu | 440→230 (-48%) | PASS (fixed + arbitrary) | 41,303 dense-equiv GFLOPS at 4096³ |
+| phase2/igemm/bench_igemm_sparse.cu | 206→87 (-58%) | PASS (max_abs=0.00) | 39,214 dense-equiv at 2048³, 30,986 at 4096³ |
+| phase4/groupnorm/bench.cu | ~370→155 (-58%) | PASS (NHWC + NCHW) | 26.6 GB/s (NHWC), 28.3 GB/s (NCHW) |
+| phase4/cross_attention/bench.cu | ~257→145 (-44%) | PASS (seq=256,skv=77,heads=8) | 705 GFLOPS (0.4% peak) |
+| phase4/resblock/bench.cu | ~385→180 (-53%) | PASS (default config) | 142.8 GFLOPS, ~4 GB/s |
+| phase3/flash_attention/bench.cu | ~298→94 (-68%) | PASS (seq=512,batch=1,heads=1) | 194.3 GFLOPS |
+| phase3/flash_attention/bench_wmma.cu | ~240→115 (-52%) | PASS (v1 scalar + v2 4-warp) | 18.9ms vs 53.1ms at batch=8,heads=8,seq=1024 |
+| phase4/cross_attention/bench_pipelined.cu | ~276→120 (-57%) | PASS (all 5 configs) | +63% at sq=256, -29% at sq=4096 (smem pressure) |
 
-### Bench Migration Progress (#67)
+### Bug Fixes During Migration
 
-| Status | Files |
-|--------|-------|
-| Migrated to BenchDriver (10) | activations, softmax, layernorm, timestep_emb, sgemm, hgemm_sparse, igemm_sparse, groupnorm, cross_attention, **resblock**, bench_wmma |
-| Context-fixed only (15) | igemm/bench, flash_attention/* (except bench_wmma), conv2d/*, resblock, attention_layer |
-| Still unmigrated / complex (15) | hgemm (original, 7 variants), igemm/bench (20+ kernels, 1094 lines), conv2d bench (segfault with BenchDriver — layout mismatch), flash_attention variants (9 files, unique arg parsing), phase4/5 complex benches (resblock, attention_layer) |
+1. **bench.h `CHECK_CU` macro**: missing `}` for `if`-block broke all compilations. Fixed.
+2. **bench_driver.h CUDA 12.8**: `cuCtxCreate` broken (redirects to v4). Replaced with `cuDevicePrimaryCtxRetain` + `cuCtxSetCurrent`.
+3. **18 bench files**: batch-fixed context API via `scripts/fix_cuda_context.py` for CUDA 12.8 compatibility.
 
-### Performance State (Validated)
+### Failed & Reverted
 
-| Kernel | Size | Result |
-|--------|------|--------|
-| HGEMM dense 16-warp | 4096³ | 31,910 GFLOPS |
-| HGEMM sparse tiled | 4096³ | 41,721 dense-equiv GFLOPS |
-| IGEMM dense 128×256 | 4096³ | 27,591 TOPS |
-| IGEMM sparse tiled (after #65) | 2048³ | 39,674 dense-equiv TOPS |
-| IGEMM sparse tiled (after #65) | 4096³ | 31,835 dense-equiv TOPS (-19.8% vs 2048³) |
+- **phase4/conv2d/bench.cu**: segfault when migrated to BenchDriver. Reverted to original (already context-fixed). Root cause: kernel grid dims mismatch with DeviceBuffer pointer arithmetic. Needs investigation — different 3D grid layout may violate kernel assumptions.
 
 ---
 
@@ -51,82 +42,41 @@
 ### Ready to Tackle (Medium Effort)
 
 **#67 — Migrate remaining bench files to BenchDriver**
-- Easiest next targets (simple element-wise/bandwidth kernels): hgemm_sparse/bench, igemm/bench_igemm_sparse
-- Complex ones to skip for now: flash_attention variants (unique arg parsing), phase4 multi-kernel benches
-- `scripts/fix_cuda_context.py` already fixes the context bug on any new file
+- Easiest remaining: flash_attention/bench_br16, bench_br16_regpv (similar to done work)
+- Complex: flash_attention bench_split_q, bench_pipeline (multiple kernels, unique args)
+- Skip for now: igemm/bench.cu (1094 lines, 20+ kernels), conv2d/bench.cu (segfault with BenchDriver)
 
 **#29 — Apply tiled HGEMM techniques to Flash Attention QK^T and PV**
-- Well-scoped: fuse the HGEMM tiling architecture into existing Flash Attention kernels
-- phase3/flash_attention kernels already have FP16 HMMA; the gap is tiling efficiency
+- Gap identified: hgemm_16warp uses 16-warps, cp.async double-buffer, 128×128 tiles, bank-pad
+- flash_attn_br16_regpv uses 4-warps (128 threads), no cp.async, Br=16 small tiles
+- Key insight: 4× fewer warps → 4× less instruction-level parallelism. Bc=64 means fewer KV tiles reused.
+- Would require kernel rewrite: not a bench-level optimization.
 
 ### Needs Planning (High Effort)
 
 **#66 — Replace scalar B-pack with LDSM for sparse INT8 GEMM**
-- ANALYZED but NOT IMPLEMENTED. Correctness verified, SASS inspected.
-- **Root cause:** `mma.sp.m16n8k32` B operand needs same N-column across K-rows (col-major). `ldmatrix.m8n8.x2` distributes adjacent N-cols per thread (row-major). Layouts are orthogonal.
-- **Fixes explored:**
-  1. cp.async scatter to N-major smem (per-thread scatter during global→smem)
-  2. Post-load cooperative transpose (512 threads, 8 KB, per-tile)
-  3. Custom swizzle layout for smem_B
-- all require restructuring `phase2/igemm/igemm_sparse_tiled.cu` beyond quick fix
-- Current workaround: metadata preload (#65) recovered +24.5%. Remaining 19.8% gap = B-fragment overhead.
+- Analyzed but not implemented. Current: 160 PRMT per block. Target: ≤112 (≥30% reduction).
+- Root cause: `mma.sp` B operand needs col-major K-rows. `ldmatrix.m8n8.x2` distributes row-major N-cols.
+- Fix requires smem transpose or N-major layout. Buffers: smem would need 31→~50 KB (risk of smem cliff).
 
 ### Exploration / Low Priority
 
-- **#32** — Polyhedral spring networks (research, no deadline)
-- **#18** — 128×256 tiles for online-quant (register pressure investigation)
-- **#17** — smem padding for ldmatrix bank conflicts (no observed conflicts)
-- **#14** — Tutorial series (write last)
-- **#7** — 2:4 sparsity with IMMA (substantially done via #65, #66 is fine-tuning)
+- **#32** — Polyhedral spring networks
+- **#18** — 128×256 tiles for online-quant (register pressure)
+- **#17** — smem padding for ldmatrix bank conflicts
+- **#14** — Tutorial series
+- **#7** — 2:4 sparsity with IMMA (done via #65, #66 is fine-tuning)
 - **#4** — Fuse GroupNorm into Conv2d epilogue
 
 ---
 
-## Critical Files & Commands
+## Bench Migration Status
 
-### Rebuild any kernel
-```bash
-cd phaseN/<kernel_dir>
-nvcc --cubin -arch=sm_86 -O2 -o kernel.sm_86.cubin kernel.cu
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common  # phase2
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common  # phase3-5
-```
-
-### Fix CUDA 12.8 context on new bench file
-```bash
-python3 scripts/fix_cuda_context.py   # auto-detects and patches all bench*.cu
-```
-
-### Pre-push hook
-```bash
-bash scripts/install-hooks.sh   # one-time install
-git push --no-verify            # bypass when needed
-```
-
-### Key docs
-- `docs/gpu_reflections.md` — 24 empirical hardware insights, contains all benchmark numbers
-- `docs/int8_sparse_4096_regression_analysis.md` — #65/#66 context, L2 thrashing root cause
-- `CLAUDE.md` — project constraints (never modify system CUDA, 50 KB smem cliff, etc.)
-
----
-
-## Known Gotchas
-
-1. **`make test`**: only builds PHASE2_BENCH. Phase3-5 benches have unique build rules that `make` may not catch. Build individually.
-2. **`bench_refactored.cu` files**: exist as pilots but DON'T swap them in blindly — `hgemm/bench_refactored.cu` had `hgemm_16warp` FAIL bug (grid config mismatch). Migrate carefully.
-3. **`cuCtxCreate` on CUDA 12.8**: silently breaks. Always use `cuDevicePrimaryCtxRetain` + `cuCtxSetCurrent`.
-4. **SMEM cliff**: GA104 limit is 50 KB/block for 2 blocks/SM. `igemm_sparse_tiled` uses 31 KB (12+18+1). Any increase needs careful accounting.
-5. **S08 stalls**: between consecutive HMMA/HMMA.SP from same warp are HARDWARE-FIXED (8 cycles). Not optimizable via CuAssembler reordering.
-
----
-
-## Recommended Next Session
-
-1. **Warmup**: run `python3 scripts/verify_setup.py` (checks CUDA, nvcc, GPU, CuAssembler)
-2. **Pick one medium issue**:
-   - **#67**: migrate hgemm_sparse/bench.cu or igemm/bench_igemm_sparse.cu to BenchDriver
-   - **#29**: read `phase3/flash_attention/flash_attn_br16_regpv.cu`, identify tiling gaps vs hgemm_16warp
-3. **Use `/breathe`, `/rest`, `/meditate` between tasks** as instructed
+| Category | Count | Files |
+|----------|-------|-------|
+| **Migrated to BenchDriver** | 13 | activations, softmax, layernorm, timestep_emb, sgemm, hgemm_sparse, igemm_sparse, groupnorm, cross_attention, resblock, flash_attention bench, flash_attention bench_wmma, cross_attention bench_pipelined |
+| **Context-fixed only** | 12 | igemm/bench, flash_attention bench_br16/br16_regpv/fused/persistent/pipeline/split_q/bc128, conv2d bench_im2col/bench_implicit_gemm, attention_layer |
+| **Unmigrated / complex** | 10 | hgemm (original, 7 variants), igemm/bench (1094 lines), conv2d bench (segfault with BenchDriver), phase5/attention_layer/bench.cu (698 lines, many cubins) |
 
 ---
 
@@ -141,6 +91,21 @@ All PASS at tolerance below on last run:
 | layernorm | 65536×32 | 1e-4 | 1e-3 | PASS |
 | timestep_emb | 512×1024 | 5e-4 | 5e-4 | PASS |
 | sgemm | 512³ | 1e-3 | 1e-3 | PASS |
-| hgemm (all 7 variants) | 512³ | 1e-1 | 1e-1 | PASS |
 | hgemm_sparse (fixed + arbitrary) | 4096³ | 1e-1 | 1e-1 | PASS |
 | igemm_sparse_tiled (after #65) | 256³, 2048³, 4096³ | 0.5 | 0.1 | PASS (max_abs=0.00) |
+| groupnorm | 4×32×64×64, G=8 | 1e-5 | 1e-4 | PASS |
+| cross_attention | seq=256,skv=77,heads=8 | 1e-2 | 1.0 | PASS |
+| cross_attention pipelined | 5 configs (SD 8×8 to long ctx) | 1e-2 | 1.0 | PASS |
+| resblock | N=1,C=64,H=32,W=32,G=8 | 1e-2×√C | 0.1 | PASS |
+| flash_attention | seq=512,batch=1,heads=1 | 1e-3 | 1e-3 | PASS |
+| flash_attention wmma | seq=1024,batch=8,heads=8 | 1e-3 | 1e-1 | PASS |
+
+---
+
+## Recommended Next Session
+
+1. **Warmup**: run `python3 scripts/verify_setup.py`
+2. **Pick one medium issue**:
+   - **#67**: migrate `flash_attention/bench_br16.cu` to BenchDriver (similar to bench_wmma)
+   - **#67**: migrate `flash_attention/bench_br16_regpv.cu` (best result kernel, high value)
+3. **Use `/breathe`, `/rest`, `/meditate` between tasks** as instructed
