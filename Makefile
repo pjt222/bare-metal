@@ -21,7 +21,7 @@ PYTHON      := python3
 # Find all source files
 # ------------------------------------------------------------------
 KERNEL_CU   := $(shell find . -path ./tools -prune -o -name '*.cu' -print | grep -v 'bench' | grep -v 'host' | grep -v '^./tests')
-BENCH_CU    := $(shell find . -path ./tools -prune -o -name 'bench*.cu' -print)
+BENCH_CU    := $(shell find . -path ./tools -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention -name 'bench_*.cu' -print) $(shell find phase4 -name 'bench_*.cu' -print)
 
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
@@ -94,7 +94,7 @@ phase5: $(shell find phase5 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM
 # ------------------------------------------------------------------
 # Testing
 # ------------------------------------------------------------------
-test: benches
+test: $(PHASE2_BENCH)
 	@echo "=== Running smoke tests ==="
 	@for exe in $(PHASE2_BENCH); do \
 		if [ -f "$$exe" ]; then \
