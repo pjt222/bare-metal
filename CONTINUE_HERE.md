@@ -30,9 +30,9 @@
 
 | Status | Files |
 |--------|-------|
-| Migrated to BenchDriver (5) | activations, softmax, layernorm, timestep_emb, sgemm |
-| Context-fixed only (18) | igemm/bench, flash_attention/*, conv2d/*, cross_attention/*, groupnorm, resblock, attention_layer |
-| Still broken/unmigrated (19) | hgemm (kept original, 7 variants), hgemm_sparse (complex pattern), igemm/bench_igemm_sparse, flash_attention bench variants with unique args, phase4/5 complex multi-kernel benches |
+| Migrated to BenchDriver (10) | activations, softmax, layernorm, timestep_emb, sgemm, hgemm_sparse, igemm_sparse, groupnorm, cross_attention, **resblock**, bench_wmma |
+| Context-fixed only (15) | igemm/bench, flash_attention/* (except bench_wmma), conv2d/*, resblock, attention_layer |
+| Still unmigrated / complex (15) | hgemm (original, 7 variants), igemm/bench (20+ kernels, 1094 lines), conv2d bench (segfault with BenchDriver — layout mismatch), flash_attention variants (9 files, unique arg parsing), phase4/5 complex benches (resblock, attention_layer) |
 
 ### Performance State (Validated)
 
