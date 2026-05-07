@@ -377,3 +377,62 @@ ggsave(file.path(OUT, "phase_progression.png"), p5,
 cat("[fig] wrote phase_progression.png\n")
 
 cat("\n[fig] all figures written to ", OUT, "/\n", sep = "")
+
+# ---- 6. Gap to SOTA --------------------------------------------------------
+
+gap <- data.frame(
+  kernel = c(
+    "HGEMM 4096^3",
+    "Sparse HGEMM 2:4",
+    "IGEMM 4096^3",
+    "Sparse INT8",
+    "Flash Attn (small seq)",
+    "Conv2d implicit",
+    "GroupNorm SD"
+  ),
+  ours_pct  = c(18.3, 24.0,  7.9, 11.4,  6.6,  3.8,  8.2),
+  sota_pct  = c(80.0, 75.0, 62.5, 55.0, 51.5, 65.0, 73.5),
+  precision = c("FP16 TC", "FP16 TC sparse", "INT8 TC", "INT8 TC sparse",
+                "FP16 TC", "FP16 TC", "DRAM BW")
+)
+gap$gap_factor <- gap$sota_pct / gap$ours_pct
+gap_long <- rbind(
+  data.frame(kernel = gap$kernel, pct = gap$ours_pct,
+             which = "this project (measured)", precision = gap$precision),
+  data.frame(kernel = gap$kernel, pct = gap$sota_pct,
+             which = "SOTA estimate (cuBLAS / cuDNN / FA-2)", precision = gap$precision)
+)
+gap_long$kernel <- factor(gap_long$kernel, levels = rev(gap$kernel))
+gap_long$which  <- factor(gap_long$which,
+                            levels = c("this project (measured)",
+                                       "SOTA estimate (cuBLAS / cuDNN / FA-2)"))
+
+p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(data = gap,
+            aes(x = kernel, y = sota_pct + 4,
+                label = sprintf("%.1fx gap", gap_factor)),
+            inherit.aes = FALSE,
+            hjust = 0, size = 3.0, colour = "grey25", fontface = "italic") +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 105),
+                     expand = expansion(mult = c(0, 0.02)),
+                     labels = function(x) paste0(x, "%")) +
+  scale_fill_manual(values = c(
+    "this project (measured)"               = "#5AD8A6",
+    "SOTA estimate (cuBLAS / cuDNN / FA-2)" = "#5B8FF9"
+  )) +
+  labs(
+    title = "Gap to State of the Art",
+    subtitle = "Percent of hardware peak — this project vs production libraries (RTX 3070 Ti class)",
+    x = NULL, y = "% of precision-class peak",
+    fill = NULL,
+    caption = "SOTA estimates from CUTLASS / FA-2 published numbers scaled to GA104; ±10-15% uncertainty. Gap factors are illustrative."
+  ) +
+  theme_kernel() +
+  theme(legend.position = "bottom",
+        axis.text.y = element_text(size = 9))
+
+ggsave(file.path(OUT, "gap_to_sota.png"), p6,
+       width = 11, height = 5.5, dpi = 130)
+cat("[fig] wrote gap_to_sota.png\n")

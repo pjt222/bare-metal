@@ -111,6 +111,43 @@ Detailed walkthrough in [docs/tutorial/05-flash-attention.md](docs/tutorial/05-f
 
 ---
 
+## How does this compare to the SOTA?
+
+![Gap to state of the art](docs/figures/gap_to_sota.png)
+
+Honest answer: **we are 4-20× slower than NVIDIA's production libraries**
+(cuBLAS, cuDNN, FlashAttention-2 official) depending on kernel. The gap
+is well-characterized:
+
+| Kernel                    | Ours      | SOTA estimate | Gap     |
+|---------------------------|-----------|---------------|---------|
+| HGEMM 4096³                | 18.3% peak | 75-85% peak   | **4-5×** |
+| Sparse HGEMM 2:4 2048³      | 24.0% peak | 70-80% peak   | **3×**   |
+| IGEMM 4096³ INT8 dense      | 7.9% peak  | 60-65% peak   | **8×**   |
+| Flash Attention seq=1024   | 6.6% peak  | 45-58% peak   | **7-8×** |
+| Conv2d implicit GEMM       | 3.8% peak  | 55-75% peak   | **15-20×** |
+
+The gap exists because production kernels use techniques this project
+deliberately does not implement to keep code readable:
+
+1. **Multi-stage cp.async pipelines** (4-6 stages vs our 2)
+2. **Persistent grids** with cooperative work distribution
+3. **Streaming K splits** with cross-block reduction
+4. **Hand-tuned tile sizes** per (M, N, K) range
+5. **XOR-swizzled smem layouts** vs simple `+8` padding
+6. **Split-Q parallelism** for attention (the dominant FA gap factor)
+7. **Hand-written SASS** for inner loops (we use nvcc + limited CuAssembler edits)
+
+The relevant comparison is not "how close to cuBLAS" but **"how close
+to peak per line of code"**. cuBLAS is ~4 million lines; CUTLASS
+HGEMM alone is ~3,000 lines of templates. This project: ~15,000 lines
+total, ~2,000-3,000 GFLOPS per kloc of kernel code at the high end.
+
+Full breakdown with per-factor gap accounting and "what it would take
+to close the gap" in [docs/comparison_to_sota.md](docs/comparison_to_sota.md).
+
+---
+
 ## Cymatic memory layout — speculative geometry-aligned addressing
 
 ![Cymatic speedup grid](docs/figures/cymatic_speedup_grid.png)
@@ -231,6 +268,7 @@ See [setup.md](setup.md) for environment install. Run
 - [docs/control_codes.md](docs/control_codes.md) — stall counts, barriers, yield
 - [docs/memory_hierarchy.md](docs/memory_hierarchy.md) — GA104 memory system
 - [docs/fragment_shfl_reductions.md](docs/fragment_shfl_reductions.md) — eliminate smem round-trips via on-fragment intra-group shfl
+- [docs/comparison_to_sota.md](docs/comparison_to_sota.md) — honest gap analysis vs cuBLAS / cuDNN / FA-2 with per-factor accounting
 
 ### R analysis scripts — `scripts/*.R`
 
