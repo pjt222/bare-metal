@@ -1,10 +1,13 @@
 # Continue Here
 
-> **Last updated**: 2026-05-07 (cymatic memory layout bench complete)
+> **Last updated**: 2026-05-07 (session end — 13 fresh issues filed for next sprint)
 >
-> **Session status**: active issue queue down to 1 placeholder. 12 issues
-> closed total this session. Only #32 (polyhedral spring networks, research)
-> remains open — outside core CUDA scope.
+> **Session status**: full session arc complete. Tutorial series shipped,
+> cymatic study shipped, README + figures shipped, gap-to-SOTA analysis
+> shipped, 13 actionable issues filed for next sprint.
+>
+> **Open issue queue**: **13 issues** (12 freshly filed + #32 placeholder).
+> See "Next Sprint Plan" section below for ordering and dependencies.
 >
 > **Tutorial series (`docs/tutorial/`) all 6 chapters complete in full prose**:
 > ~80 KB / ~20,000 words across 01 SASS, 02 GEMM, 03 INT8, 04 Pipelining,
@@ -213,6 +216,53 @@ this session).
 | 32 | Research: polyhedral spring networks | low | Research placeholder, outside core kernel scope |
 
 Only placeholder issue remains. Active CUDA optimization queue: empty.
+
+## Next Sprint Plan (issues #84-96)
+
+**Filed 2026-05-07. Multiplicatively could close ~3.5× of HGEMM gap and
+~5-6× of FA gap to cuBLAS / FA-2 SOTA.**
+
+### Suggested phasing
+
+**Phase A — diagnostics (start here, ~3 days tooling)**
+- #89 NCU profiling harness — capture L1/L2/DRAM hit rates per kernel
+- #91 Register pressure / spill analyzer — audit `cuobjdump --dump-resource-usage`
+- #90 SASS instruction histogram — comparative per-kernel HMMA/LDSM/FFMA breakdown
+
+With these, Phase A enables real (not estimated) gap analysis and validates
+or refutes hypotheses in `docs/comparison_to_sota.md`.
+
+**Phase B — biggest single win (next deep-work session, ~1 week)**
+- #84 Split-Q parallelism for Flash Attention (🔥 high-priority, 3× at small seq)
+  - Two strategies: split-Q within block (cheap), split-Q across blocks (proper)
+  - Single highest-EV remaining optimization in the project
+  - Closes most of the FA gap to FA-2
+
+**Phase C — pipeline + persistent (~1 week)**
+- #85 4-stage cp.async pipeline for HGEMM (1.5×)
+- #86 Persistent grid + cooperative dispatch (1.15× + unlocks 84/87)
+- #87 Streaming K-split with cross-block reduction (1.5× for skinny)
+
+**Phase D — fill-out (~1 week)**
+- #88 XOR-swizzled smem (eliminate `+8` padding tax) (1.05×)
+- #92 Measured roofline (depends on 89)
+- #95 Tile-size autotuner / dispatch (1.10×)
+- #96 Hand-tuned SASS via CuAssembler (1.10×)
+- #93 Cymatic mode optimization search
+- #94 Real-kernel cymatic integration with FA (depends on 93)
+
+### Compound speedup targets
+
+If Phase B + C land:
+- HGEMM 18.3% peak → **~50% peak** (from 4× to 1.5× behind cuBLAS)
+- FA 6.6% peak → **~30% peak** (from 7-8× to 2-3× behind FA-2)
+
+If Phase D also lands:
+- HGEMM → **~65% peak** (close to cuBLAS, ~1.2× gap)
+- FA → **~40% peak** (within striking distance of FA-2)
+
+These are upper-bound targets; real compounding is usually less than
+multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 
 ## Cymatic Memory Layout (this session, post-tutorial)
 
