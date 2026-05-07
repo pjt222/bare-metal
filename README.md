@@ -122,3 +122,6 @@ All components of a Stable Diffusion UNet block implemented and verified:
 - [docs/ampere_sass_reference.md](docs/ampere_sass_reference.md) — quick SASS instruction reference
 - [docs/control_codes.md](docs/control_codes.md) — stall counts, barriers, yield
 - [docs/memory_hierarchy.md](docs/memory_hierarchy.md) — GA104 memory system
+- [docs/fragment_shfl_reductions.md](docs/fragment_shfl_reductions.md) — eliminate smem round-trips via on-fragment intra-group shfl reductions
+- [docs/tutorial/](docs/tutorial/) — complete 6-chapter tutorial (~20K words, full prose): SASS hello-world, GEMM, INT8, pipelining, Flash Attention, Four Laws synthesis
+- [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md) + [phase4/cymatic/](phase4/cymatic/) — Chladni-pattern memory layout study with measured GPU benchmarks (1.53× win on mode-aligned access, 1.89× loss on nodal-line access; conditional, not universal)

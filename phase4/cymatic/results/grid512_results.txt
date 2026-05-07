@@ -1,0 +1,22 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Grid:   512 × 512   n_inside=204664   buffer=0.82 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0                796          0.000         22.7     3.7%          0.000         22.7     3.7%      1.00x
+radial_mid_pi6              797          0.000         22.8     3.7%          0.000         22.6     3.7%      0.99x
+radial_mid_pi3              797          0.000         22.2     3.7%          0.000         22.9     3.8%      1.03x
+radial_bnd_pi12             800          0.000         25.2     4.1%          0.000         24.6     4.0%      0.97x
+radial_bnd_pi4              808          0.000         24.1     4.0%          0.000         23.8     3.9%      0.99x
+radial_bnd_5pi12            800          0.000         30.6     5.0%          0.000         29.5     4.8%      0.96x
+circular_r060               972          0.000         35.5     5.8%          0.000         34.3     5.6%      0.97x
+circular_r030               468          0.000         16.2     2.7%          0.000         16.0     2.6%      0.98x
+polar_tile_pi6            13670          0.000        344.5    56.7%          0.000        358.4    58.9%      1.04x
+polar_tile_pi4            13670          0.000        340.1    55.9%          0.000        358.4    58.9%      1.05x
+radial_bias_07            65536          0.001        268.4    44.1%          0.001        278.7    45.8%      1.04x
+radial_bias_00            65536          0.000        664.9   109.4%          0.000        588.5    96.8%      0.89x
+rowmajor_full            204664          0.001        993.1   163.3%          0.001       1390.4   228.7%      1.40x
+colmajor_full            204664          0.002        416.4    68.5%          0.002        474.5    78.0%      1.14x
+random                    65536          0.001        243.1    40.0%          0.001        242.0    39.8%      1.00x

@@ -1,0 +1,130 @@
+#!/usr/bin/env Rscript
+# cymatic_visualize.R
+#
+# Visualize a cymatic memory mapping produced by cymatic_mapping.R.
+# Three panels: raw field, region partition (colored by region_id), linear
+# address heatmap (rainbow gradient over disc).
+#
+# Usage:
+#   Rscript scripts/cymatic_visualize.R cymatic_mapping.rds [out_prefix]
+
+suppressPackageStartupMessages({
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("install.packages('ggplot2')")
+  }
+  library(ggplot2)
+})
+
+# Source mapping helpers; assume cwd is project root or scripts/.
+for (p in c("scripts/cymatic_mapping.R", "cymatic_mapping.R",
+            "./cymatic_mapping.R")) {
+  if (file.exists(p)) { source(p); break }
+}
+
+plot_field <- function(mapping, title = "Cymatic field u(r,θ)") {
+  grid <- mapping$grid
+  df <- data.frame(
+    x = as.vector(grid$x),
+    y = as.vector(grid$y),
+    u = as.vector(mapping$field),
+    inside = as.vector(grid$inside)
+  )
+  df <- df[df$inside, ]
+  ggplot(df, aes(x = x, y = y, fill = u)) +
+    geom_raster() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    coord_equal() +
+    labs(title = title, x = NULL, y = NULL, fill = "u") +
+    theme_minimal()
+}
+
+plot_regions <- function(mapping,
+                          title = sprintf("Antinode regions (%d)", mapping$n_regions)) {
+  grid <- mapping$grid
+  rid_orig <- as.vector(mapping$label)
+  rid_new <- mapping$region_order$new_id[
+    match(rid_orig, mapping$region_order$region_id)
+  ]
+  df <- data.frame(
+    x = as.vector(grid$x),
+    y = as.vector(grid$y),
+    region = rid_new,
+    inside = as.vector(grid$inside)
+  )
+  df <- df[df$inside & !is.na(df$region), ]
+  # spread region_id over hue for visual distinction (cyclic palette)
+  df$hue <- (df$region * 137L) %% mapping$n_regions  # golden-angle-ish dispersion
+  ggplot(df, aes(x = x, y = y, fill = hue)) +
+    geom_raster() +
+    scale_fill_gradientn(colours = rainbow(64)) +
+    coord_equal() +
+    labs(title = title, x = NULL, y = NULL, fill = "region (perm)") +
+    theme_minimal() +
+    theme(legend.position = "none")
+}
+
+plot_addresses <- function(mapping,
+                            title = sprintf("Linear address mapping (%d cells)",
+                                            mapping$total_cells)) {
+  grid <- mapping$grid
+  df <- data.frame(
+    x    = as.vector(grid$x),
+    y    = as.vector(grid$y),
+    addr = as.vector(mapping$address)
+  )
+  df <- df[!is.na(df$addr), ]
+  ggplot(df, aes(x = x, y = y, fill = addr)) +
+    geom_raster() +
+    scale_fill_viridis_c(option = "C") +
+    coord_equal() +
+    labs(title = title, x = NULL, y = NULL, fill = "addr") +
+    theme_minimal()
+}
+
+plot_region_size_histogram <- function(mapping,
+                                         title = "Region size distribution") {
+  ord <- mapping$region_order
+  ggplot(ord, aes(x = cell_count)) +
+    geom_histogram(bins = 30, fill = "steelblue", colour = "white") +
+    scale_x_log10() +
+    labs(title = title, x = "cells per region (log10)", y = "frequency") +
+    theme_minimal()
+}
+
+plot_quad <- function(mapping, out_prefix) {
+  if (!requireNamespace("patchwork", quietly = TRUE)) {
+    # save individually
+    ggsave(paste0(out_prefix, "_field.png"),     plot_field(mapping),     width = 5, height = 5, dpi = 120)
+    ggsave(paste0(out_prefix, "_regions.png"),   plot_regions(mapping),   width = 5, height = 5, dpi = 120)
+    ggsave(paste0(out_prefix, "_addresses.png"), plot_addresses(mapping), width = 5, height = 5, dpi = 120)
+    ggsave(paste0(out_prefix, "_sizes.png"),     plot_region_size_histogram(mapping), width = 5, height = 4, dpi = 120)
+    cat(sprintf("[cymatic] wrote 4 PNGs with prefix '%s'\n", out_prefix))
+    return(invisible(NULL))
+  }
+  library(patchwork)
+  p <- (plot_field(mapping) | plot_regions(mapping)) /
+       (plot_addresses(mapping) | plot_region_size_histogram(mapping))
+  ggsave(paste0(out_prefix, "_quad.png"), p, width = 11, height = 10, dpi = 120)
+  cat(sprintf("[cymatic] wrote %s_quad.png\n", out_prefix))
+}
+
+# ---- CLI -------------------------------------------------------------------
+
+.is_main_viz <- function() {
+  if (interactive()) return(FALSE)
+  if (sys.nframe() > 1L) return(FALSE)
+  invoked <- sub("^--file=", "", grep("^--file=", commandArgs(), value = TRUE))
+  if (length(invoked) == 0L) return(TRUE)
+  basename(invoked) == "cymatic_visualize.R"
+}
+
+if (.is_main_viz()) {
+  args <- commandArgs(trailingOnly = TRUE)
+  rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
+  out_prefix <- if (length(args) >= 2) args[2] else "cymatic"
+  if (!file.exists(rds_path)) {
+    stop(sprintf("missing %s — run scripts/cymatic_mapping.R first", rds_path))
+  }
+  mapping <- readRDS(rds_path)
+  plot_quad(mapping, out_prefix)
+}

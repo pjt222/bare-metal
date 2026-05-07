@@ -986,3 +986,417 @@ With sparse already at 131% of dense, the next frontier is not sparse-HGEMM
 itself but upstream integration: online FP16→INT8 quantization (observed in
 Phase 5) or fusing the sparse matmul into Flash Attention's QK^T and PV
 computations.
+
+## Observation O — Flash Attention smem padding: occupancy regression dominates
+
+**Setup**: `flash_attn_br16_regpv` already runs at 3 blocks/SM (12 warps),
+the highest occupancy among the FA variants on GA104. Hypothesis: pad
+K/V tile (+8 halfs → stride 144 B) and `smem_work` (+4 floats → stride 272 B)
+to break 8-way ldmatrix.x4 bank conflicts and gain throughput.
+
+**Bank conflict math** (encoded in `scripts/ldmatrix_conflicts.R`):
+ldmatrix.x4 reads 8 row addresses; for 32 banks of 4 bytes, bank conflicts
+occur when `gcd(stride_bytes / 4, 32) > 4`. Equivalently `stride_bytes mod 32 ≠ 0`
+clears all 8 rows. Stride 128 B (FP16 [64]) and 256 B (FP32 [64]) both fail.
+
+**Result** (bench_br16_regpv_pad, RTX 3070 Ti):
+
+| variant | smem | blocks/SM | seq=1024 ms | speedup |
+|---|---|---|---|---|
+| regpv (no pad) | 32.0 KB | 3 (12 warps) | 2.45 | 1.00× |
+| regpv + KV+8 + W+4 | 35.0 KB | 2 (8 warps) | 3.03 | 0.81× |
+| regpv + KV+8 only | 34.0 KB | 2 (8 warps) | 3.22 | 0.76× |
+| regpv + W+4 only | 33.0 KB | 2 (8 warps) | 3.49 | 0.70× |
+
+Padding loses 20-32% across all sizes (seq 512..4096). **Surprise asymmetry**:
+W+4-only loses MORE than KV+8 despite touching fewer LDS instructions. Likely
+because W is the FP16 overlay path that interleaves with the softmax registers,
+and breaking its store_matrix_sync stride (FP32 stride 268 B is mid-pipeline
+in the Phase B → Phase C transition) hurts more than fixing it helps.
+
+**Mechanism**: at 12 warps/SM the scheduler interleaves ldmatrix latency with
+HMMA pipeline drain. Even with 8× replays, the pipeline stays fed. Dropping
+to 8 warps exposes both the per-warp serialization AND the residual conflict
+penalty no longer hides cleanly. The 33-KB threshold for 3 blocks/SM appears
+tight: 3 × 32.0 KB = 96 KB fits, 3 × 33.0 KB = 99 KB rounds to over the
+allocation granularity.
+
+**Calibrated tradeoff model** (`pad_tradeoff()` in ldmatrix_conflicts.R):
+predicts 0.86× speedup (loses 14%) for 12→8 warp transition with 8× conflict
+elimination. Empirical 0.81× (loses 19%). Model agrees in direction, slightly
+optimistic in magnitude — useful for screening future padding decisions.
+
+**Generalization**: padding is profitable only when (a) baseline occupancy is
+already capped by registers (smem headroom unused), or (b) the kernel runs at
+< 8 warps/SM where conflicts become exposed. For high-occupancy regpv-style
+kernels, structural changes (XOR swizzle, register-pressure reduction, or
+algorithmic rearrangement to eliminate `smem_work`) are needed before padding
+can win.
+
+## Observation P — Flash Attention smem_work elimination: the structural win after padding failed
+
+**Setup**: Observation O established that smem padding is unprofitable for the
+12-warp Flash Attention regpv kernel because the occupancy drop (3→2 blocks/SM)
+exceeds the bank-conflict elimination benefit. Path forward identified three
+options: XOR swizzle, register pressure reduction, smem_work elimination.
+
+**Result**: a three-stage refactor delivers **+40% throughput** at seq=1024
+(2.45 → 1.75 ms, 7150 → 10000 GFLOPS).
+
+| stage | smem | regs | ms@seq=1024 | GFLOPS | speedup |
+|---|---|---|---|---|---|
+| 0 baseline regpv | 32.0 KB | 156 | 2.45 | 7150 | 1.00× |
+| 1a lean state | 32.0 KB | 132 | 2.52 | 6940 | 0.97× |
+| 1b + Q reg cache | 32.0 KB | 144 | 2.37 | 7400 | 1.04× |
+| 2 + smem_work elim | 24.0 KB | 138 | 1.75 | 10000 | **1.40×** |
+| 3 + KV/W padding | 27.0 KB | 134 | 1.78 | 9826 | 1.37× (wash) |
+
+**Stage 1 — lean per-thread state**: in WMMA m16n16k16, each lane "owns" 2
+specific rows (row_lo = groupID, row_hi = groupID + 8) of the 16×16 score tile.
+The baseline kernel held `running_max[16]` + `running_sum[16]` per thread —
+broadcast-identical across 32 lanes, 32 redundant registers/thread. Restructured
+to 4 floats/thread; broadcast via `__shfl_sync` per row when the softmax loop
+needs the running stat. Free 24 regs/thread. Performance neutral standalone,
+but enables stage 1b.
+
+**Stage 1b — Q register cache**: SASS inspection (LDG count inside loop body)
+revealed the compiler did NOT hoist Q across the KV-base loop in the regpv
+or lean kernels — Q was reloaded from L2 every iteration (16× at seq=1024).
+Explicitly hoisted `q_frag[TILES_D]` outside the loop. Costs 12 regs/thread.
+Reload count drops from 30 LDGs/iter (lean) → 14/iter (qcache, only K/V remain).
+Net +4-13% across sizes, peaking at +31% (seq=512, batch×heads=256).
+
+**Stage 2 — smem_work elimination (the big win)**: the 16 KB `smem_work`
+served as a FP32 round-trip buffer between Phase B (`store_matrix_sync` of
+score_frag) and Phase C (per-row softmax `LDS.f32` reads). The kernel's
+LDS+STS instruction count was 238 in cubin, dominated by this round-trip.
+
+Restructure keeps `score_frag` in registers across Phase B → Phase C. The
+key enabler is performing per-row reductions directly on fragment elements:
+4 cols × 4 tiles per lane fmax, then intra-group `__shfl_xor_sync` with
+offsets 1 and 2 covers all 4 lanes within a row group. For each owned row,
+this lane plus 3 group siblings collectively span the 64-col dimension.
+
+Phase D still needs FP16 weights as `matrix_a` row_major fragments. Solved
+by writing FP16 weights directly to a 8 KB `weight_smem` at the WMMA-row-major
+positions (lane-derived offset using groupID and in_group). Phase D's
+`load_matrix_sync` reads naturally without further changes.
+
+Final pv_accum store: instead of `store_matrix_sync` to smem followed by
+normalized read-back, each lane writes its 8 owned elements (per pv_accum
+fragment, per tile) directly to global O, applying `1/running_sum`. The
+WMMA fragment layout maps cleanly to global indices.
+
+Results: LDS+STS 238 → **30**, smem 32 KB → 24 KB, regs 144 → 138, throughput
++40% across all sizes. The kernel reaches ~10 TFLOPS = 5.7% of FP16 TC peak
+(174 TFLOPS), up from 4.1%. Still far from peak but a structural step forward.
+
+**Stage 3 — padding now affordable, no longer needed**: with 24 KB nosmem
+layout, K/V/weight padding fits 3 blocks/SM (3×27.4 = 82 KB ≤ 100 KB). Tested
+and found roughly tied with unpadded (±3%). The bank conflicts that motivated
+Observation O are no longer the bottleneck after smem traffic was reduced 8×.
+
+**Generalization**: when bank-conflict padding is unprofitable, the right
+question is not "how do we pay for the conflicts" but "do we need this smem
+allocation at all". For matmul-heavy kernels with online reductions, fragment
+elements + intra-group shfl is often a viable substitute for smem-staged
+reductions. This pattern likely generalizes to other Tensor Core kernels with
+softmax-like operators (attention variants, normalized linear layers).
+
+## Observation Q — Pipeline + nosmem: cp.async finally pays off at 2 blocks/SM
+
+**Setup**: Observation P established `flash_attn_br16_v2` (nosmem fragment-shfl)
+running at 24 KB / 3 blocks/SM / 12 warps. The original `flash_attn_br16_pipeline.cu`
+used 64 KB smem (1 block/SM, 4 warps) and lost 4-5% to cp.async because the
+HMMA pipeline drain dominates DRAM latency at low occupancy.
+
+**Hypothesis**: applying the nosmem pattern to the pipeline kernel cuts smem
+to 40 KB (2 buffers K + 2 buffers V + 8 KB weight_smem), enabling 2 blocks/SM
+(8 warps) instead of 1. With doubled effective concurrency, cp.async overlap
+should now be net-positive.
+
+**Result** (`flash_attn_br16_v2_pipeline.cu`, RTX 3070 Ti):
+
+| seq | b×h | v2 baseline GFLOPS | v2 pipeline GFLOPS | speedup |
+|---|---|---|---|---|
+| 512 | 256 | 8150 | 11493 | **1.41×** |
+| 1024 | 64 | 9989 | 11450 | 1.15× |
+| 2048 | 32 | 10137 | 11585 | 1.14× |
+| 4096 | 16 | 9153 | 11666 | 1.27× |
+| 1024 | 8 | 8788 | 10302 | 1.17× |
+
+Pipeline plateau ~11.5 TFLOPS = **6.6% of FP16 TC peak** (174 TFLOPS).
+Cumulative versus original `flash_attn_br16_regpv` baseline (verified post-warmup,
+3-run mean): **1.60×** at seq=1024 (2.45 ms → 1.53 ms measured, 7154 → 11453 GFLOPS).
+Earlier draft claimed 1.86× based on an extrapolated 1.31 ms for v2_pipeline; that
+figure was wrong — the actual measured v2_pipeline time is 1.529 ms (3-run mean
+of 1.555, 1.529, 1.529).
+
+**Mechanism**:
+- 8 warps/SM is sufficient for warp scheduler to hide HMMA pipeline drain
+- cp.async issues asynchronous DRAM loads; while wait_group 1 stalls on the
+  current tile, the next tile is in-flight
+- Compute window per tile: ~64 HMMA × 8 cycle stall = 512 cycles
+- DRAM latency per tile: ~300 cycles
+- With 8 warps interleaved at 1 block/SM (original): scheduler runs out of
+  ready warps during cp.async → exposed stall
+- With 8 warps × 2 blocks/SM (v2 pipeline): twice as many ready warps → DRAM
+  hidden, cp.async win materializes
+
+**Persistent grid result** (`flash_attn_v2_persistent.cu`): -8% to +12% at
+12 warps/SM. The previous persistent grid wins (+10% on flash_attn_br16 at
+8 warps/SM, large tile counts) **disappeared** at v2's higher occupancy.
+The v2 baseline grid wave is short enough that tail-wave elimination
+provides no headroom; atomicAdd contention dominates. Concludes: persistent
+pattern is occupancy-dependent — wins at low warp counts, neutral-to-loss
+at high.
+
+**Generalization**: when smem-reduction frees occupancy headroom, previously
+counter-productive optimizations (cp.async, large tiles) can become net
+wins. Re-evaluate negative results when the kernel's resource profile changes.
+
+## Observation R — ResBlock conv2d swap: 7× speedup from picking the right kernel
+
+**Setup**: `phase4/resblock/bench.cu` chains GN+SiLU → Conv2d(3×3) → GN+SiLU →
+Conv2d(3×3) → residual_add. Used `conv2d_nhwc` from `conv2d.sm_86.cubin`. At
+SD UNet config (N=1, C=320, H=W=32, G=32) the chain runs **13.07 ms** at
+289 GFLOPS effective.
+
+**Diagnosis**: 95% of ResBlock time is in the two Conv2d calls. `conv2d_nhwc`
+is a direct FFMA-loop conv that re-reads input X 9× (once per kernel position).
+Achieves ~236 GFLOPS at small sizes, ~289 at SD config. Meanwhile the
+companion `implicit_gemm_conv` (Tensor Cores via WMMA, computes im2col on
+the fly) achieves 4800-6800 GFLOPS — **20-30× faster** as a standalone kernel.
+
+ResBlock was using the wrong conv. This is not a "kernel optimization"
+problem; it's a "kernel selection" problem.
+
+**Fix** (`phase4/resblock/bench_implicit.cu`):
+- Reshape FP32 weights `[Cout, kH, kW, Cin]` → FP16 `[K_dim, Cout]` on host
+  (one-time, helper from `bench_implicit_gemm.cu`)
+- Load `implicit_gemm_conv` from `conv2d_implicit_gemm.sm_86.cubin`
+- Set `MAX_DYNAMIC_SHARED_SIZE_BYTES` for the ~6.3 KB smem requirement
+- Same grid as standalone implicit GEMM bench: `(grid_m, grid_n, 1)` × 128 threads
+- Same correctness check; FP16 weight conversion adds slight precision loss
+  but stays within `1e-2*sqrt(C)` AND-logic tolerance
+
+**Result**:
+
+| config | conv2d_nhwc | implicit_gemm | speedup |
+|---|---|---|---|
+| N=1 C=64 H=W=32 G=8 (small) | 1.057 ms (143 GFLOPS) | 0.586 ms (258 GFLOPS) | **1.80\u00d7** |
+| N=1 C=128 H=W=64 G=16 (medium SD) | 9.576 ms (252 GFLOPS) | 1.932 ms (1251 GFLOPS) | **4.96\u00d7** |
+| N=1 C=320 H=W=32 G=32 (SD UNet) | 13.068 ms (289 GFLOPS) | **1.864 ms (2025 GFLOPS)** | **7.01\u00d7** |
+
+Speedup grows with problem size — larger Cin/Cout/M means more amortization
+of WMMA fragment fixed costs.
+
+**Impact on issue #4 (GroupNorm fusion)**:
+
+Before this swap, GN+Conv fusion's projected savings (~1 MB DRAM round-trip
+saved per pair, ~3 \u03bcs at 608 GB/s, vs. 13 ms ResBlock) was ~0.02% \u2014 tiny but
+not zero. After the swap, ResBlock is 1.86 ms total. GN fusion would still
+save ~3 \u03bcs but is now competing for time within a 1.86 ms budget where the
+conv2d itself is the bulk \u2014 making fusion effectively 0.16% improvement.
+
+Closed #4 as not-planned. The GN+Conv fusion idea was correct in spirit
+(eliminate redundant DRAM passes) but the wrong target: the bigger
+redundant DRAM pass was inside the conv (9\u00d7 reread), not between GN and
+conv. Implicit GEMM eliminates that with no fusion needed.
+
+**Generalization (Law 2 reinforced)**: before optimizing FLOPS, count
+DRAM passes. A kernel reading every byte 9 times is not a 9\u00d7 compute
+problem; it's a 9\u00d7 bandwidth problem disguised as compute. The structural
+fix (use a kernel that doesn't reread) beats microscopic FFMA tuning by
+order(s) of magnitude.
+
+## Observation S — Bc=128 with v2's smem savings still loses (occupancy gates tile size)
+
+**Hypothesis**: After v2's smem reduction (32 KB → 24 KB at Bc=64), doubling
+to Bc=128 fits in 48 KB → 2 blocks/SM. The bigger inner-K tile would mean:
+- 2× HMMA per phase B/D (better pipeline depth)
+- 2× fewer outer KV iterations (less kernel-level overhead)
+- Same Q register cache amortization
+
+This was infeasible on the original kernel (would have been 64 KB → 1 block/SM,
+the cliff).
+
+**Test**: `flash_attn_br16_v2_bc128.cu` — identical to `flash_attn_br16_v2.cu`
+except `Bc=128`, `TILES_Bc=8`, `__launch_bounds__(128, 2)`.
+
+**Result** (3-run mean across 4 sizes, RTX 3070 Ti):
+
+| seq | b | h | v2 (Bc=64, 12 warps) | v2_bc128 (Bc=128, 8 warps) | v2_pipeline (Bc=64, 8 warps) |
+|---|---|---|---|---|---|
+| 512  | 16 | 16 | **1.747 ms (10024 GFLOPS)** | 1.888 ms (9279) | 1.524 ms (11494) |
+| 1024 | 8  | 8  | **1.757 ms (9972)**  | 1.875 ms (9341) | 1.528 ms (11462) |
+| 2048 | 4  | 8  | **3.455 ms (10139)** | 3.669 ms (9549) | 3.021 ms (11596) |
+| 4096 | 2  | 8  | **7.370 ms (9506)**  | 7.255 ms (9657) | 6.007 ms (11663) |
+
+**Result is regime-dependent, not uniformly negative**:
+- Bc=128 loses 5.8-7.4% at seq ∈ {512, 1024, 2048}
+- Bc=128 **wins 1.6%** at seq=4096
+- Bc=128 loses 19-23% to v2_pipeline at same 2 blocks/SM occupancy at all sizes
+
+**Interpretation**:
+
+1. At small/medium seq the occupancy hit (12 → 8 warps) dominates: warp
+   scheduler runs out of slack to hide K/V load latency, so the kernel is
+   warp-parallelism-bound and bigger tile cannot recover.
+
+2. At seq=4096 the iteration count is high enough (32 outer iters at Bc=128
+   vs 64 at Bc=64) that halving outer-iter count amortizes the kernel-level
+   prologue and `__syncthreads` cost enough to overcome the occupancy hit.
+   Crossover lies somewhere between seq=2048 and seq=4096.
+
+3. At the same 2 blocks/SM regime, cp.async double-buffering (v2_pipeline)
+   beats Bc=128 at *all* sizes. The win is from overlapping K/V loads with
+   HMMA, not from doing more HMMA per iter. cp.async addresses the warp-
+   parallelism shortage; bigger tile does not.
+
+4. **Generalization (Law 3 nuanced)**: tile size is subordinate to occupancy
+   AND to the load-compute overlap mechanism, BUT also interacts with
+   iteration count. "Bigger tile loses" is true only when iteration count is
+   low; at high iteration count the per-iter overhead amortizes the
+   occupancy hit. The right tool when crossing an occupancy boundary is still
+   cp.async (overlap), but the tile-size loss is regime-dependent, not
+   absolute.
+
+**Kernel kept** as `flash_attn_br16_v2_bc128.cu` (counter-example, like
+the padding regressions in Observation O).
+
+**Implication for future work**:
+- A Bc=128 + cp.async double-buffer variant would need 80 KB smem (32 K +
+  32 V double-buffered + 16 weight) — over the 50 KB cliff, so 1 block/SM
+  (4 warps). Almost certainly catastrophic.
+- For very-large-seq workloads (≥4096) the Bc=128 v2 kernel can be
+  considered as a dispatch alternative — small win, but real.
+- The plateau at ~11.5 TFLOPS (6.6% of FP16 peak) appears genuinely
+  difficult to break with naive tile-size or pipeline-depth tweaks across
+  all regimes. Regime-specific dispatching may be the practical answer.
+
+## Observation T — Cymatic memory layout: angle-dependent gather locality on real DRAM
+
+**Date**: 2026-05-07
+**Phase**: speculative layout study (`phase4/cymatic/`)
+**Headline**: layout aligned with Chladni-mode antinodes gives **+1.53× gather throughput at sector midlines**, **−1.89× at sector boundaries** on RTX 3070 Ti, GRID=2048² (13 MB DRAM-resident buffer).
+
+### Setup
+
+A clamped circular membrane mode `u_{n,m}(r,θ) = J_n(k_{n,m}·r) · cos(n·θ)`
+partitions the disc into antinode regions of constant sign. For mode (6, 4):
+12 angular sectors, 4 radial bands, ~35 regions of size 2 to 2103 cells (1051×
+size ratio).
+
+We map a 1D address space onto these regions via `(centroid_r, centroid_θ)`
+ordering, raster-fill within each region. Two layouts of the same data:
+row-major-inside vs cymatic-permuted. Run the same gather kernel on both, time
+each, compare effective bandwidth.
+
+### Measured results (GRID=2048², DRAM regime)
+
+| trace | speedup | reason |
+|---|---|---|
+| `radial_mid_pi6` (θ=π/6 midline) | **1.53×** cym | Trace stays in one angular sector; cymatic addresses near-contiguous |
+| `radial_bnd_pi4` (θ=π/4 boundary) | **0.54×** cym (1.85× row) | Trace on nodal line; adjacent cells in opposite-sign regions |
+| `radial_bnd_5pi12` (boundary) | **0.53×** cym (1.89× row) | Same |
+| `circular_r030` (small radius circle) | **1.38×** cym | Stays in one radial band; intra-band θ-ordering gives locality |
+| `circular_r060` (large radius circle) | 1.12× cym | Mild win |
+| `polar_tile_pi6/pi4` | 0.98–1.03× | Tie — wedge spans multiple regions |
+| `radial_bias_07/00`, `random` | 1.00–1.07× | Tie — large random working set |
+| `rowmajor_full` (sequential) | **0.66×** cym (1.51× row) | Row layout's native pattern |
+
+### Insight 1: Layout amplifies its mode geometry
+
+For mode (n=6), `cos(6θ)` zeros at θ = π/12 + k·π/6 (boundaries) and maxima
+at θ = k·π/6 (midlines). Radial trace at midline → trace inside one sector
+through all m=4 radial bands → cymatic addresses near-contiguous. Radial
+trace at boundary → trace exactly on nodal line → adjacent (i, j) cells are
+in entirely different sign regions → addresses jump between disjoint
+ranges.
+
+Worst-case slowdown (1.89×) and best-case speedup (1.53×) are similar in
+magnitude. **The layout is conditional, not universal.**
+
+### Insight 2: Cache regime matters — DRAM scale required for measurement
+
+| GRID | n_inside | buffer | regime | typical speedup spread |
+|---|---|---|---|---|
+| 256² | 50K | 0.2 MB | L1/L2 | 0.78–1.34× (most ties) |
+| 512² | 200K | 0.8 MB | L2 | 0.89–1.40× (most ties) |
+| 1024² | 821K | 3.3 MB | L2 boundary | 0.63–1.86× (variable) |
+| **2048²** | **3.3M** | **13 MB** | **DRAM** | **0.53–1.53× (sharp)** |
+
+Below DRAM scale, post-warmup all accesses become L2 hits regardless of
+physical layout, so locality differences don't show. The 2048² results are
+the meaningful measurement.
+
+### Insight 3: Static R metric was wrong about circular sweeps
+
+The R locality metric (`scripts/cymatic_analyze.R`) predicted circular
+sweeps at fixed r should hurt cymatic ("adjacent θ → different angular
+sectors → address jumps"). The CUDA bench measured the opposite: circular
+sweeps tie or favor cymatic.
+
+Reason: cymatic regions are ordered by `(centroid_r, centroid_θ)`. All
+regions in one radial band sit in a **contiguous address range with
+addresses sorted by θ within the band**. A circular trace at fixed r stays
+in one radial band the entire time → scans through θ-sorted regions →
+addresses roughly monotone, not random.
+
+The static metric over individual cell pairs missed the effect of
+region-level address ordering. **Locality through ordering of
+non-adjacent items**, not just through adjacency. A failure mode for the
+analytical metric corrected only by real-hardware measurement.
+
+### Methodology lessons
+
+- **Mean-of-5 timing is unstable for sub-100μs kernels** — initial 1024²
+  runs gave 0.55–1.86× variance for the same trace. Fixed by switching to
+  median-of-11 with auto-scaled iters (target 5 ms/kernel ≫ 10 μs event
+  timer noise).
+- **`c(qi, ni)` flood fill is O(N²·log N)** in R due to vector reallocation
+  on each push. Hung at 2048². Fixed with preallocated queue + linear
+  indexing → O(N²) → 51 s for one-time generation.
+- **"Effective bandwidth >100% of peak"** indicates cache hits, not
+  measurement error. The buffer is reused across iters; post-warmup
+  small-trace kernels hit L1+L2 mostly. Reported BW is aggregate
+  throughput, not pure DRAM.
+
+### Where this could pay off
+
+- **Diffusion-model 2D attention** with rotational position bias —
+  pixels with similar angular position attend to each other; cymatic
+  radial bands naturally express this.
+- **FFT butterfly buffers** — stage-k butterflies have stride 2^k
+  pattern; mode (n, m≈log₂N) might align region boundaries with
+  butterfly groups.
+- **Polar warp intermediate buffers** — radar, lidar, panoramic images.
+- **Spherical harmonics** (l, m) coefficient layouts.
+
+### Limits
+
+- Cannot beat row-major on row-major-native sequential scans (1.5× loss).
+- Boundary-aligned access patterns are catastrophic (1.9× loss).
+- Mode selection is a workload-dependent parameter, not universal.
+- Generation cost: 11 s at 1024², 51 s at 2048² (one-time R precompute).
+- Lookup table cost: 4 bytes × N² for the permutation. 16 MB at 2048².
+
+### Conclusion
+
+The cymatic layout is **a real physical phenomenon on real GPU
+hardware**, not just an analytical curiosity. It is **conditional**
+(geometry-dependent), not universal. For a fixed workload with known
+access geometry it is a real tool — search over (n, m, α) modes to
+maximize measured speedup. For generic workloads, row-major remains
+safer.
+
+The most striking finding is the symmetry between best win (1.53×) and
+worst loss (1.89×). The layout doesn't add cycles or remove cycles
+overall — it redistributes them across access patterns, amplifying
+some and demolishing others. Use it when you can choose the access
+pattern. Avoid it when you cannot.
+
+**Files**: `phase4/cymatic/{gen_cymatic_data.R, bench_cymatic.cu,
+Makefile, results/}`, `scripts/cymatic_{mapping,analyze,visualize}.R`,
+`docs/cymatic_memory_mapping.md`, `docs/figures/cymatic_*.png`.

@@ -46,3 +46,8 @@ tools/CuAssembler/
 # OS
 .DS_Store
 Thumbs.db
+
+# cymatic R-script outputs at project root
+cymatic_mapping.csv
+cymatic_mapping.rds
+cymatic_locality.csv
