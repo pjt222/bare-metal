@@ -1,127 +1,311 @@
 # bare-metal GPU
 
-Hand-optimized SASS assembly kernels targeting **RTX 3070 Ti (GA104, sm_86, Ampere)**.
+> **Hand-optimized SASS assembly kernels targeting RTX 3070 Ti (GA104, sm_86, Ampere).**
+> No cuBLAS, no cuDNN, no PyTorch. Just nvcc, cuobjdump, and CuAssembler.
 
-No cuBLAS. No cuDNN. No PyTorch. Just NVIDIA GPU assembly.
+The accessible stack ends at SASS:
 
-## Goal
+```
+CUDA C/C++          ← you write this
+     │
+     ▼ nvcc
+PTX (Virtual ISA)   ← documented, portable, stable ABI
+     │
+     ▼ ptxas (driver JIT)
+SASS (Native ISA)   ← sm_86, undocumented, reverse-engineered     ← WE WORK HERE
+     │
+     ▼ [SIGNATURE WALL — cryptographic, cannot cross]
+Driver / Firmware   ← locked
+```
 
-Go as close to bare metal as NVIDIA allows:
-- Write, disassemble, modify, and reassemble native GPU machine code (SASS)
-- Build ML primitives from scratch: GEMM, softmax, attention, convolution
-- Target: Flash Attention and diffusion model kernels in hand-tuned SASS
+Every kernel in this repo is built up from `nvcc` to `cubin`, disassembled
+with `cuobjdump`, optionally hand-edited via [CuAssembler](https://github.com/cloudcores/CuAssembler),
+reassembled, and run on a real RTX 3070 Ti Laptop. Performance numbers
+are measured (median of 11 runs after 5 warmup iterations), not
+extrapolated.
+
+---
+
+## Headline performance
+
+![Kernel performance overview](docs/figures/performance_overview.png)
+
+Measured GFLOPS across all completed kernels, grouped by precision class.
+Sparse 2:4 numbers are dense-equivalent (the multiply count had the
+sparse pattern would do dense work). Each bar is annotated with
+% of its precision-class peak (FP32 = 21.7 TFLOPS, FP16 TC = 174,
+INT8 TC = 348).
+
+### Top kernels (RTX 3070 Ti Laptop)
+
+| Kernel                  | Size    | Time      | GFLOPS              | % peak  |
+|-------------------------|---------|-----------|---------------------|---------|
+| **Sparse HGEMM 2:4**    | 2048³   | —         | **41,721** (eq)     | 24.0%   |
+| **Sparse INT8 mma.sp**  | 2048³   | —         | **39,674** (eq)     | 11.4%   |
+| **HGEMM 16-warp**       | 4096³   | —         | **31,910**          | 18.3%   |
+| **IGEMM 128×256**       | 4096³   | —         | **27,591**          | 7.9%    |
+| **Flash Attention v2**  | seq=1024 b=8 h=8 | **1.53 ms** | **11,453** | 6.6% |
+| **Conv2d implicit GEMM**| 64×64 320ch | **1.13 ms** | **6,687**       | 3.8%    |
+| **Online FP16→INT8**    | 4096³   | —         | **17,070**          | 9.6%    |
+
+(See Hardware section below for peak references.)
+
+---
+
+## Roofline
+
+![Roofline GA104](docs/figures/roofline.png)
+
+Operational intensity vs achieved TFLOPS. The compute-bound kernels
+(HGEMM, sparse, FA v2, conv2d) sit at the right; the memory-bound
+kernel (GroupNorm) sits at the left tied to the DRAM bandwidth roof.
+HGEMM 16-warp and sparse HGEMM 2:4 are the closest to ceiling at
+~24% of FP16 Tensor Core peak. Pushing further would require deeper
+software pipelining (cp.async multi-stage), persistent grids, or
+cross-block work distribution beyond what this project explores.
+
+---
+
+## Phase progression — naive SGEMM to sparse INT8
+
+![Phase progression](docs/figures/phase_progression.png)
+
+Each layer of amortization compounds:
+
+| step                       | mechanism                              | speedup vs naive |
+|----------------------------|----------------------------------------|------------------|
+| Naive SGEMM (Phase 1)      | one thread per output, FFMA in a loop  | 1.0×             |
+| Tiled SGEMM (Phase 2)      | block tile, smem buffer                | 2.2×             |
+| Register-blocked SGEMM     | each thread computes 8×8 outputs       | 10.9×            |
+| HGEMM (basic WMMA)         | switch to FP16 Tensor Cores            | 17.0×            |
+| HGEMM 16-warp 128×128      | 2 blocks/SM, double-buffered LDG       | **69.2×**        |
+| Sparse HGEMM 2:4           | mma.sp, 50% structured zeros           | **90.5×**        |
+
+Three orders of magnitude from a textbook GEMM. Each step is a single
+optimization with a clear mechanism — no autotuning, no library magic.
+
+---
+
+## Flash Attention — 1.60× cumulative through three refactors
+
+![FA optimization waterfall](docs/figures/fa_waterfall.png)
+
+The Flash Attention path peaked at ~7,154 GFLOPS for the original
+register-PV kernel (`flash_attn_br16_regpv.cu`). Three structural
+refactors brought it to **11,453 GFLOPS** = **1.60× cumulative** in
+this session, plateauing at ~6.6% of FP16 Tensor Core peak:
+
+| step                        | technique                              | gain      |
+|-----------------------------|----------------------------------------|-----------|
+| `regpv` (baseline)          | register PV accumulation               | —         |
+| lean state                  | smaller per-warp state, fewer LDS      | +6%       |
+| Q reg cache                 | hold Q fragment in registers across K  | +16%      |
+| `v2` (smem_work eliminated) | replace smem reduce with on-frag shfl  | +14%      |
+| `v2_pipeline`               | cp.async double-buffer at 8 warps/SM   | +14%      |
+
+Two failed experiments are kept as counter-examples: the original
+synchronous pipeline at 4 warps/SM (cp.async loses), and Bc=128
+tile size (loses at seq < 4096, wins +1.6% at seq = 4096 only).
+
+Detailed walkthrough in [docs/tutorial/05-flash-attention.md](docs/tutorial/05-flash-attention.md).
+
+---
+
+## Cymatic memory layout — speculative geometry-aligned addressing
+
+![Cymatic speedup grid](docs/figures/cymatic_speedup_grid.png)
+
+A Chladni-pattern memory layout maps a 1D address space to antinode
+regions of a circular standing-wave mode `u_{n,m}(r,θ) = J_n(k_{n,m}·r)·cos(n·θ)`.
+Each antinode region becomes a memory block. Vectors with rotational
+or radial access geometry can land in contiguous addresses; vectors
+that graze nodal lines pay a penalty.
+
+Measured on real GPU at GRID=2048² (13 MB DRAM-resident buffer),
+mode (n=6, m=4):
+
+| trace                       | speedup        | interpretation              |
+|-----------------------------|----------------|------------------------------|
+| `radial_mid_pi6` (midline)  | **1.53× cym**  | sector-aligned win           |
+| `circular_r030` (small r)   | **1.38× cym**  | radial-band scan             |
+| `radial_bnd_pi4` (boundary) | **0.54× cym**  | nodal-line slowdown (1.85×)  |
+| `radial_bnd_5pi12` (boundary)| **0.53× cym** | nodal-line slowdown (1.89×)  |
+| `rowmajor_full` (sequential)| **0.66× cym**  | row layout's native pattern  |
+| `random`, `polar_tile_*`    | 0.97–1.07×     | tie                          |
+
+Best win 1.53× and worst loss 1.89× are symmetric in magnitude — the
+layout doesn't add or remove cycles overall, it redistributes them
+across access patterns. Useful when the workload's geometry is fixed
+and known (polar warps, FFT butterflies, attention with rotation
+bias). Avoid when access pattern is generic.
+
+Full bench: [phase4/cymatic/](phase4/cymatic/), theory:
+[docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md),
+postmortem: [docs/gpu_reflections.md Observation T](docs/gpu_reflections.md).
+
+---
 
 ## Hardware
 
-| Property | Value |
-|---|---|
-| GPU | RTX 3070 Ti (GA104) |
-| Architecture | Ampere |
-| Compute Capability | sm_86 |
-| CUDA Cores | 6144 (48 SMs x 128) |
-| Tensor Cores | 3rd gen (FP16, BF16, TF32, INT8) |
-| VRAM | 8 GB GDDR6X |
-| FP32 Peak | ~21.7 TFLOPS |
-| FP16 Tensor Peak | ~174 TFLOPS |
-| Shared Memory/SM | 128 KB (up to 99 KB per block) |
-| Registers/SM | 64K x 32-bit |
+| Property             | Value                              |
+|----------------------|------------------------------------|
+| GPU                  | RTX 3070 Ti Laptop (GA104)         |
+| Architecture         | Ampere                             |
+| Compute Capability   | sm_86                              |
+| SMs                  | 46–48 (laptop bin: 46)             |
+| CUDA cores           | 5,888 (46 × 128) on this bin       |
+| Tensor cores         | 3rd gen (FP16, BF16, TF32, INT8)   |
+| VRAM                 | 8 GB GDDR6X                        |
+| **FP32 peak**        | **21.7 TFLOPS**                    |
+| **FP16 Tensor peak** | **174 TFLOPS**                     |
+| **INT8 Tensor peak** | **348 TOPS**                       |
+| **DRAM bandwidth**   | **608 GB/s**                       |
+| L2 cache             | 4 MB                               |
+| Shared memory / SM   | up to 100 KB                       |
+| Registers / SM       | 65,536 × 32-bit                    |
 
-## The Accessible Stack
+### The 50 KB cliff
+Smem ≤ 50 KB/block → 2 blocks/SM (8 warps active).
+Smem > 50 KB/block → 1 block/SM (4 warps active) → measured 2× regression.
+Most of this project's "tile size" decisions are dictated by this cliff.
 
-```
-CUDA C/C++          <- you write this
-     |
-     v nvcc
-PTX (Virtual ISA)   <- documented, portable, stable ABI
-     |
-     v ptxas (driver JIT)
-SASS (Native ISA)   <- sm_86, undocumented, reverse-engineered  <-- WE WORK HERE
-     |
-     v [SIGNATURE WALL - cryptographic, cannot cross]
-Driver / Firmware   <- locked
-```
-
-## Toolchain
-
-- **nvcc** — CUDA compiler (CUDA 12.x)
-- **cuobjdump** — disassemble cubin to SASS
-- **nvdisasm** — raw disassembly with control codes
-- **CuAssembler** — Python tool: modify and reassemble SASS (`tools/CuAssembler/`)
-- **CUDA Driver API** — load cubin directly, bypass nvcc link step
-
-## Setup
-
-See [setup.md](setup.md) for environment installation.
-
-Run `python scripts/verify_setup.py` to confirm everything is working.
+---
 
 ## Phases
 
-| Phase | Description | Status | Highlight |
-|---|---|---|---|
-| 0 | Environment setup — CUDA 12.8, CuAssembler, WSL | ✅ Done | CuAssembler roundtrip verified |
-| 1 | Hello World: vector add, FADD→FMUL hand-modification | ✅ Done | First SASS edit proven correct |
-| 2 | ML primitives: SGEMM, HGEMM, softmax, layernorm, activations | ✅ Done | 7,853 GFLOPS HGEMM via HMMA.16816.F32 |
-| 3 | Flash Attention: scalar → 4-warp → Br=16 HMMA (19× speedup) | ✅ Done | 2.8 ms at seq=1024 with Tensor Cores |
-| 4 | Diffusion UNet: timestep emb, GroupNorm, Conv2d, ResNet, cross-attn | ✅ Done | Full SASS primitive inventory |
-| 5 | Sparse GEMM, INT8 quantization, optimized epilogues | ✅ Done | 41,930 sparse-equiv GFLOPS |
+| Phase | Topic                                         | Status | Highlight                                             |
+|-------|-----------------------------------------------|--------|-------------------------------------------------------|
+| 0     | Environment: CUDA 12.8, CuAssembler, WSL      | ✅     | CuAssembler roundtrip verified                        |
+| 1     | Vector add, FADD→FMUL hand-modification       | ✅     | First SASS edit proven correct                        |
+| 2     | ML primitives: SGEMM, HGEMM, softmax, layernorm, activations | ✅ | 31,910 GFLOPS HGEMM via HMMA.16816.F32      |
+| 3     | Flash Attention: scalar → 4-warp → Br=16 HMMA | ✅     | **1.60× cumulative** post-session, 11,453 GFLOPS    |
+| 4     | Diffusion UNet: timestep, GroupNorm, conv2d, ResNet, cross-attn | ✅ | Full SASS primitive inventory + cymatic study |
+| 5     | Sparse 2:4 GEMM, INT8 quant, optimized epilogues | ✅  | 41,721 sparse-equiv GFLOPS                            |
 
-## Phase 5 — Sparse & Quantized GEMM (Complete)
+---
 
-| Kernel | Highlight | Peak Result |
-|--------|-----------|-------------|
-| Sparse HGEMM 2:4 | `mma.sp` with ldmatrix | 41,721 dense-equiv GFLOPS |
-| Sparse IGEMM 2:4 | INT8 sparse Tensor Cores | 39,674 dense-equiv TOPS at 2048³ |
-| Online FP16→INT8 | Quantize on-the-fly in kernel | 16,646 GFLOPS (2.1× vs naive HGEMM) |
-| Bank-conflict-free INT8 | Optimized smem epilogue | 17,070 GFLOPS |
+## Toolchain
 
-> Phase 5 represents the optimization frontier: sparse patterns, INT8 quantization, and tuned epilogues. See [`docs/gpu_reflections.md`](docs/gpu_reflections.md) for the full empirical analysis.
+| Tool                   | Purpose                                              |
+|------------------------|------------------------------------------------------|
+| **`nvcc`**             | CUDA compiler (CUDA 12.x)                            |
+| **`cuobjdump -sass`**  | disassemble cubin to SASS                            |
+| **`nvdisasm`**         | raw disassembly with control codes                   |
+| **`CuAssembler`**      | Python tool: modify and reassemble SASS              |
+| **CUDA Driver API**    | load cubin directly, bypass nvcc link step           |
+| **R + ggplot2**        | offline analysis: roofline, occupancy, smem layout   |
 
-## Current Best Results (RTX 3070 Ti Laptop)
+```bash
+# Compile
+nvcc --cubin -arch=sm_86 -O2 -o kernel.sm_86.cubin kernel.cu
 
-### GEMM
-| Kernel | Size | Performance | % Peak |
-|--------|------|-------------|--------|
-| HGEMM 16-warp | 4096³ | **31,910 GFLOPS** | 18.3% |
-| HGEMM sparse 2:4 | 2048³ | **41,930** dense-equiv GFLOPS | — |
-| IGEMM 128×256 (1 blk/SM) | 4096³ | **27,591 TOPS** | 4.0% |
-| IGEMM pipelined cp.async | 4096³ | **20,688 TOPS** | 3.0% |
-| IGEMM 128×256 (1 blk/SM) | 4096³ | **27,591 TOPS** | 4.0% |
-| Online FP16→INT8 quant | 4096³ | **17,070 GFLOPS** | 9.6% |
-| Sparse INT8 mma.sp | 2048³ | **39,674 dense-equiv TOPS** | — |
+# Inspect
+cuobjdump -sass kernel.sm_86.cubin | grep -E 'HMMA|LDSM|STS' | head
 
-### Flash Attention
-| Kernel | Config | Time | GFLOPS |
-|--------|--------|------|--------|
-| Flash Attention Br=16 regpv | seq=1024, b=8, h=8 | **2.81 ms** | **6,112** |
+# Round-trip via CuAssembler (compile → disasm → reassemble → bit-identical)
+python scripts/build.py roundtrip kernel.cu
+```
 
-### Diffusion UNet
-| Kernel | Config | Time | Performance |
-|--------|--------|------|-------------|
-| Implicit GEMM conv2d | 64×64, Cin=Cout=320 | **1.13 ms** | **6,687 GFLOPS** |
+See [setup.md](setup.md) for environment install. Run
+`python scripts/verify_setup.py` to confirm everything is working.
 
-## Phase 4 Results Summary
+---
 
-All components of a Stable Diffusion UNet block implemented and verified:
+## Documentation
 
-| Kernel | SASS Instructions | Performance |
-|--------|------------------|-------------|
-| Timestep embedding | `MUFU.SIN`, `MUFU.COS`, `MUFU.EX2` | 153 GB/s at d=512, batch=1024 |
-| GroupNorm (NHWC) | `SHFL.BFLY`, `MUFU.RSQ`, `MUFU.RCP` | 28–74 GB/s |
-| GroupNorm+SiLU fused | above + `MUFU.EX2` for SiLU | reads X once (saves 1 tensor pass) |
-| Conv2d 3×3 direct | `FFMA` (310 per pass, 9×unrolled) | 265–299 GFLOPS |
-| Conv2d implicit GEMM | `HMMA.16816.F32`, precomputed coords | 6,687 GFLOPS (22× over direct) |
-| ResNet Block | all of the above + `FADD` | 265 GFLOPS at SD 320ch 16×16 |
-| Cross-attention | `HMMA.16816.F32`, `SHFL.BFLY`, `MUFU.EX2` | 2,255 GFLOPS at 32×32 with CLIP-77 |
+### Tutorial series — `docs/tutorial/` (~20K words, full prose)
 
-## Key References
+| Chapter | Topic                                                                  |
+|---------|------------------------------------------------------------------------|
+| 01      | [SASS Hello World](docs/tutorial/01-sass-hello-world.md) — toolchain, FADD→FMUL |
+| 02      | [GEMM from Scratch](docs/tutorial/02-gemm-from-scratch.md) — naive → 16-warp HGEMM |
+| 03      | [INT8 Tensor Cores](docs/tutorial/03-int8-tensor-cores.md) — IMMA, online quant, 2:4 sparse |
+| 04      | [Software Pipelining](docs/tutorial/04-software-pipelining.md) — cp.async regime analysis |
+| 05      | [Flash Attention](docs/tutorial/05-flash-attention.md) — 9 versions including 3 instructive failures |
+| 06      | [The Four Laws](docs/tutorial/06-the-four-laws.md) — synthesis chapter |
 
-- [CuAssembler](https://github.com/cloudcores/CuAssembler) — the SASS assembler we use
-- [CUDA Binary Utilities](https://docs.nvidia.com/cuda/cuda-binary-utilities/) — cuobjdump, nvdisasm docs
-- [Ampere Tuning Guide](https://docs.nvidia.com/cuda/ampere-tuning-guide/) — performance optimization
+### Reference
+
+- [docs/gpu_reflections.md](docs/gpu_reflections.md) — postmortem catalog: 20+ observations from real optimization work
 - [docs/ampere_sass_reference.md](docs/ampere_sass_reference.md) — quick SASS instruction reference
 - [docs/control_codes.md](docs/control_codes.md) — stall counts, barriers, yield
 - [docs/memory_hierarchy.md](docs/memory_hierarchy.md) — GA104 memory system
-- [docs/fragment_shfl_reductions.md](docs/fragment_shfl_reductions.md) — eliminate smem round-trips via on-fragment intra-group shfl reductions
-- [docs/tutorial/](docs/tutorial/) — complete 6-chapter tutorial (~20K words, full prose): SASS hello-world, GEMM, INT8, pipelining, Flash Attention, Four Laws synthesis
-- [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md) + [phase4/cymatic/](phase4/cymatic/) — Chladni-pattern memory layout study with measured GPU benchmarks (1.53× win on mode-aligned access, 1.89× loss on nodal-line access; conditional, not universal)
+- [docs/fragment_shfl_reductions.md](docs/fragment_shfl_reductions.md) — eliminate smem round-trips via on-fragment intra-group shfl
+
+### R analysis scripts — `scripts/*.R`
+
+| Script                        | Use                                                       |
+|-------------------------------|-----------------------------------------------------------|
+| `occupancy_calc.R`            | block params → warps/SM, bottleneck identifier            |
+| `perf_model_panel.R`          | roofline + memory ceiling for given (M, N, K)             |
+| `pipeline_balance.R`          | compute/memory ratio per inner-loop tile                  |
+| `analyze_smem_layout.R`       | bank-conflict prediction for ldmatrix.x4                  |
+| `find_optimal_smem_layout.R`  | sweep over (BM, BN, BK) for 2 blocks/SM                   |
+| `kernel_dashboard.R`          | combined dashboard of all four                            |
+| `cymatic_mapping.R` + `_analyze.R` + `_visualize.R` | Chladni layout, region map, trace analysis |
+| `generate_readme_figures.R`   | regenerate the figures shown above                        |
+
+### Speculative
+
+- [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md) +
+  [phase4/cymatic/](phase4/cymatic/) — Chladni-pattern memory layout
+  with measured GPU benchmarks. Conditional 1.53× win on
+  mode-aligned access, 1.89× loss on nodal-line access.
+
+---
+
+## Reproducibility
+
+- All performance numbers are post-warmup, median of 11 runs (or noted otherwise)
+- Every kernel has a `bench.cu` with CPU-reference correctness check (tolerance documented per kernel)
+- Build commands listed in each phase's `README.md`
+- Figures in `docs/figures/` regenerated by `Rscript scripts/generate_readme_figures.R`
+- This entire README's claims are traceable to specific files in the repo
+
+---
+
+## Project structure
+
+```
+phase1/             — Vector add: first SASS hand-edit
+phase2/             — ML primitives
+  sgemm/            — naive → tiled → register-blocked
+  hgemm/            — basic WMMA → 16-warp 128×128 (31,910 GFLOPS)
+  hgemm_sparse/     — 2:4 sparse mma.sp (41,721 dense-equiv)
+  igemm/            — INT8 IMMA progression + sparse + online quant
+  softmax/          — warp-reduction softmax
+  layernorm/        — fused stats + normalize
+  activations/      — MUFU SASS for tanh/exp/rcp
+phase3/
+  flash_attention/  — scalar → 4-warp → Br=16 HMMA → v2 smem-elim → v2_pipeline (1.60×)
+phase4/             — Diffusion UNet primitives
+  timestep_emb/     — sin/cos via MUFU
+  groupnorm/        — fused stats + SiLU
+  conv2d/           — direct 9× → implicit GEMM (22× win)
+  resblock/         — full UNet block, 7.01× via implicit GEMM
+  cross_attention/  — HMMA + SHFL + MUFU; regime-dependent v2
+  cymatic/          — speculative Chladni-pattern memory layout study
+docs/
+  tutorial/         — 6-chapter tutorial series
+  figures/          — regenerable plots (R + ggplot2)
+  gpu_reflections.md — postmortem catalog
+  ampere_sass_reference.md, control_codes.md, memory_hierarchy.md
+scripts/            — R analysis + Python build/setup helpers
+tools/CuAssembler/  — third-party SASS assembler (git clone)
+```
+
+---
+
+## Key references
+
+- [CuAssembler](https://github.com/cloudcores/CuAssembler) — the SASS assembler
+- [CUDA Binary Utilities](https://docs.nvidia.com/cuda/cuda-binary-utilities/)
+- [Ampere Tuning Guide](https://docs.nvidia.com/cuda/ampere-tuning-guide/)
+- [Flash Attention 2 paper](https://arxiv.org/abs/2307.08691) — the algorithmic basis
+- [NVIDIA Sparse Tensor Cores](https://developer.nvidia.com/blog/exploiting-ampere-structured-sparsity-with-cusparselt/) — 2:4 pattern reference
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
