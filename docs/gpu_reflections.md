@@ -1989,3 +1989,76 @@ power-of-2 multiple of the bank period. Five of six benefited from
 padding (the sixth, plain hgemm_16warp, was already padded). **The
 diagnostic-and-fix pattern is now well-established**: NCU bank conflict
 counter + +8 row stride = mechanical 1.4-2.4× wins.
+
+---
+
+## Observation Z — `smsp__sass_average_data_bytes_per_sector` undercounts cp.async (issue #100)
+
+**TL;DR**: The `load_coalesce_bytes=16` reported on the FA pipeline
+variant (vs baseline's 31) is **a metric accounting artifact, not a
+real coalescing problem**. cp.async / LDGSTS instructions are counted
+at twice their actual sector consumption by the SASS-level ratio
+metric; the L1tex byte/sector counters confirm perfect 32 B/sector
+coalescing. Issue closed as non-issue.
+
+### Cross-check on raw counters
+
+NCU on FA seq=1024, b=8, h=8:
+
+| metric | baseline (LDG.E) | pipeline_pad2 (LDGSTS.E.128) |
+|---|---:|---:|
+| `l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum` | 285,212,192 | 318,767,104 |
+| `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum` | 8,912,881 | 9,961,472 |
+| **bytes/sector (computed manually)** | **32.0** | **32.0** |
+| `smsp__sass_average_data_bytes_per_sector_mem_global_op_ld.ratio` | 31.06 | **16.00** |
+
+The L1tex counters show **identical 32 B/sector** for both variants —
+both are perfectly coalesced. The SASS-level `bytes_per_sector` ratio
+disagrees with itself: baseline 31.06 vs pipeline 16.00 despite the
+raw byte/sector count being identical.
+
+### Mechanism
+
+`smsp__sass_average_data_bytes_per_sector_mem_global_op_ld.ratio`
+divides requested bytes by **predicted sectors** at SASS issue time.
+Its sector accounting appears to double-count cp.async (LDGSTS)
+because the instruction performs both a global load AND a shared store
+in one issue — the metric apparently attributes 2 sector accesses per
+L1tex sector for cp.async paths.
+
+### Validation method (for future audits)
+
+When the SASS-ratio metric reports an anomaly, **always cross-check
+with raw L1tex counters**:
+
+```
+real_bytes_per_sector = l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum /
+                        l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum
+```
+
+If `real_bytes_per_sector` differs from the SASS ratio, **trust the
+L1tex value**. The SASS ratio is misleading on cp.async-heavy kernels.
+
+### Implications for prior observations
+
+- Observation U's note that pipeline had `load_coalesce_bytes=16` was
+  a tooling miss — the variant's coalescing was always perfect.
+- The coalescing column in `docs/ncu_metrics.md` should be annotated
+  with this caveat for cp.async kernels.
+- The real bottleneck for the pipeline variant was always bank
+  conflicts (Observation W) and HMMA queue pressure, not coalescing.
+
+### Diagnostic quality lesson
+
+Three observations into the NCU work (U, V, Z), three of the metrics
+in the harness needed reinterpretation or were outright misleading:
+
+| metric | issue | resolution |
+|---|---|---|
+| `stall_math_throttle` | thought to be address arithmetic | Obs V: HMMA queue pressure |
+| `l1_hit_pct` (low on cp.async) | thought to be cache-bypass loss | expected (cp.async bypasses L1) |
+| `smsp__sass_avg_bytes_per_sector` | thought to be coalescing | Obs Z: under-counts cp.async 2× |
+
+**Pattern**: SASS-level/SM-level synthetic ratios drift from raw L1tex
+counters under cp.async. Always pair ratio metrics with raw byte and
+sector counts to detect tooling artifacts.
