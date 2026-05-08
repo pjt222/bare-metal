@@ -1901,3 +1901,91 @@ any algorithm change.
 The next ceiling is compute-throttle (`stall_math_throttle` 1.4-3.2)
 which corresponds to HMMA queue saturation — only addressable via
 SASS-level instruction reordering (issue #96).
+
+---
+
+## Observation Y — HGEMM bank conflict audit + epi variant fix (issues #98, #99)
+
+**TL;DR**: NCU bank-conflict counter validated `hgemm_16warp` (0.17%
+conflict rate) — existing `PAD_A=8 PAD_B=8` is correct. But
+`hgemm_16warp_epi` (a fork that pre-dated the padding) had **75.9%
+conflict rate**. Adding the same padding gives **1.41× speedup** (18.0 →
+25.4 TFLOPS at 4096³ HGEMM). Closes both issues.
+
+### #98: hgemm_16warp audit — confirms existing padding works
+
+NCU on `hgemm_16warp` (4096³, B=4096):
+
+| metric | value |
+|---|---:|
+| bank_conflicts (sum) | 133K |
+| load wavefronts (sum) | 80M |
+| **conflict rate** | **0.17%** |
+
+Existing `PAD_A=8 PAD_B=8` (giving STRIDE_A=40, STRIDE_B=136) eliminates
+bank conflicts as designed. The 35.46 `stall_math_throttle` measured in
+Observation U is genuinely **HMMA queue pressure** (per Observation V
+falsification) — not bank conflicts. Confirms Observation V's null
+hypothesis: HGEMM 16-warp is at its single-block-config compute ceiling,
+needs SASS hand-tuning (#96) to break further.
+
+### #99: hgemm_16warp_epi — bank conflicts were the over-syncing source
+
+NCU on `hgemm_16warp_epi` (the "fused epilogue" variant):
+
+| metric | unpadded | full pad (PAD_A=8 PAD_B=8) |
+|---|---:|---:|
+| bank_conflicts (sum) | 347.9M | **8.9M** (-97%) |
+| load wavefronts (sum) | 458.3M | 67.6M (-85%) |
+| **conflict rate** | **75.9%** | **13.2%** |
+| TC util % | 26.05 | **31.91** (+22%) |
+| stall_short_sb | 16.82 | **0.05** (-99.7%) |
+| stall_mio | 20.98 | **5.06** (-76%) |
+| stall_barrier | 17.32 | **7.94** (-54%) |
+| GFLOPS @ 4096³ | 18029 | **25403** (+41%) |
+
+Root cause: the variant was forked from `hgemm_16warp` *before* PAD_A/PAD_B
+was added there. Both `smem_a` (stride 32 halfs = 64 B = ½ bank period) and
+`smem_b` (stride 128 halfs = 256 B = 2× bank period) hit the bank
+period exactly, generating 4-way and 8-way LDSM conflicts respectively.
+
+The "over-syncing" interpretation in Observation U was wrong direction:
+the barrier stalls were a *consequence* of conflict-throttled smem
+traffic, not the cause. Eliminating conflicts dropped barrier stall 17 → 8.
+
+### Implementation note: smem cap workaround
+
+Padding both buffers raises smem to 53 KB, exceeding the 48 KB **static**
+smem cap on sm_86. The kernel was converted from `__shared__` to
+`extern __shared__ char smem_raw[]` with a layout map — host code uses
+`cuFuncSetAttribute(..., MAX_DYNAMIC_SHARED_SIZE_BYTES, ...)` to allow
+the larger allocation.
+
+This pushes the kernel to 1 block/SM (53 KB > 50 KB cliff). The
+conflict-elimination wins (1.41×) outweighs the occupancy loss because
+the original variant was already memory-throttled at 2 blocks/SM.
+
+### Files
+
+- `phase2/hgemm/hgemm_16warp_epi_pad.cu` — padded variant (dynamic smem)
+- `phase2/hgemm/bench_epi_pad.cu` — A/B harness
+- `results/ncu/99_epi_pad.csv` — NCU output
+- The original `hgemm_16warp_epi.cu` is preserved as the counter-example
+  (75.9% conflict rate documented in Observation U).
+
+### Pattern emerging across the codebase
+
+| kernel | bank conflict rate | speedup from fix |
+|---|---:|---:|
+| FA v2 pipeline | 87.5% → 2.2% | 2.36× (Obs W) |
+| FA v2 baseline | (similar) → ~3% | 1.91× (Obs X) |
+| FA v2 persistent | (similar) → ~3% | 2.08× (Obs X) |
+| Cross-attention v2 (typical) | (similar) → ~3% | 1.91× (Obs X) |
+| HGEMM 16-warp | 0.17% (already padded) | n/a |
+| HGEMM 16-warp_epi | 75.9% → 13% | 1.41× (this Obs) |
+
+Five of six measured kernels had smem layouts where row stride was a
+power-of-2 multiple of the bank period. Five of six benefited from
+padding (the sixth, plain hgemm_16warp, was already padded). **The
+diagnostic-and-fix pattern is now well-established**: NCU bank conflict
+counter + +8 row stride = mechanical 1.4-2.4× wins.
