@@ -1,7 +1,9 @@
 
 	code for sm_86
+	.target	sm_86
+
 		Function : vector_add
-	.headerflags	@"EF_CUDA_TEXMODE_UNIFIED EF_CUDA_64BIT_ADDRESS EF_CUDA_SM86 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM86)"
+	.headerflags	@"EF_CUDA_SM86 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM86)"
         /*0000*/                   MOV R1, c[0x0][0x28] ;                             /* 0x00000a0000017a02 */
                                                                                       /* 0x000fe40000000f00 */
         /*0010*/                   S2R R6, SR_CTAID.X ;                               /* 0x0000000000067919 */

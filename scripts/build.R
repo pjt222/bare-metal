@@ -15,16 +15,13 @@
 #   Rscript scripts/build.R roundtrip phase1/vector_add.cu
 #   Rscript scripts/build.R all       phase1/vector_add.cu
 #
-# Note on language: disasm/assemble depend on the CuAssembler library
-# (cloudcores/CuAssembler), which is Python-only. Those two operations
-# import CuAssembler via reticulate. Everything else (compile, file
-# comparison, orchestration) is pure R.
+# disasm/assemble use the cuasmR R package (R/cuasmR/, install via
+#   Rscript -e 'install.packages("R/cuasmR", repos=NULL, type="source")'
+# or renv::install("R/cuasmR")). cuasmR shells out to nvdisasm for SASS
+# decoding and patches the cubin at the byte level for hand edits.
+# Replaced upstream Python CuAssembler (#102).
 
-library(reticulate)
-
-# Use system python3 -- has sympy/pyelftools/etc. that CuAssembler needs.
-# reticulate's default ephemeral environment won't have these.
-use_python("/usr/bin/python3", required = TRUE)
+library(cuasmR)
 
 REPO_ROOT <- {
   args_full <- commandArgs(trailingOnly = FALSE)
@@ -32,7 +29,6 @@ REPO_ROOT <- {
   if (length(fa)) normalizePath(dirname(dirname(sub("^--file=", "", fa[1]))))
   else            normalizePath(getwd())
 }
-CUASSEMBLER_PATH <- file.path(REPO_ROOT, "tools", "CuAssembler")
 SM_ARCH          <- "sm_86"
 
 # WSL: CUDA tools live in /usr/local/cuda/bin
@@ -44,28 +40,6 @@ if (dir.exists(CUDA_BIN) && !grepl(CUDA_BIN, Sys.getenv("PATH"), fixed = TRUE)) 
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
-# Lazily import CuAssembler via reticulate. Returns the two needed
-# Python modules. CuAssembler is added to sys.path on first use.
-.cuasm_modules <- NULL
-ensure_cuassembler <- function() {
-  if (!is.null(.cuasm_modules)) return(.cuasm_modules)
-  if (!dir.exists(CUASSEMBLER_PATH)) {
-    cat(sprintf("ERROR: CuAssembler not found at %s\n", CUASSEMBLER_PATH))
-    cat("Run: git clone https://github.com/cloudcores/CuAssembler.git tools/CuAssembler\n")
-    quit(status = 1)
-  }
-  # Push CuAssembler onto sys.path. reticulate auto-converts sys.path to
-  # an R character vector when accessed via $; manipulate it from Python
-  # to keep the underlying list mutable for subsequent imports.
-  reticulate::py_run_string(sprintf(
-    "import sys\nif r'%s' not in sys.path: sys.path.insert(0, r'%s')",
-    CUASSEMBLER_PATH, CUASSEMBLER_PATH))
-  cubin_mod  <- reticulate::import("CuAsm.CubinFile")
-  parser_mod <- reticulate::import("CuAsm.CuAsmParser")
-  .cuasm_modules <<- list(cubin = cubin_mod, parser = parser_mod)
-  .cuasm_modules
-}
-
 run_shell <- function(cmd, cwd = NULL) {
   cat(sprintf("  $ %s\n", cmd))
   rc <- if (is.null(cwd)) {
@@ -100,8 +74,16 @@ cmd_compile <- function(source_path, output_path = NULL, extra_flags = "") {
   output_path
 }
 
+# disasm: produce a human-readable .cuasm dump alongside the original
+# cubin via cuasmR. The .cuasm file lists each instruction with its
+# instr_hex / ctrl_hex words; hand-edits modify those columns and the
+# patched cubin is rebuilt by reading the .cuasm back, applying edits
+# to the in-memory cuasm object, and calling cuasm_write().
+#
+# For the typical edit workflow we recommend driving cuasmR from a
+# small R script (cuasm_set + cuasm_write), but the .cuasm dump is
+# kept for reference and grep-friendly inspection.
 cmd_disasm <- function(cubin_path, output_path = NULL) {
-  mods <- ensure_cuassembler()
   cubin_path <- normalizePath(cubin_path, mustWork = TRUE)
   if (is.null(output_path)) {
     output_path <- sub("\\.cubin$", ".cuasm", cubin_path)
@@ -109,11 +91,13 @@ cmd_disasm <- function(cubin_path, output_path = NULL) {
   output_path <- normalizePath(output_path, mustWork = FALSE)
 
   cat(sprintf("\n[disasm] %s -> %s\n", cubin_path, output_path))
-  cubin_obj <- mods$cubin$CubinFile(cubin_path)
-  cubin_obj$saveAsCuAsm(output_path)
-  cat(sprintf("  -> %s (%d bytes)\n", output_path, file.info(output_path)$size))
+  obj <- cuasm_read(cubin_path)
+  cuasm_save_cuasm(obj, output_path)
+  cat(sprintf("  -> %s (%d bytes, %d kernels, %d insns)\n",
+              output_path, file.info(output_path)$size,
+              nrow(obj$kernels), nrow(obj$insns)))
 
-  # Also produce raw nvdisasm output for reference
+  # Also produce raw nvdisasm/cuobjdump output for reference
   raw_sass_path <- sub("\\.cubin$", ".sass", cubin_path)
   sass_out <- suppressWarnings(
     system2("cuobjdump", c("-sass", shQuote(cubin_path)),
@@ -127,48 +111,36 @@ cmd_disasm <- function(cubin_path, output_path = NULL) {
   output_path
 }
 
+# assemble: with cuasmR the patch path is byte-level on the original
+# cubin ("compile a sibling .cu, copy the encoding, call cuasm_set").
+# This sub-command is kept as a stub that simply reports the supported
+# flow; we do NOT parse the .cuasm text dump back into a cubin (the
+# upstream CuInsAssembler approach). The .cuasm file is reference
+# material; edits drive cuasm_write() directly.
 cmd_assemble <- function(cuasm_path, output_path = NULL) {
-  mods <- ensure_cuassembler()
-  cuasm_path <- normalizePath(cuasm_path, mustWork = TRUE)
-  if (is.null(output_path)) {
-    # vector_add.sm_86.cuasm -> vector_add.sm_86.reassembled.cubin
-    output_path <- sub("\\.cuasm$", ".reassembled.cubin", cuasm_path)
-  }
-  output_path <- normalizePath(output_path, mustWork = FALSE)
-
-  cat(sprintf("\n[assemble] %s -> %s\n", cuasm_path, output_path))
-  parser <- mods$parser$CuAsmParser()
-  parser$parse(cuasm_path)
-  parser$saveAsCubin(output_path)
-  cat(sprintf("  -> %s (%d bytes)\n", output_path, file.info(output_path)$size))
-  output_path
+  cat("\n[assemble] cuasmR uses byte-level patching, not text-to-cubin.\n")
+  cat("  To apply hand edits, write a small R script:\n\n")
+  cat("      library(cuasmR)\n")
+  cat("      obj <- cuasm_read(\"path/to/kernel.sm_86.cubin\")\n")
+  cat("      obj <- cuasm_set(obj, kernel = \"name\", slot = N,\n")
+  cat("                       instr_hex = \"0x...\", ctrl_hex = \"0x...\")\n")
+  cat("      cuasm_write(obj, \"path/to/kernel.patched.cubin\")\n\n")
+  cat("  See docs/cuasm_r.md for the full workflow.\n")
+  invisible(NULL)
 }
 
 cmd_roundtrip <- function(source_path) {
-  cat(sprintf("\n[roundtrip] Testing CuAssembler stability on %s\n", source_path))
-  cat("  This compiles, disassembles, reassembles, and checks the result matches.\n\n")
+  cat(sprintf("\n[roundtrip] cuasmR stability on %s\n", source_path))
+  cat("  Compiles, reads via cuasmR, writes back, and checks byte-identical.\n\n")
 
-  cubin_path  <- cmd_compile(source_path)
-  cuasm_path  <- cmd_disasm(cubin_path)
-  reassembled <- cmd_assemble(cuasm_path)
-
-  original_size  <- file.info(cubin_path)$size
-  reassembled_sz <- file.info(reassembled)$size
-  cat("\n[roundtrip] Comparing cubins:\n")
-  cat(sprintf("  Original:     %s (%d bytes)\n", cubin_path, original_size))
-  cat(sprintf("  Reassembled:  %s (%d bytes)\n", reassembled, reassembled_sz))
-
-  # Bytewise compare
-  bytes_orig <- readBin(cubin_path,  raw(), n = original_size)
-  bytes_re   <- readBin(reassembled, raw(), n = reassembled_sz)
-  if (length(bytes_orig) == length(bytes_re) && all(bytes_orig == bytes_re)) {
-    cat("  RESULT: IDENTICAL -- CuAssembler roundtrip is stable. Safe to hand-edit.\n")
-  } else {
-    cat("  RESULT: DIFFERENT -- Cubins differ.\n")
-    cat("  This may be OK (CuAssembler may reorder some metadata).\n")
-    cat("  Run both cubins and compare outputs to verify correctness.\n")
-  }
-  cuasm_path
+  cubin_path <- cmd_compile(source_path)
+  cuasm_path <- cmd_disasm(cubin_path)
+  ok <- cuasm_roundtrip_check(cubin_path)
+  cat(sprintf("\n[roundtrip] %s -> %s\n",
+              cubin_path,
+              if (ok) "BYTE-IDENTICAL (safe to hand-edit)"
+              else    "DIFFERS (cuasmR bug -- file an issue)"))
+  invisible(ok)
 }
 
 cmd_all <- function(source_path) {
@@ -214,4 +186,6 @@ main <- function() {
   )
 }
 
+# Defer execution to top-level only when called as a script. The
+# `cuasmR` package must already be installed (see scripts/install_cuasmR.R).
 if (sys.nframe() == 0L) main()

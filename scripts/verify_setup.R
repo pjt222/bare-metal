@@ -13,7 +13,7 @@ REPO_ROOT <- {
   if (length(fa)) normalizePath(dirname(dirname(sub("^--file=", "", fa[1]))))
   else            normalizePath(getwd())
 }
-CUASSEMBLER_PATH <- file.path(REPO_ROOT, "tools", "CuAssembler")
+
 
 # WSL: CUDA tools live in /usr/local/cuda/bin -- prepend to PATH if missing.
 CUDA_BIN <- "/usr/local/cuda/bin"
@@ -66,25 +66,16 @@ check_command <- function(label, cmd, expected_substring = NULL) {
   TRUE
 }
 
-PYTHON <- if (dir.exists("/usr/local/cuda")) "python3" else "python"
 
-check_python_import <- function(label, import_statement) {
-  r <- run_command(sprintf('%s -c "%s" 2>&1', PYTHON, import_statement))
-  if (!r$success) {
-    cat(sprintf("%s %s\n       %s\n", FAIL, label, r$output))
-    return(FALSE)
-  }
-  cat(sprintf("%s %s\n", PASS, label))
-  TRUE
-}
-
-check_cuassembler_path <- function() {
-  if (dir.exists(CUASSEMBLER_PATH)) {
-    cat(sprintf("%s CuAssembler directory exists: %s\n", PASS, CUASSEMBLER_PATH))
+check_cuasmR <- function() {
+  ok <- requireNamespace("cuasmR", quietly = TRUE)
+  if (ok) {
+    ver <- as.character(packageVersion("cuasmR"))
+    cat(sprintf("%s cuasmR R package installed (v%s)\n", PASS, ver))
     return(TRUE)
   }
-  cat(sprintf("%s CuAssembler not found at: %s\n", FAIL, CUASSEMBLER_PATH))
-  cat(sprintf("       Run: git clone https://github.com/cloudcores/CuAssembler.git tools/CuAssembler\n"))
+  cat(sprintf("%s cuasmR R package not installed\n", FAIL))
+  cat("       Run: Rscript scripts/install_cuasmR.R\n")
   FALSE
 }
 
@@ -134,24 +125,8 @@ main <- function() {
   results <- c(results, check_gpu_info())
   cat("\n")
 
-  cat("-- Python Dependencies --\n")
-  results <- c(results,
-    check_python_import("pyelftools", "import elftools; print('ok')"),
-    check_python_import("sympy",       "import sympy; print('ok')"))
-  cat("\n")
-
-  cat("-- CuAssembler --\n")
-  cuasm_dir_ok <- check_cuassembler_path()
-  results <- c(results, cuasm_dir_ok)
-  if (cuasm_dir_ok) {
-    results <- c(results,
-      check_python_import("CuAssembler import",
-        sprintf("import sys; sys.path.insert(0, r'%s'); from CuAsm.CubinFile import CubinFile; print('CubinFile ok')",
-                CUASSEMBLER_PATH)),
-      check_python_import("CuAsmParser import",
-        sprintf("import sys; sys.path.insert(0, r'%s'); from CuAsm.CuAsmParser import CuAsmParser; print('CuAsmParser ok')",
-                CUASSEMBLER_PATH)))
-  }
+  cat("-- SASS Hand-Edit Toolchain --\n")
+  results <- c(results, check_cuasmR())
   cat("\n")
 
   cat("-- sm_86 Compilation Test --\n")

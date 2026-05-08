@@ -27,17 +27,15 @@ Rscript -e 'renv::restore()'
 Required packages:
 - `jsonlite` — JSON parse (bench_regress.R)
 - `ggplot2`, `scales`, `patchwork` — figures (sass_histogram.R, dashboards)
-- `reticulate` — Python interop for build.R (CuAssembler is Python-only)
 - `dplyr`, `tidyr`, `tibble`, `rmarkdown`, `yaml` — used by other R helpers
+- `testthat` — unit tests for the local cuasmR package
+- `cuasmR` — local R package (`R/cuasmR/`) for SASS hand-edits, install
+  via `Rscript scripts/install_cuasmR.R`
 
-**reticulate config**: `build.R` calls `use_python("/usr/bin/python3", required=TRUE)`
-so CuAssembler imports against the system Python that has `sympy` and
-`pyelftools` installed. Without this, reticulate falls back to its own
-ephemeral venv that doesn't have those deps.
-
-**Tooling language policy**: R is the primary language for all `scripts/*`.
-Python is acceptable only when no R alternative exists (currently only
-CuAssembler import via reticulate, used in `build.R`).
+**Tooling language policy**: R is the primary language for everything
+under `scripts/*` and `R/*`. There are no Python dependencies at
+run-time; the previous reliance on `cloudcores/CuAssembler` (Python) was
+replaced by the local `cuasmR` R package (#102, see `docs/cuasm_r.md`).
 
 ## CAUTION: Do Not Modify System Installations
 
@@ -72,33 +70,38 @@ cuobjdump -sass kernel.sm_86.cubin | grep -E 'HMMA|SHFL|MUFU|FFMA'
 cuobjdump -sass kernel.sm_86.cubin | grep HMMA | wc -l
 ```
 
-### CuAssembler Workflow (SASS hand-editing)
+### SASS Hand-Edit Workflow (cuasmR)
 
 ```bash
-# Via build.py (preferred)
-Rscript scripts/build.R compile kernel.cu          # .cu → .cubin
-Rscript scripts/build.R disasm kernel.sm_86.cubin  # .cubin → .cuasm (editable)
-Rscript scripts/build.R assemble kernel.cuasm      # .cuasm → .cubin (after edits)
-Rscript scripts/build.R roundtrip kernel.cu        # compile → disasm → reassemble → verify identical
+# CLI driver
+Rscript scripts/build.R compile   kernel.cu             # .cu -> .cubin
+Rscript scripts/build.R disasm    kernel.sm_86.cubin    # .cubin -> .cuasm dump
+Rscript scripts/build.R roundtrip kernel.cu             # compile + read+write byte-identical check
 
-# Direct CuAssembler (when build.py isn't suitable)
-python3 -c "
-import sys; sys.path.insert(0, 'tools/CuAssembler')
-from CuAsm.CubinFile import CubinFile
-CubinFile('path/to/kernel.cubin').saveAsCuAsm('kernel.cuasm')
-"
+# Programmatic edits (typical flow):
+Rscript -e '
+  library(cuasmR)
+  obj <- cuasm_read("path/to/kernel.sm_86.cubin")
+  obj <- cuasm_set(obj, kernel = "my_kernel", slot = 13,
+                   instr_hex = "0x...", ctrl_hex = "0x...")
+  cuasm_write(obj, "path/to/kernel.patched.cubin")
+'
 ```
+
+New opcode encodings come from disassembling a sibling `.cu` (compile,
+`cuasm_read`, copy `instr_hex` for the desired instruction). Full
+documentation in `docs/cuasm_r.md`.
 
 ### Environment Verification
 
 ```bash
-Rscript scripts/verify_setup.R   # checks CUDA, nvcc, GPU, CuAssembler
+Rscript scripts/verify_setup.R   # checks CUDA, nvcc, GPU, cuasmR
 ```
 
 ## Architecture
 
 ```
-CUDA C++ (.cu) → nvcc → PTX → ptxas → SASS (.cubin) → CuAssembler → .cuasm (hand-edit) → .cubin
+CUDA C++ (.cu) -> nvcc -> PTX -> ptxas -> SASS (.cubin) -> cuasmR (R) -> patched .cubin
 ```
 
 ### Phase Structure
@@ -111,8 +114,10 @@ Each phase directory contains kernel `.cu` files, `bench_*.cu` benchmarks, a `Ma
 - **phase4/** — Diffusion UNet: `timestep_emb/`, `groupnorm/`, `conv2d/`, `resblock/`, `cross_attention/`
 - **phase2/common/** — Shared headers (`bench.h`, `check.h`) included by all benchmarks
 - **docs/** — Deep technical references (SASS instruction set, control codes, memory hierarchy, optimization postmortems)
-- **scripts/** — `build.py` (compile/disasm/assemble/roundtrip), `verify_setup.py`
-- **tools/CuAssembler/** — Third-party SASS assembler (git clone, not submodule)
+- **scripts/** — `build.R` (compile / disasm / roundtrip), `verify_setup.R`,
+  `install_cuasmR.R`, NCU + bench harnesses
+- **R/cuasmR/** — local R package replacing upstream CuAssembler (#102);
+  reads cubins via nvdisasm, byte-patches `.text` slots
 
 ### Shared Headers
 

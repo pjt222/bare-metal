@@ -57,18 +57,29 @@ Every new kernel directory **must** have a `README.md` with:
 
 ## SASS Hand-Editing Workflow
 
-When modifying SASS via CuAssembler:
+When modifying SASS via the local R package `cuasmR` (see `docs/cuasm_r.md`):
 
 1. Run `Rscript scripts/build.R roundtrip kernel.cu` before any edits
+   (verifies cuasmR can byte-identical roundtrip the cubin)
 2. Make **one** change at a time
 3. Test correctness after each change
 4. Document the change and measured effect in the commit message
 
-The CuAssembler control code format:
+The edit pattern is byte-level: read instr_hex / ctrl_hex, modify, write
+back. Example FADD -> FMUL on Phase 1:
+```r
+library(cuasmR)
+obj <- cuasm_read("phase1/vector_add.sm_86.cubin")
+obj <- cuasm_set(obj, "vector_add", slot = 13,
+                 instr_hex = "0x0000000304097220",   # FMUL opcode
+                 ctrl_hex  = "0x004fca0000400000")
+cuasm_write(obj, "phase1/vector_add.fmul.cubin")
 ```
-[B0-----:R-:W0:Y:S04]  FADD R0, R2, R6 ;
-```
-See `docs/control_codes.md` for field meanings.
+
+New opcode encodings come from disassembling a sibling `.cu`. The cuasmR
+`cuasm_save_cuasm()` produces a human-readable text dump showing each
+slot's `instr_hex` / `ctrl_hex` for grep-friendly inspection. See
+`docs/control_codes.md` for control-word field meanings.
 
 ### Benchmark Regression Check
 

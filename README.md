@@ -1,7 +1,7 @@
 # bare-metal GPU
 
 > **Hand-optimized SASS assembly kernels targeting RTX 3070 Ti (GA104, sm_86, Ampere).**
-> No cuBLAS, no cuDNN, no PyTorch. Just nvcc, cuobjdump, and CuAssembler.
+> No cuBLAS, no cuDNN, no PyTorch. Just nvcc, cuobjdump, and our R-native cubin patcher (cuasmR).
 
 The accessible stack ends at SASS:
 
@@ -19,7 +19,7 @@ Driver / Firmware   ← locked
 ```
 
 Every kernel in this repo is built up from `nvcc` to `cubin`, disassembled
-with `cuobjdump`, optionally hand-edited via [CuAssembler](https://github.com/cloudcores/CuAssembler),
+with `cuobjdump`, optionally hand-edited via the local R package [cuasmR](docs/cuasm_r.md),
 reassembled, and run on a real RTX 3070 Ti Laptop. Performance numbers
 are measured (median of 11 runs after 5 warmup iterations), not
 extrapolated.
@@ -136,7 +136,7 @@ deliberately does not implement to keep code readable:
 4. **Hand-tuned tile sizes** per (M, N, K) range
 5. **XOR-swizzled smem layouts** vs simple `+8` padding
 6. **Split-Q parallelism** for attention (the dominant FA gap factor)
-7. **Hand-written SASS** for inner loops (we use nvcc + limited CuAssembler edits)
+7. **Hand-written SASS** for inner loops (we use nvcc + cuasmR byte-level edits)
 
 The relevant comparison is not "how close to cuBLAS" but **"how close
 to peak per line of code"**. cuBLAS is ~4 million lines; CUTLASS
@@ -212,7 +212,7 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 
 | Phase | Topic                                         | Status | Highlight                                             |
 |-------|-----------------------------------------------|--------|-------------------------------------------------------|
-| 0     | Environment: CUDA 12.8, CuAssembler, WSL      | ✅     | CuAssembler roundtrip verified                        |
+| 0     | Environment: CUDA 13.2, cuasmR, WSL           | ✅     | cuasmR byte-identical roundtrip verified              |
 | 1     | Vector add, FADD→FMUL hand-modification       | ✅     | First SASS edit proven correct                        |
 | 2     | ML primitives: SGEMM, HGEMM, softmax, layernorm, activations | ✅ | 31,910 GFLOPS HGEMM via HMMA.16816.F32      |
 | 3     | Flash Attention: scalar → 4-warp → Br=16 HMMA | ✅     | **1.60× cumulative** post-session, 11,453 GFLOPS    |
@@ -228,7 +228,7 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 | **`nvcc`**             | CUDA compiler (CUDA 12.x)                            |
 | **`cuobjdump -sass`**  | disassemble cubin to SASS                            |
 | **`nvdisasm`**         | raw disassembly with control codes                   |
-| **`CuAssembler`**      | Python tool: modify and reassemble SASS              |
+| **`cuasmR`** (local R) | byte-level cubin patcher (replaces upstream CuAssembler) |
 | **CUDA Driver API**    | load cubin directly, bypass nvcc link step           |
 | **R + ggplot2**        | offline analysis: roofline, occupancy, smem layout   |
 
@@ -239,12 +239,12 @@ nvcc --cubin -arch=sm_86 -O2 -o kernel.sm_86.cubin kernel.cu
 # Inspect
 cuobjdump -sass kernel.sm_86.cubin | grep -E 'HMMA|LDSM|STS' | head
 
-# Round-trip via CuAssembler (compile → disasm → reassemble → bit-identical)
-python scripts/build.py roundtrip kernel.cu
+# Round-trip via cuasmR (compile -> disasm -> rewrite -> byte-identical)
+Rscript scripts/build.R roundtrip kernel.cu
 ```
 
 See [setup.md](setup.md) for environment install. Run
-`python scripts/verify_setup.py` to confirm everything is working.
+`Rscript scripts/verify_setup.R` to confirm everything is working.
 
 ---
 
@@ -291,8 +291,9 @@ See [setup.md](setup.md) for environment install. Run
 | `ncu_profile.R`               | wraps `ncu` for one kernel → markdown row with 15 metrics |
 | `bench_regress.R`             | runs benches vs `docs/baselines.json`, fails on >10% drop |
 | `bench_flash_all.R`           | runs all FA variants in `phase3/`, comparison table       |
-| `build.R`                     | compile / disasm / assemble / roundtrip (CuAssembler via reticulate) |
-| `verify_setup.R`              | environment check (CUDA, GPU, Python deps, CuAssembler)   |
+| `build.R`                     | compile / disasm / roundtrip (uses local cuasmR R package) |
+| `install_cuasmR.R`            | (re)install the local cuasmR R package into renv          |
+| `verify_setup.R`              | environment check (CUDA, GPU, cuasmR)                     |
 | `fix_cuda_context.R`          | migrate bench `cuCtxCreate` → `cuDevicePrimaryCtxRetain`   |
 
 All R scripts use the renv project library (`renv.lock`, R 4.6.0).
@@ -343,15 +344,15 @@ docs/
   figures/          — regenerable plots (R + ggplot2)
   gpu_reflections.md — postmortem catalog
   ampere_sass_reference.md, control_codes.md, memory_hierarchy.md
-scripts/            — R analysis + Python build/setup helpers
-tools/CuAssembler/  — third-party SASS assembler (git clone)
+scripts/            -- R analysis + build harnesses
+R/cuasmR/           -- local R package: SASS hand-edit toolchain
 ```
 
 ---
 
 ## Key references
 
-- [CuAssembler](https://github.com/cloudcores/CuAssembler) — the SASS assembler
+- [docs/cuasm_r.md](docs/cuasm_r.md) — cuasmR design (R-native replacement for upstream CuAssembler)
 - [CUDA Binary Utilities](https://docs.nvidia.com/cuda/cuda-binary-utilities/)
 - [Ampere Tuning Guide](https://docs.nvidia.com/cuda/ampere-tuning-guide/)
 - [Flash Attention 2 paper](https://arxiv.org/abs/2307.08691) — the algorithmic basis
