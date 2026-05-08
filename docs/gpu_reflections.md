@@ -2273,3 +2273,91 @@ in some regimes, just less than previously thought.
 bash scripts/ncu_profile_all.sh    # refresh results/ncu/all.csv
 Rscript scripts/roofline_measured.R
 ```
+
+---
+
+## Observation CC — register pressure audit, 0 spills across 103 kernels (#91)
+
+**TL;DR**: `cuobjdump --dump-resource-usage` across all 103 cubins
+shows **zero register spills** anywhere. The aggressive end of the
+register-budget curve (IGEMM 256x256 at 255 regs/thread, hgemm_256x128
+at 124×512) is sitting at 97-99.6% of the SM's 65,536-register
+register file but never overflows. Tight management.
+
+### Audit results
+
+| metric | value |
+|---|---:|
+| total kernels                                  | 103 |
+| spillers (LOCAL > 0)                           | **0** |
+| dynamic-smem kernels (`extern __shared__`)      | 11 |
+| median regs/thread                              | 64 |
+| 90th-pct regs/thread                            | 168 |
+| max regs/thread                                 | **255** (sm_86 hard cap) |
+
+### Block-budget cliff: 8 register-saturated kernels
+
+These kernels hit the register file ceiling (1 block/SM) due to
+register pressure alone, not smem:
+
+| kernel | regs | block_size | regs/block | % SM regs |
+|---|---:|---:|---:|---:|
+| igemm_8warp_256x256        | 255 | 256 | 65280 | **99.6%** |
+| igemm_warp_specialized     | 255 | 256 | 65280 | 99.6% |
+| hgemm_256x128              | 124 | 512 | 63488 | 96.9% |
+| igemm_online_quant         | 239 | 256 | 61184 | 93.4% |
+| igemm_persistent           | 234 | 256 | 59904 | 91.4% |
+| igemm_online_quant_inplace | 213 | 256 | 54528 | 83.2% |
+| igemm_online_quant_bankfree| 211 | 256 | 54016 | 82.4% |
+| igemm_8warp_256            | 210 | 256 | 53760 | 82.0% |
+
+Each uses 80-100% of the SM register file at its launch_bounds. They
+cannot get to 2 blocks/SM without dropping register count or block
+size. The IGEMM family is **register-bound** — not smem-bound, not
+spill-bound — and reducing register count is the only path to higher
+occupancy.
+
+### Cross-check with previous observations
+
+| kernel | this audit | prior claim | match |
+|---|---|---|---|
+| `flash_attn_br16_v2_pipeline_pad2` | 133 regs, theo 3 blocks/SM | "2 blocks/SM" (Obs W) | ✓ launch_bounds clamps at 2 |
+| `hgemm_16warp_epi_pad`             | 124 regs, dynamic smem | "1 block/SM, 53 KB smem" (Obs Y) | ✓ smem clamps below register budget |
+| `hgemm_16warp`                     | 64 regs, 37 KB smem    | "2 blocks/SM, 32 warps/SM" (Obs U) | ✓ |
+
+### Implications for #96 SASS hand-tune target selection
+
+Top candidates for SASS hand-tuning (#96, blocked by #101) given the
+audit:
+
+1. **HGEMM 16-warp (64 regs)** — has register headroom. Could
+   trade more registers for fewer reloads, but already at the HMMA
+   queue-pressure ceiling (Obs V). SASS-side reordering, not register
+   reallocation, is the path.
+
+2. **IGEMM 8warp_256 family** — register-saturated but 0 spill.
+   Hand-tuning the IMMA control codes (S04 → S02, see Phase 5 results
+   in the issue) could give +1.6% per IMMA according to past
+   experiments. This is the cleanest target.
+
+3. **FA v2 pipeline_pad2** — 133 regs at 2 blocks/SM. Has register
+   headroom. Worth investigating whether HMMA-issue scheduling can be
+   tightened.
+
+### Tooling
+
+- `scripts/reg_audit.R` — the audit (256 lines)
+- `docs/register_audit.csv` — full per-kernel data
+- `docs/register_audit.md` — Markdown report
+
+The launch_bounds parser handles the common pattern of macro-defined
+block sizes (`__launch_bounds__(NUM_WARPS * WARP_SIZE, 2)`) by
+extracting `#define` directives from the same `.cu` and resolving
+them iteratively. 67/103 kernels resolved their block size this way;
+the remaining 36 didn't have `__launch_bounds__` (default 1024).
+
+### Re-run
+
+```
+Rscript scripts/reg_audit.R
+```
