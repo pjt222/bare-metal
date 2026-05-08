@@ -2722,3 +2722,116 @@ A-load). Both are addressable in v3.
   cp.async, FP16 input)
 - `phase4/conv2d/bench_implicit_v2.cu` — standalone conv A/B
 - `phase4/resblock/bench_implicit_v2.cu` — full ResBlock pipeline A/B
+
+---
+
+## Observation HH — IMMA stall hand-tunes do not reproduce on CUDA 13.2 (#96 sub-task A)
+
+**TL;DR**: Observation 14 documented a +1.6% gain from rewriting IMMA
+`S04 → S02` stall counts via CuAssembler. With cuasmR (#102) on the
+current CUDA 13.2 toolchain, **neither S08→S04 nor S04→S02 produces a
+statistically significant speedup**. Across 6 IGEMM kernels:
+
+  - `S08 → S04` geomean: **0.996×** (range 0.99-1.01)
+  - `S04 → S02` geomean: **0.992×** (range 0.96-1.00)
+
+Best individual case (`igemm_8warp_256x256`, 156 S08 IMMA → S04, 5
+reps): **+1.7% mean, p = 0.215** — within noise.
+
+The historical hand-tune is no longer reachable. ptxas under CUDA 13.2
+appears to schedule IMMA stalls correctly already; what was a
+compiler-conservative S04 in CUDA 11.x is now whatever the hardware
+needs, and what was S08 in CUDA 11.x is also whatever the hardware
+needs.
+
+### What was tried
+
+`scripts/handtune_imma_s04.R` (cuasmR-based) walks each IGEMM cubin,
+finds every IMMA whose stall field (bits 40:43 of the 64-bit control
+word) equals `from_stall`, rewrites to `to_stall`, and writes a
+patched cubin alongside the original.
+
+Two passes:
+
+| pass | from | to | candidates per kernel |
+|---|---|---|---|
+| A | S08 | S04 | 7-156 (top: igemm_8warp_256x256) |
+| B | S04 | S02 | 0-33  (top: igemm_8warp_tribuf) |
+
+Bench: file-swap A/B against `phase2/igemm/bench`, 5 reps each.
+
+### Results
+
+| kernel | n_changed (s08→s04) | speedup | n_changed (s04→s02) | speedup |
+|---|---:|---:|---:|---:|
+| `igemm_8warp_256x256`     | 156 | 1.013× | 2  | 0.999× |
+| `igemm_8warp_tribuf`      | 25  | 0.988× | 33 | 1.002× |
+| `igemm_8warp`  (128x128)  | 19  | 0.991× | 11 | 1.001× |
+| `igemm_pipelined`         | 11  | 1.000× | 1  | 0.998× |
+| `igemm_pipelined_cpasync` | 7   | 0.993× | 1  | 0.997× |
+| `igemm_tiled`             | 7   | 0.990× | 0  | 0.957× (noise) |
+| `igemm_warp_specialized`  | 9   | -      | 8  | -      |
+|                          |     |        |    |        |
+| **geomean**              |     | **0.9957×** |  | **0.9919×** |
+
+The 5-rep validation on the most-changed kernel
+(`igemm_8warp_256x256`, 156 S08 IMMA -> S04):
+
+  - orig:    11623 ± 283 GFLOPS (2.44% sd)
+  - patched: 11821 ± 151 GFLOPS (1.28% sd)
+  - speedup: 1.017×, 95% CI [0.987, 1.047], **p = 0.215**
+
+Noise floor at this kernel size is 1-2% per rep. Any sub-1% mean
+shift cannot be claimed without ~50 reps and tight thermal control.
+
+### Why the historical pattern stopped working
+
+Three plausible factors compound:
+
+1. **ptxas got better.** Compilers track per-arch latency tables; the
+   gap between "compiler conservative" and "hardware optimal" narrows
+   release over release. The Obs 14 finding (CUDA 11.x era) was a
+   small, repeatable win at that toolchain level.
+2. **GA104 clock variability.** Tensor Core frequency scales
+   thermally; on this laptop GPU the run-to-run variance is large
+   enough to swamp <2% effects without dedicated cooling and many
+   reps.
+3. **Stall fields aren't the bottleneck.** Each kernel here is L2
+   bandwidth-bound or L1tex-bound (per Obs BB). Reducing scheduler
+   stalls when the back-end isn't ready just exposes a different wait
+   state.
+
+### Sub-task B / C status
+
+Per #96 the issue had three sub-tasks:
+
+- **A** (S04→S02 across IMMA) — completed above, **negative result**.
+- **B** (HMMA stall audit) — Obs 14 already established HMMA S08 is
+  hardware-fixed; our ctrl-field decoder confirms HMMA stalls in
+  `hgemm_16warp` are S00/S08 with no reducible pattern. Filed as
+  superseded; no further investigation.
+- **C** (non-Tensor-Core hand-tunes) — speculative; left for future
+  work if measurement-driven evidence emerges.
+
+### Closing #96
+
+Closing as **negative result**. The 1.10× "hand-written SASS inner
+loops" gap factor in `docs/comparison_to_sota.md` is over-estimated
+relative to current ptxas; ~0% is the more honest number on CUDA 13.2.
+Real wins on these kernels come from algorithmic restructuring (Obs U
+through GG: smem padding +2.36×, K-split +4.57×, ResBlock 16-warp
++2.18×, dispatch 2.54×), not control-code micro-edits.
+
+cuasmR remains useful as a diagnostic tool: the IMMA-stall histogram
+across kernels (S00=18%, S02=39%, S04=14%, S06=12%, S08=17% across the
+audited cubins) is itself a signal of where the compiler thinks
+register-port contention lives.
+
+### Files
+
+- `scripts/handtune_imma_s04.R` -- cuasmR-driven patcher (S08→S04 and
+  S04→S02 modes)
+- `scripts/bench_imma_s04.R`, `scripts/bench_imma_s02.R` -- A/B bench
+  driver
+- `phase2/igemm/*.imma_s04.sm_86.cubin` -- patched cubins (kept for
+  reference, not used in any active bench)

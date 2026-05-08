@@ -10,6 +10,8 @@
 bench
 bench_*
 !bench_*.cu
+!scripts/bench_*.R
+!scripts/bench_*.py
 phase1/host
 test_dense_manual
 test_mma_sp
@@ -67,3 +69,8 @@ Thumbs.db
 cymatic_mapping.csv
 cymatic_mapping.rds
 cymatic_locality.csv
+
+# IMMA hand-tune experiment artifacts (#96 sub-task A, negative result; cubins
+# can be regenerated from scripts/handtune_imma_s04.R if needed).
+*.imma_s04.sm_86.cubin
+*.imma_s02.sm_86.cubin
