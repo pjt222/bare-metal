@@ -2062,3 +2062,107 @@ in the harness needed reinterpretation or were outright misleading:
 **Pattern**: SASS-level/SM-level synthetic ratios drift from raw L1tex
 counters under cp.async. Always pair ratio metrics with raw byte and
 sector counts to detect tooling artifacts.
+
+---
+
+## Observation AA — useful_pct trends across 103 kernels (issue #90)
+
+**TL;DR**: Median useful_pct = **12.5%**. Across 103 cubins in the
+repo, only ~12% of SASS instructions on average are doing arithmetic
+work (HMMA + IMMA + FFMA + FMUL + FADD). The other 88% is address
+arithmetic, smem traffic, and control flow. Tensor-Core-dense kernels
+look "low-useful_pct" because each HMMA dispatches 1024 FP16 multiplies
+under one SASS instruction.
+
+### Distribution
+
+NCU/cuobjdump scan via `scripts/sass_histogram.R` over all `.sm_86.cubin`
+in phase1-phase4 (excluding `test_/debug` paths):
+
+| quantile | useful_pct |
+|---:|---:|
+|   0% |  0.0% |
+|  10% |  2.7% |
+|  25% |  5.3% |
+|  50% | **12.5%** |
+|  75% | 26.8% |
+|  90% | 31.9% |
+| 100% | 50.4% |
+
+### Per-family means
+
+| family | n | mean useful_pct | max useful_pct |
+|---|---:|---:|---:|
+| Flash Attention      | 32 | **29.2%** | 40.8% |
+| Activation/norm      | 14 |    19.8%  | 38.9% |
+| Conv2d               |  2 |    10.1%  | 13.2% |
+| HGEMM/SGEMM/IGEMM    | 37 |     8.0%  | **50.4%** |
+| Other                | 13 |     7.0%  | 17.2% |
+| Data movement        |  5 |     0.0%  |  0.0% |
+
+### Why FFMA-dense beats HMMA-dense in useful_pct (but not in TFLOPS)
+
+Top kernel by useful_pct: `sgemm_register_blocked` at 50.4% — pure FP32
+register-blocked inner loop with 512 FFMAs in 1016 SASS instructions.
+But it runs at FP32, peaking around 21 TFLOPS at most.
+
+Top Tensor Core kernel by useful_pct: `flash_attn_br16_v2_bc128` at
+40.4%, with 128 HMMAs in 1496 instructions. Each HMMA performs
+16x8x16 = 2048 FP16 muladds — so 128 HMMAs do ~262K muladds, while the
+512 FFMAs in sgemm_register_blocked do 512 muladds.
+
+**Lesson**: useful_pct is a good "where is the inefficiency" metric for
+intra-family comparison (does this GEMM have more bookkeeping than that
+GEMM?). It is NOT a good cross-architecture/cross-precision metric. A
+30% useful_pct kernel using HMMA can outperform a 50% useful_pct kernel
+using FFMA by 5-10x on the tensor core.
+
+### What "0% useful" means
+
+Five kernels showed 0.0% useful_pct: type casts (`fp16_to_fp32`,
+`fp32_to_fp16`), transposes (`transpose_bhsd`, `transpose_bshd`),
+`im2col_nhwc_fp16`. These are pure data movement — they do no
+multiply-add. The instruction mix is LDG/STG/IMAD/STS only. Optimizing
+"useful_pct" on these would mean inserting useless arithmetic; instead,
+optimize for memory bandwidth (`dram__bytes_*` per launch) and L2 hit
+rate.
+
+### Bottom of the GEMM family
+
+| kernel | useful_pct | total_inst |
+|---|---:|---:|
+| `wmma_gemm_conv`     | 1.5% | 544 |
+| `implicit_gemm_conv` | 1.2% | 672 |
+| `hgemm_sparse_naive` | 0.4% | 456 |
+
+These are **bookkeeping-bound**. The naive sparse hgemm has 8x more
+ISETP/IMAD/BRA than HMMA — most of the kernel is unpacking the sparse
+metadata format. Targets for #96 (SASS hand-tune) or for algorithmic
+rewrites.
+
+### Practical rule of thumb on GA104
+
+- **High-performing TC kernel**: 25-40% useful_pct, mostly HMMA-driven
+- **High-performing scalar kernel**: 40-50% useful_pct (FFMA-driven)
+- **Below 5% useful_pct on a compute kernel**: structural bug —
+  the bookkeeping is doing all the work. Look for missing
+  `#pragma unroll`, shared-memory thrash, or dynamic indexing that
+  prevents constant folding.
+
+### Files
+
+- `scripts/sass_histogram.R` — scanner (replaces deleted Python original)
+- `docs/sass_histogram.csv` — full per-kernel data
+- `docs/sass_histogram.md`  — Markdown table sorted by useful_pct
+- `docs/figures/sass_histogram.png` — top-40 stacked bar visualization
+
+### Method
+
+Each cubin is disassembled with `cuobjdump -sass`, opcodes are matched
+in priority order to one of 25 categories, and `useful_pct` is the
+sum of (HMMA + IMMA + FFMA + FMUL + FADD) over total. The figure groups
+the 25 categories into 9 visual families. Re-run with:
+
+```
+Rscript scripts/sass_histogram.R --quiet
+```

@@ -224,6 +224,12 @@ main <- function() {
     "`useful_pct` = (HMMA + IMMA + FFMA + FMUL + FADD) / total_inst.",
     "Sort: highest `useful_pct` first.",
     "",
+    "![SASS instruction mix](figures/sass_histogram.png)",
+    "",
+    "See [Observation AA in `docs/gpu_reflections.md`](gpu_reflections.md)",
+    "for the trend analysis (median useful_pct = 12.5%, family rankings,",
+    "why FFMA-dense beats HMMA-dense in useful_pct but loses in TFLOPS).",
+    "",
     paste0("| ", paste(md_cols, collapse = " | "), " |"),
     paste0("|", paste(ifelse(md_cols == "kernel", "---", "---:"), collapse = "|"), "|")
   ), con)
