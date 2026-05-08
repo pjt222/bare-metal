@@ -303,3 +303,71 @@ Implementation costs:
 5. **Anisotropic mappings**: scale `r → r·cos(θ) + const` to bias
    regions toward an aspect ratio; might help when the workload has
    one dominant axis.
+
+## Mode selection (post-#93)
+
+**The default mode (n=6, m=4) is wrong for nearly every workload.**
+
+A 54-mode sweep (n ∈ 2..10, m ∈ 1..6, GRID=2048 = 13 MB DRAM) finds a
+better mode than (6, 4) on **all 15 traces**. Headline numbers:
+
+  - Per-trace best vs per-trace default: **+37% geomean**
+  - Largest single gain: **2.33×** on `radial_bnd_5pi12` (default
+    0.52× → best mode (9, 6) 1.21×)
+  - Best universal mode (one pick for all traces): **(n=5, m=4)**,
+    geomean 1.099× across 15 traces. Default (6, 4) geomean: 0.92×.
+
+Full results: `docs/figures/cymatic_optimize_2048.csv`.
+
+### Picking a mode for a known workload
+
+`scripts/cymatic_optimize.R <grid> <n_range> <m_range>` runs the sweep
+and writes per-trace heatmaps to `docs/figures/`. Run once for each
+distinct access pattern you care about; the script prints the top 5
+modes per trace.
+
+```bash
+# Full sweep (54 modes × ~50 s/mode = ~46 min)
+Rscript scripts/cymatic_optimize.R 2048 "2:10" "1:6"
+
+# Coarse sweep (15 modes ~ 13 min)
+Rscript scripts/cymatic_optimize.R 2048 "c(3,5,6,7,9)" "c(2,4,6)"
+
+# Re-run summary on existing CSV
+Rscript scripts/cymatic_optimize_summary.R
+```
+
+### What the per-trace optimum tells you
+
+The `(n, m)` that wins for a trace encodes three properties:
+
+  1. **Angular alignment**: large `n` packs the trace's dominant θ
+     into a single sector. Misalignment splits the trace across
+     opposite-sign regions and fragments addresses (see Issue #93's
+     hypothesis check).
+  2. **Radial granularity**: `m` controls how many radial bands the
+     trace must traverse. Low `m` keeps a radial sweep in one band
+     (contiguous addresses within a band); high `m` over-fragments.
+  3. **Total region count `n × m`**: too few regions and addresses
+     within a region degrade to non-coalesced cell ordering; too many
+     and inter-region jumps dominate.
+
+The clean "θ₀ = kπ/n midline" rule from #93 holds for some traces
+(`radial_mid_pi3` → n=6) but fails for others (`radial_mid_pi6` → n=2,
+not the predicted n=6). The empirical sweep is required; the analytic
+rule is a heuristic.
+
+### Implication for real kernels (#94)
+
+Treating cymatic as a drop-in layout swap with the default mode loses
+~10% on average and up to 1.9× on hostile traces. For #94's Flash
+Attention integration, mode selection has to be part of the design:
+
+  1. Trace the dominant `(query_idx, key_idx)` access pattern.
+  2. Map to cells via the same `i = query_idx, j = key_idx` convention
+     used in `phase4/cymatic/gen_cymatic_data.R`.
+  3. Sweep modes against this trace via `cymatic_optimize.R`.
+  4. Use the winning `(n, m)` in the actual K/V buffer permutation.
+
+Without step 3, the layout is just as likely to slow FA down as
+speed it up.

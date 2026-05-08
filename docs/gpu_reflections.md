@@ -2835,3 +2835,126 @@ register-port contention lives.
   driver
 - `phase2/igemm/*.imma_s04.sm_86.cubin` -- patched cubins (kept for
   reference, not used in any active bench)
+
+---
+
+## Observation II — Cymatic mode optimization: per-trace best beats default by 1.37× geomean (#93)
+
+**TL;DR**: Sweeping `(n, m)` ∈ {2..10}×{1..6} = 54 modes for the cymatic
+memory layout finds a better mode than the default (6, 4) on **every
+trace**. Per-trace best vs per-trace default geomean **1.371×**, with
+the worst-case trace (`radial_bnd_5pi12`, default 0.52× → best 1.21×)
+flipping from a 1.92× **slowdown** into a 1.21× speedup just by
+picking a different mode. The single best universal mode is (n=5,
+m=4), geomean 1.099× across 15 traces.
+
+### Methodology
+
+`scripts/cymatic_optimize.R` drives the sweep:
+
+  1. For each `(n, m)`: regenerate `phase4/cymatic/perm.bin` +
+     `traces.bin` via `gen_cymatic_data.R GRID n m`.
+  2. Run `bench_cymatic` (median-of-11 over 15 access traces, GRID=2048
+     buffer = 13 MB → DRAM regime where layout effects dominate).
+  3. Parse the per-trace `<float>x` speedup from stdout, append to a
+     long-form data frame.
+
+54 modes × ~50 s/mode ≈ 46 min wall clock on this GPU. Output:
+`docs/figures/cymatic_optimize_2048.csv` (810 rows). Summary +
+heatmaps via `scripts/cymatic_optimize_summary.R`.
+
+### Per-trace best modes
+
+| trace                | default(6,4) | best mode | best speed | gain vs default |
+|----------------------|---:|---|---:|---:|
+| `radial_bnd_5pi12`   | **0.52×** | (9, 6) | 1.21× | **2.33×** |
+| `circular_r060`      | 1.01× | (3, 6) | 1.84× | 1.82× |
+| `circular_r030`      | 1.35× | (4, 3) | 2.37× | 1.76× |
+| `radial_bnd_pi4`     | 0.70× | (6, 2) | 1.15× | 1.64× |
+| `polar_tile_pi6`     | 0.94× | (6, 6) | 1.36× | 1.45× |
+| `radial_bias_07`     | 0.84× | (3, 1) | 1.15× | 1.37× |
+| `polar_tile_pi4`     | 1.00× | (4, 6) | 1.32× | 1.32× |
+| `radial_bias_00`     | 1.21× | (7, 4) | 1.52× | 1.26× |
+| `rowmajor_full`      | 0.66× | (6, 1) | 0.81× | 1.23× |
+| `radial_mid_pi6`     | 1.39× | (2, 6) | 1.67× | 1.20× |
+| `colmajor_full`      | 1.00× | (2, 5) | 1.20× | 1.20× |
+| `radial_mid_0`       | 1.00× | (8, 1) | 1.18× | 1.18× |
+| `radial_mid_pi3`     | 0.98× | (6, 6) | 1.10× | 1.12× |
+| `radial_bnd_pi12`    | 1.00× | (6, 2) | 1.12× | 1.12× |
+| `random`             | 0.97× | (3, 4) | 1.05× | 1.08× |
+| **geomean**          | — | — | — | **1.371×** |
+
+### Best universal modes (geomean across all 15 traces)
+
+| rank | n | m | geomean | min trace | max trace |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 5 | 4 | 1.099× | 0.79× | 1.92× |
+| 2 | 8 | 5 | 1.087× | 0.76× | 1.40× |
+| 3 | 7 | 4 | 1.080× | 0.75× | 1.43× |
+| 4 | 9 | 6 | 1.081× | 0.71× | 1.92× |
+| 5 | 3 | 6 | 1.071× | 0.70× | 1.84× |
+| ... | | | | | |
+| -- | 6 | 4 | (default) 0.92× | 0.52× | 1.39× |
+
+The default (6, 4) is **below 1.0× geomean** — across the 15 traces
+its losses outweigh its wins. (5, 4) is the safest single pick if you
+must use one mode for everything.
+
+### Hypothesis check from #93
+
+> *For a radial sweep at θ=θ₀, the best mode should have a sector
+> midline at θ₀, i.e., n such that θ₀ = k·π/n.*
+
+Mixed evidence:
+
+| trace             | predicted n (kπ/n = θ₀) | best n | match? |
+|-------------------|---|---|---|
+| `radial_mid_0`    | any (θ=0)             | 8 | trivial (any n satisfies) |
+| `radial_mid_pi6`  | n ∈ {6, 12, 18, ...}  | 2 | **NO** |
+| `radial_mid_pi3`  | n ∈ {3, 6, 9, ...}    | 6 | **YES** |
+
+The clean midline-alignment story is too simple. The actual best mode
+depends on the interaction of:
+
+  1. Angular alignment of the trace with sector midlines (the
+     hypothesis above).
+  2. Radial-band count `m` matching the trace's r-extent.
+  3. **Total region count** `n × m`: too few regions and addresses
+     within a region degrade to non-coalesced cell ordering; too many
+     regions and the address space fragments.
+
+The latter two effects can dominate: `radial_mid_pi6` prefers (2, 6) =
+12 sectors over (6, 4) = 24 sectors despite the angular misalignment.
+At 12 sectors the trace fits into one sector's full radial range with
+internal contiguity that beats the angular-aligned but more-fragmented
+(6, *) modes.
+
+### Why this matters for #94
+
+Issue #94 wants to apply the cymatic layout to Flash Attention's K/V
+buffer. The (default, single-mode) approach measured here would lose
+on most FA access patterns because the default mode is geometrically
+arbitrary relative to attention's QK^T pattern. **Mode selection is
+not optional** — pick wrong, lose 1.9×; pick right, win 1.4×.
+
+This shifts #94's design: it's not "swap layout, measure speedup", it
+must be "characterize the FA access trace, pick mode by alignment,
+measure". The framework for that picking lives in
+`cymatic_optimize.R`.
+
+### Files
+
+- `scripts/cymatic_optimize.R`         — sweep driver (parameterizable)
+- `scripts/cymatic_optimize_summary.R` — post-process + plots
+- `docs/figures/cymatic_optimize_2048.csv`         — long-form data
+- `docs/figures/cymatic_optimize_2048_summary.csv` — best per trace
+- `docs/figures/cymatic_optimize_2048_facet.png`   — 15-trace heatmap
+- `docs/figures/cymatic_optimize_2048_geomean.png` — geomean heatmap
+- `docs/figures/cymatic_optimize_2048_<trace>.png` × 7 — focus plots
+
+### Closing #93
+
+Closing as **validated**. Mode selection alone delivers +37% geomean
+over default and unblocks #94 (which now needs an
+"alignment-driven mode picker" rather than treating layout as a free
+swap-in).
