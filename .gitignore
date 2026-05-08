@@ -14,8 +14,24 @@ phase1/host
 test_dense_manual
 test_mma_sp
 test_inplace_race
+test_counter
+test_persistent
+test_persistent_debug
+!test_*.cu
 verify_wmma_ab_layout
 verify_wmma_layout
+
+# Phase 4 conv2d debug binaries (sources are kept)
+phase4/conv2d/debug3
+phase4/conv2d/debug_implicit
+phase4/conv2d/debug_implicit2
+!phase4/conv2d/debug*.cu
+
+# Cubin backups
+*.cubin.baseline
+
+# Stray temp file from prior session (zero-byte tool error artifact)
+, None:0,parameters
 
 # Python
 __pycache__/

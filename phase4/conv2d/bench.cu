@@ -17,6 +17,29 @@
 
 #include "../../phase2/common/bench.h"
 #include "../../phase2/common/check.h"
+#include <unistd.h>
+
+// Helper: find cubin in CWD or in the binary's directory
+static bool find_cubin(const char *name, char *out_path, size_t out_len) {
+    if (access(name, R_OK) == 0) {
+        strncpy(out_path, name, out_len - 1);
+        out_path[out_len - 1] = '\0';
+        return true;
+    }
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        char *last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(out_path, out_len, "%s/%s", exe_path, name);
+            if (access(out_path, R_OK) == 0) return true;
+        }
+    }
+    return false;
+}
+
 
 // -----------------------------------------------------------------------
 // CPU reference: 3×3 NHWC direct convolution (same padding, stride=1)
@@ -103,8 +126,9 @@ int main(int argc, char **argv) {
     CHECK_CU(cuCtxSetCurrent(ctx));
 
     CUmodule mod;
+    char cubin_path[4096];
     CUfunction fn_3x3, fn_1x1;
-    if (cuModuleLoad(&mod, "conv2d.sm_86.cubin") != CUDA_SUCCESS) {
+    if ((find_cubin("conv2d.sm_86.cubin", cubin_path, sizeof(cubin_path)) ? cuModuleLoad(&mod, cubin_path) : CUDA_ERROR_FILE_NOT_FOUND) != CUDA_SUCCESS) {
         fprintf(stderr, "Cannot load conv2d.sm_86.cubin\n");
         return 1;
     }

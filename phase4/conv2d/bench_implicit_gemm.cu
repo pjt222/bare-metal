@@ -17,11 +17,33 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <unistd.h>
 #include <cuda.h>
 #include <cuda_fp16.h>
 
 #include "../../phase2/common/bench.h"
 #include "../../phase2/common/check.h"
+
+// Helper: find cubin in CWD or in the binary's directory
+static bool find_cubin(const char *name, char *out_path, size_t out_len) {
+    if (access(name, R_OK) == 0) {
+        strncpy(out_path, name, out_len - 1);
+        out_path[out_len - 1] = '\0';
+        return true;
+    }
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        char *last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(out_path, out_len, "%s/%s", exe_path, name);
+            if (access(out_path, R_OK) == 0) return true;
+        }
+    }
+    return false;
+}
 
 // ---- Tile constants (must match kernel files) ----
 #define BLOCK_M    64
@@ -122,8 +144,15 @@ int main(void) {
     CHECK_CU(cuCtxSetCurrent(cu_ctx));
 
     CUmodule mod_explicit, mod_implicit;
-    CHECK_CU(cuModuleLoad(&mod_explicit, "conv2d_im2col.sm_86.cubin"));
-    CHECK_CU(cuModuleLoad(&mod_implicit, "conv2d_implicit_gemm.sm_86.cubin"));
+    char cubin_path[4096];
+    if (!find_cubin("conv2d_im2col.sm_86.cubin", cubin_path, sizeof(cubin_path))) {
+        fprintf(stderr, "Cannot find conv2d_im2col.sm_86.cubin\n"); return 1;
+    }
+    CHECK_CU(cuModuleLoad(&mod_explicit, cubin_path));
+    if (!find_cubin("conv2d_implicit_gemm.sm_86.cubin", cubin_path, sizeof(cubin_path))) {
+        fprintf(stderr, "Cannot find conv2d_implicit_gemm.sm_86.cubin\n"); return 1;
+    }
+    CHECK_CU(cuModuleLoad(&mod_implicit, cubin_path));
 
     CUfunction fn_im2col, fn_gemm_explicit, fn_gemm_implicit;
     CHECK_CU(cuModuleGetFunction(&fn_im2col,       mod_explicit, "im2col_nhwc_fp16"));

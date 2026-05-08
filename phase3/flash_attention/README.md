@@ -245,3 +245,66 @@ The scalar kernels above are succeeded by `flash_attn_br16_regpv.cu`, which uses
 SASS: 64 HMMA per block (32 for QK^T + 32 for PV), SHFL.BFLY for online softmax reduction, MUFU.EX2 for attention weights.
 
 Bc=128 crosses the 50 KB smem cliff → 1 block/SM occupancy regression. Bc=64 stays under cliff → 2 blocks/SM optimal. See [`docs/gpu_reflections.md`](../docs/gpu_reflections.md) for full analysis.
+
+---
+
+## Phase 3d — flash_attn_br16_v2 (Current Canonical, Issue #29)
+
+The `flash_attn_br16_v2.cu` kernel is the result of a three-stage refactor of
+`flash_attn_br16_regpv` (issue #29, 2026-05-07). It is now the canonical
+high-performance Flash Attention kernel.
+
+### Performance (RTX 3070 Ti, sm_86)
+
+| Config | Baseline (regpv) | v2 | Speedup |
+|--------|------------------|-----|---------|
+| seq=512, batch=16, heads=16 | 2.80 ms | **1.76 ms** | **1.59×** |
+| seq=1024, batch=8, heads=8 | 2.45 ms | **1.75 ms** | **1.40×** |
+| seq=2048, batch=4, heads=8 | 4.87 ms | **3.46 ms** | **1.41×** |
+| seq=4096, batch=2, heads=8 | 10.12 ms | **6.86 ms** | **1.47×** |
+
+GFLOPS plateau: ~10 TFLOPS effective (5.7% of FP16 Tensor Core peak 174 TFLOPS).
+
+### What Changed
+
+1. **Lean per-thread softmax state**: `running_max[16]` + `running_sum[16]`
+   replaced with 4 floats/thread (`my_max_lo/hi`, `my_sum_lo/hi`). Saves ~24
+   regs/thread by eliminating broadcast-identical redundancy across the 32
+   lanes of a warp.
+
+2. **Q register cache**: query tile fragments hoisted out of the KV-base loop.
+   Compiler did not auto-hoist them (verified via SASS). Saves 16x redundant
+   L2 reads at seq=1024.
+
+3. **smem_work elimination**: the 16 KB FP32 round-trip buffer between Phase B
+   (QK^T) and Phase C (softmax) is replaced by on-fragment `__shfl_xor_sync`
+   reductions within each WMMA row group. FP16 weights write directly to a
+   small 8 KB smem region for Phase D PV; final pv_accum writes direct to
+   global O. **LDS+STS instruction count: 238 → 30 in cubin.**
+
+### SASS
+
+```bash
+cuobjdump -sass flash_br16_v2.sm_86.cubin | grep -E 'HMMA|LDSM|SHFL'
+```
+
+| Instruction | Count |
+|---|---|
+| HMMA | 64 (32 QK^T + 32 PV per kv iter, unchanged) |
+| LDSM (ldmatrix) | 48 (16 K + 16 W + 16 V, unchanged) |
+| LDS+STS | 30 (was 238 in regpv baseline) |
+| SHFL | added: intra-group reductions for max/sum |
+
+### Build
+
+```bash
+nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu
+nvcc -arch=sm_86 -O2 -o bench_br16_regpv_pad bench_br16_regpv_pad.cu \
+     -lcuda -I../../phase2/common
+./bench_br16_regpv_pad 1024 8 8
+```
+
+See [`docs/gpu_reflections.md`](../../docs/gpu_reflections.md) Observation P
+for the full optimization narrative, and
+[`docs/fragment_shfl_reductions.md`](../../docs/fragment_shfl_reductions.md)
+for the reusable pattern documentation.

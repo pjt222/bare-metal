@@ -19,6 +19,29 @@
 
 #include "../../phase2/common/bench.h"
 #include "../../phase2/common/check.h"
+#include <unistd.h>
+
+// Helper: find cubin in CWD or in the binary's directory
+static bool find_cubin(const char *name, char *out_path, size_t out_len) {
+    if (access(name, R_OK) == 0) {
+        strncpy(out_path, name, out_len - 1);
+        out_path[out_len - 1] = '\0';
+        return true;
+    }
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0) {
+        exe_path[len] = '\0';
+        char *last_slash = strrchr(exe_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(out_path, out_len, "%s/%s", exe_path, name);
+            if (access(out_path, R_OK) == 0) return true;
+        }
+    }
+    return false;
+}
+
 
 // ---- WMMA GEMM tile constants (must match conv2d_im2col.cu) ----
 #define GEMM_BLOCK_M   64
@@ -174,8 +197,12 @@ int main(int argc, char **argv) {
 
     // Load cubins
     CUmodule mod_im2col, mod_gemm;
-    CHECK_CU(cuModuleLoad(&mod_im2col, "conv2d_im2col.sm_86.cubin"));
-    CHECK_CU(cuModuleLoad(&mod_gemm,   "conv2d_im2col.sm_86.cubin"));   // both in same cubin
+    char cubin_path[4096];
+    if (!find_cubin("conv2d_im2col.sm_86.cubin", cubin_path, sizeof(cubin_path))) {
+        fprintf(stderr, "Cannot find conv2d_im2col.sm_86.cubin\n"); return 1;
+    }
+    CHECK_CU(cuModuleLoad(&mod_im2col, cubin_path));
+    CHECK_CU(cuModuleLoad(&mod_gemm,   cubin_path));
 
     CUfunction fn_im2col, fn_gemm;
     CHECK_CU(cuModuleGetFunction(&fn_im2col, mod_im2col, "im2col_nhwc_fp16"));

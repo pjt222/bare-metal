@@ -181,7 +181,7 @@ int main() {
 
     CUresult err = cuInit(0);
     CUdevice dev; cuDeviceGet(&dev, 0);
-    CUcontext ctx; cuCtxCreate(&ctx, 0, dev);
+    CUcontext ctx; cuCtxCreate(&ctx, NULL, 0, dev);
 
     CUmodule mod;
     err = cuModuleLoad(&mod, "verify_wmma_ab_layout.sm_86.cubin");
