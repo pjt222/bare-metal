@@ -2958,3 +2958,138 @@ Closing as **validated**. Mode selection alone delivers +37% geomean
 over default and unblocks #94 (which now needs an
 "alignment-driven mode picker" rather than treating layout as a free
 swap-in).
+
+---
+
+## Observation JJ — Cymatic on Flash Attention K/V: 1.12× upper bound, structurally consumed by cp.async (#94)
+
+**TL;DR**: Issue #94 step 1 done. The Flash Attention block-level
+access trace at seq=1024 (DRAM regime) tops out at **1.12× with
+optimal mode (n=9, m=4)** vs row-major. **Default cymatic (6, 4) is
+tied (1.01×).** Step 2 (real-kernel integration) is structurally
+infeasible: any practical permutation breaks cp.async (LDGSTS) vector
+loads, and the resulting overhead exceeds the layout's 12% benefit.
+
+### Trace setup
+
+`phase4/cymatic/gen_fa_traces.R` injects three FA-flavored access
+traces alongside the existing `rowmajor_full` control:
+
+| trace family | order | semantics |
+|---|---|---|
+| `fa_seqN_rowmajor` | (q, k) lexicographic | actual FA pipeline iteration order |
+| `fa_seqN_diagonal` | (q+k, q) | hypothetical diagonal scan (not used by current kernel) |
+| `fa_seqN_zigzag`   | rows alternate direction | hypothetical snake scan (not used by current kernel) |
+
+For each (q_block, k_block) pair, the trace expands into all
+`Bc × D_HEAD = 64 × 64 = 4096` cells visited inside the block (modeling
+per-element access). At seq=1024 with Br=16 Bc=64 D=64 → trace length
+= 64 × 16 × 4096 = 4,194,304 logical visits → 1,346,688 in-disc cells
+gathered after disc-mask filter.
+
+`scripts/cymatic_fa_alignment.R` runs the same 15-mode coarse sweep
+((n ∈ {3,5,6,7,9}) × (m ∈ {2,4,6})) used for the synthetic traces in
+Obs II.
+
+### Results at seq=512 vs seq=1024
+
+| trace                  | default (6, 4) | best mode | best speed |
+|------------------------|---:|---|---:|
+| **DRAM regime (seq=1024)** |   |   |   |
+| `fa_seq1024_rowmajor`  | 1.01× | (9, 4) | **1.12×** |
+| `fa_seq1024_diagonal`  | 0.98× | (6, 2) | 1.13× |
+| `fa_seq1024_zigzag`    | 1.07× | (7, 2) | **1.25×** |
+| **Cache regime (seq=512)** |   |   |   |
+| `fa_seq512_rowmajor`   | 1.11× | (9, 4) | 13.3× |
+| `fa_seq512_diagonal`   | 1.18× | (9, 6) | 15.6× |
+| `fa_seq512_zigzag`     | 0.20× | (9, 6) | 11.4× |
+| **Control**            |   |   |   |
+| `rowmajor_full` (synth) | 0.83× | (9, 4) | 0.87× |
+
+The seq=512 numbers are **L1/L2 sensitivity artifacts** (working set ≈
+3 MB fits in 4 MB L2 post-warmup). The 13×–15× "wins" are the trace
+falling into a beneficial cache replay pattern, not a layout property.
+The seq=1024 numbers (working set 13 MB, fully DRAM-resident) are the
+real measurement.
+
+### Why FA trace beats `rowmajor_full` (1.12× vs 0.87×)
+
+The synthetic `rowmajor_full` trace touches every in-disc cell exactly
+once. Cymatic permutation cannot help: any reordering of "scan all
+cells" still scans all cells. The layout's locality benefit is zero
+because there is nothing to localize.
+
+The FA trace is **sparse**: at seq=1024 in a 2048×2048 grid, only ~6%
+of cells are visited (those that fall under attention blocks). This
+sparsity is what cymatic permutation can exploit — by placing visited
+cells closer in HBM, we increase L2-line reuse during the scan.
+
+The 1.12× upper bound at mode (9, 4) is consistent with the measured
+geometry: at n=9 the angular sectors at θ = kπ/9 happen to roughly
+align with the attention-block boundaries when projected onto the
+2D grid via the FA trace mapping.
+
+### Why step 2 (real-kernel integration) cannot land the 12%
+
+Two options for applying the layout to the FA kernel:
+
+**(A) Per-element indirection in the kernel.**
+Change every `K[k * D + d]` to `K_data[perm[k] * D + d]`. Adds one
+extra LDG per element for `perm[k]`. Kills cp.async-LDGSTS vector
+loads (16-byte aligned contiguous → scalar gather). Estimated
+overhead: 30-60% perf loss (cp.async is the +35% optimization that
+landed in the canonical pipeline kernel; removing it removes that
+gain). Net effect of cymatic + indirection: **strongly negative**.
+
+**(B) Pre-permute K/V in HBM at allocation.**
+Allocate K such that the cell at logical (k, d) is physically at
+`K_data[perm(k, d)]`. Kernel reads `K[k * D + d]` unchanged. The
+permuted layout breaks the row-stride contiguity that cp.async
+assumes: a tile load `cp.async K_smem[bc][d] from K + (k0+bc)*D + d`
+reads from `K_data[perm(k0+bc, d)]` — addresses are no longer stride-D
+contiguous, so `cp.async.ca.b16` becomes scalar.
+
+Both options break cp.async. The ResBlock work (Obs GG) and the
+pad-2 work (Obs U) both rely on cp.async for their wins. The 12%
+layout benefit cannot offset the cp.async loss.
+
+### Possible future paths (not pursued)
+
+  1. **Block-coarse cymatic**: keep cells *within* a (Bc × D) tile
+     contiguous (preserves cp.async); only reorder tiles relative to
+     each other. At seq=1024 with Bc=64 D=64 there are only 16 tiles
+     in the K dimension and 1 in the D dimension. A 1D permutation of
+     16 elements has no useful structure for cymatic to exploit.
+     **Negligible expected benefit.**
+  2. **Restructure FA to gather access**: rewrite the kernel to use
+     persistent kernel + gather-style access, then apply per-element
+     permutation. The persistent-dispatch falsification (Obs DD)
+     showed +0% on the modular path; combined with this, expected
+     return is too low.
+  3. **Apply cymatic to a different kernel**: any kernel whose access
+     pattern is *both* sparse *and* not already cp.async-bound. The
+     ResBlock conv2d's im2col col buffer is contiguous-stride;
+     IGEMM/HGEMM K-buffers are contiguous-stride. The sparse +
+     scatter-gather workload doesn't naturally arise in the kernels
+     we care about.
+
+### Closing #94
+
+Closing as **measured-result, step 2 not pursued**. The 1.12× upper
+bound at mode (9, 4) is real but unreachable from any kernel
+restructuring that preserves cp.async, and cp.async is non-negotiable
+on these kernels. The acceptance criterion "speedup found / no
+speedup / slowdown — whichever, document mechanism" lands on the
+second branch: **no speedup is reachable in practice on this kernel
+family**.
+
+The framework built for #93/#94 (cymatic_optimize.R, gen_fa_traces.R,
+cymatic_fa_alignment.R) remains useful for any future kernel where
+sparse + non-cp.async workloads emerge.
+
+### Files
+
+- `phase4/cymatic/gen_fa_traces.R`        — FA-flavored trace builder
+- `scripts/cymatic_fa_alignment.R`        — sweep driver (step 1)
+- `docs/figures/cymatic_fa_alignment_2048.csv`        — long-form data
+- `docs/figures/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
