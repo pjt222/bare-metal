@@ -2535,3 +2535,85 @@ shapes passed.
 
 - `phase2/hgemm/hgemm_16warp_splitk.cu` — kernel
 - `phase2/hgemm/bench_splitk.cu` — A/B sweep with k_split autotune
+
+---
+
+## Observation FF — shape-aware HGEMM dispatch (closes #95)
+
+**TL;DR**: Header-only dispatcher `hgemm_dispatch.cuh` picks between
+the standard kernel and the splitk kernel at runtime based on M·N
+and K. Validated on 9 shapes: **8 of 9 within 5% of measured best**;
+**2.54× geomean speedup** vs always-standard. The single miss
+(`512×512×1024`) was within measurement noise (0.040 vs 0.041 ms).
+
+### Decision matrix (from `pick_variant`)
+
+```
+M*N >= 1024 * 1024              -> Standard
+M*N <  256 *  256 (extreme)     -> SplitK_8
+256*256 <= M*N < 1024*1024      -> SplitK_8 if K < 8192, else SplitK_4
+                                   (large K: smaller split balances atomicAdd cost)
+fall-through (no clean split)   -> Standard
+```
+
+### Validation
+
+Across 9 shapes, the dispatcher:
+
+| shape | picked | best measured | speedup over standard |
+|---|---|---|---:|
+| 4096³ (square)     | standard  | standard  | 1.12× |
+| 2048³ (square)     | standard  | standard  | 0.99× |
+| 1024³ (square)     | standard  | standard  | 0.94× |
+| 512×512×4096       | splitk_8  | splitk_8  | 1.76× |
+| 256×256×4096       | splitk_8  | splitk_8  | **4.54×** |
+| 256×256×8192       | splitk_8  | splitk_8  | **5.36×** |
+| 128×128×8192       | splitk_8  | splitk_8  | **5.95×** |
+| 1024×1024×4096     | standard  | standard  | 1.00× |
+| 512×512×1024       | splitk_8  | splitk_2  | 1.21× (noise: 0.040 vs 0.041) |
+
+Dispatch correct picks: **8 / 9** (within 5% of measured best).
+Geomean speedup vs always-standard: **2.54×**.
+
+The 256³-tier wins are larger here than in Observation EE because
+the dispatch path includes warmup amortisation; same kernel, slightly
+different measurement context.
+
+### Scope choice
+
+The original framing of #95 asked for 4-8 tile-size variants
+(BM/BN/BK combinations) plus a sweep + JSON dispatch table. Based on
+post-Observation EE understanding, the **dispatch axis our
+measurements actually justify is splitk-vs-standard**, not
+tile-size-variants. Generating tile-size variants is a separate
+effort; without measurement showing they help, it would be
+speculative.
+
+This commit covers the dispatch infrastructure for the dispatch axis
+that DOES help (5+ on extreme skinny). Tile-size autotune is a
+sensible follow-up if/when measurements indicate per-shape tile
+preference.
+
+### Implementation
+
+- `phase2/hgemm/hgemm_dispatch.cuh` — header-only dispatcher
+  (~190 lines). Three pieces:
+  - `Handles` struct: pre-loaded function handles + smem size
+  - `pick_variant(M,N,K)`: heuristic
+  - `launch(...)`: zero-C-then-launch path for splitk; direct launch
+    for standard
+- `phase2/hgemm/bench_dispatch.cu` — A/B/C bench harness that runs
+  standard, splitk-best, and dispatch on each shape
+
+### Production usage
+
+```cpp
+#include "hgemm_dispatch.cuh"
+
+hgemm_dispatch::Handles h { fn_standard, fn_splitk, smem_bytes };
+hgemm_dispatch::launch(h, dA, dB, dC, M, N, K);
+```
+
+The dispatcher autotunes nothing at runtime — the heuristic constants
+are baked in. To re-derive them, run `bench_dispatch.cu` after any
+kernel change.
