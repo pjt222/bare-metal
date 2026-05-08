@@ -21,7 +21,15 @@ If a build step or script needs adjustment, create or modify scripts **inside th
 
 ## Build Commands
 
-All commands run in WSL with CUDA 12.8 on PATH (`export PATH=/usr/local/cuda/bin:$PATH`).
+All commands run in WSL with CUDA on PATH (`export PATH=/usr/local/cuda/bin:$PATH`).
+Current toolchain: CUDA 13.2 (`nvcc V13.2.78`), Nsight Compute 2026.1.1.0.
+`/usr/local/cuda` symlinks to `/etc/alternatives/cuda` -> `/usr/local/cuda-13.2`.
+
+**WSL2 GPU library path**: `libcuda.so` lives in `/usr/lib/wsl/lib/`. Subprocess
+launchers (notably Rscript) prepend their own libdir to `LD_LIBRARY_PATH`,
+masking the WSL passthrough. R-based tooling under `scripts/*.R` must add
+`/usr/lib/wsl/lib` back to `LD_LIBRARY_PATH` before spawning CUDA processes
+or the child sees "no CUDA-capable device is detected".
 
 ```bash
 # Compile kernel to cubin

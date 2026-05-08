@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ncu_profile_all.sh — profile representative kernels across phase2-phase4.
 #
-# Requires: GPU performance counters enabled (see ncu_profile.py docstring).
+# Requires: GPU performance counters enabled (see ncu_profile.R header).
 # Output:   results/ncu/all.csv + per-row markdown to stdout.
 #
 # Usage:    bash scripts/ncu_profile_all.sh
@@ -51,7 +51,7 @@ for row in "${ROWS[@]}"; do
   fi
   echo "=== $label ==="
   pushd "$ROOT/$wd" >/dev/null
-  if ! python3 "$ROOT/scripts/ncu_profile.py" \
+  if ! Rscript "$ROOT/scripts/ncu_profile.R" \
         --kernel "$kernel" \
         --bench "$bench_abs" \
         --args "$args" \
