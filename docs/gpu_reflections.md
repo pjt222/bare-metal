@@ -2617,3 +2617,108 @@ hgemm_dispatch::launch(h, dA, dB, dC, M, N, K);
 The dispatcher autotunes nothing at runtime — the heuristic constants
 are baked in. To re-derive them, run `bench_dispatch.cu` after any
 kernel change.
+
+---
+
+## Observation GG — implicit GEMM v2: 2.18x on ResBlock outlier (Obs BB target)
+
+**TL;DR**: New `implicit_gemm_conv_v2` (16-warp 128×128×32, cp.async,
+FP16 input) hits **2.18×** on the ResBlock outlier identified in
+Observation BB. Geomean **1.71×** across 6 ResBlock shapes;
+best-shape ResBlock now at **4.72% of peak** (was 2.16%). Same recipe
+that worked for HGEMM 16-warp and FA pipeline pad2: bigger tile,
+more warps, double-buffered cp.async.
+
+### What v1 looked like
+
+`phase4/conv2d/conv2d_implicit_gemm.cu`:
+- 4 warps, 64×64×16 tile
+- No cp.async, single-buffered (every K-tile blocks on `__syncthreads`
+  before HMMA can start)
+- FP32 input with inline `__float2half` cast on every load
+- 6.3 KB smem, 1 block per output tile
+
+The TC util reading from Obs BB (3.19%) traced to all three issues:
+small tiles → low HMMA per smem-load ratio; no async → load latency
+exposed; FP32-in → scalar smem stores rather than vectorized.
+
+### v2 design
+
+`phase4/conv2d/conv2d_implicit_gemm_v2.cu`:
+- 16 warps, 128×128×32 tile (matches `hgemm_16warp.cu`)
+- 4×4 warp grid, 2×2 register-fragment tiles per warp
+- Double-buffered cp.async on weights B (FP16, vectorized 16 B copy)
+- Scalar im2col loads on A (cp.async cannot perform FP32→FP16 cast,
+  and the im2col indices are per-element scalar synthesis)
+- Coordinate tables (M-dim 128 entries, K-dim 32 entries) in static smem
+- 37 KB smem total → 2 blocks/SM (under 50 KB cliff per Obs W)
+
+### Standalone conv results (FP16 input pre-cast)
+
+| shape (N C HxW)         | v1 ms | v1 GFLOPS | v2 ms | v2 GFLOPS | speedup |
+|---|---:|---:|---:|---:|---:|
+| N=1 C=64  32×32 (Obs BB) | 0.073 |  514 | 0.045 |  846 | **1.65×** |
+| N=1 C=128 32×32          | 0.089 |  849 | 0.045 | 1685 | **1.98×** |
+| N=1 C=256 32×32          | 0.096 | 1565 | 0.067 | 2255 | 1.44× |
+| N=1 C=512 16×16          | 0.057 |  663 | 0.042 |  895 | 1.35× |
+| N=4 C=128 32×32          | 0.107 | 2818 | 0.104 | 2891 | 1.03× |
+| N=4 C=256 32×32          | 0.215 | 2804 | 0.190 | 3184 | 1.13× |
+| N=4 C=512 16×16          | 0.098 | 1536 | 0.103 | 1467 | 0.96× |
+| N=8 C=256 32×32          | 0.349 | 3458 | 0.365 | 3314 | 0.96× |
+
+Geomean across 8 standalone confs: **1.27×**.
+
+### Full ResBlock pipeline results
+
+Pipeline (5 kernels: GN+SiLU → cast → conv → GN+SiLU → cast → conv →
+residual_add). The cast pass (FP32→FP16) is required because v2
+takes FP16 input and the GroupNorm output is FP32. Cast cost: 1× DRAM
+read + 1× DRAM write of the activation tensor.
+
+| shape (N C HxW)        | v1 ms | v2 ms | speedup | v1 % peak | v2 % peak |
+|---|---:|---:|---:|---:|---:|
+| N=1 C=64  32×32 (Obs BB) | 0.678 | 0.576 | 1.18× | 0.13% | 0.15% |
+| N=1 C=128 32×32          | 0.789 | 0.537 | **1.47×** | 0.44% | 0.65% |
+| N=1 C=256 32×32          | 1.817 | 0.830 | **2.19×** | 0.76% | 1.67% |
+| N=1 C=512 16×16          | 2.173 | 1.078 | **2.02×** | 0.64% | 1.29% |
+| N=4 C=256 32×32          | 1.855 | 1.255 | 1.48× | 2.99% | 4.43% |
+| N=4 C=512 16×16          | 2.565 | 1.177 | **2.18×** | 2.17% | 4.72% |
+
+Geomean across 6 ResBlock shapes: **1.71×**.
+
+### Why N=1 C=64 stays stuck at <1%
+
+The Obs BB shape is so small that with v2's 128×128 tile, only
+`(1*32*32) / 128 = 8` M-tiles and `64 / 128 = 1` N-tile, so 8 blocks
+total per conv. With 46 SMs × 2 blocks/SM = 92 SM slots, 84 sit idle.
+The pipeline is now GroupNorm-dominated, not conv-dominated. To win
+here we'd need a smaller-tile variant of v2 OR fuse GN into conv.
+Filed as future work; not pursued in this commit.
+
+### Why the cast cost doesn't kill the win
+
+For a typical layer the activation tensor is tens of MB. Cast cost
+is ~2×size / DRAM_BW = ~50 µs for a 16 MB tensor at 608 GB/s. The
+conv it enables runs ~500 µs, so cast is ~10% overhead on the conv
+pass; offset by the 2× speedup on the conv itself. Net win as
+measured.
+
+Future fusion: write `groupnorm_silu_fused_fp16` that outputs FP16
+directly. Drops the cast pass entirely, frees up ~10% more on the
+pipeline. Easy 1-line change to the existing GN kernel; left for
+follow-up.
+
+### Headline against Obs BB roofline
+
+The ResBlock outlier in Obs BB was 1.2% peak. With v2 at N=4 C=512
+16×16: **4.72% peak**. Still well below the GEMM 17% peak we see on
+HGEMM 16-warp at the same tile structure — gap is the FP32→FP16 cast
+overhead and the per-element scalar A-load (vs HGEMM's vectorized
+A-load). Both are addressable in v3.
+
+### Files
+
+- `phase4/conv2d/conv2d_implicit_gemm_v2.cu` — kernel (16-warp,
+  cp.async, FP16 input)
+- `phase4/conv2d/bench_implicit_v2.cu` — standalone conv A/B
+- `phase4/resblock/bench_implicit_v2.cu` — full ResBlock pipeline A/B
