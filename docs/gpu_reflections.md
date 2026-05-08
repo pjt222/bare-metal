@@ -2361,3 +2361,91 @@ the remaining 36 didn't have `__launch_bounds__` (default 1024).
 ```
 Rscript scripts/reg_audit.R
 ```
+
+---
+
+## Observation DD — persistent dispatch falsified for compute-bound GEMM (#86)
+
+**TL;DR**: The claim that "persistent grid + cooperative work distribution
+gives ~1.15× across all GEMM kernels" (`docs/comparison_to_sota.md`) is
+**not supported by measurement on HGEMM 16-warp**. Across 6 problem
+sizes from 1024³ to 8192³ + skinny variants, geomean speedup is
+**0.988× (regression)**. The only modest win is at 1024³ (1.072×).
+Following the diagnostic-first principle (Obs U/V/Z), this hypothesis
+joins the falsified pile.
+
+### Test setup
+
+- Kernel: hgemm_16warp (the canonical HGEMM, +8 padded, 2 blocks/SM).
+- Persistent variant: `phase2/hgemm/hgemm_16warp_persistent.cu`. Identical
+  inner loop, wrapped in `for (int tile_id = blockIdx.x; tile_id <
+  n_tiles; tile_id += gridDim.x)` with `<<<sm_count * 2, 512>>>` =
+  `<<<92, 512>>>`.
+- Bench harness: `bench_persistent_hgemm.cu` (A/B, 5 warmup + 30 timed).
+
+### Results
+
+| shape | orig (ms) | orig GFLOPS | persistent (ms) | persistent GFLOPS | speedup |
+|---|---:|---:|---:|---:|---:|
+| 1024³ (small)              |  0.126 | 16996 |  0.118 | 18226 | **1.072×** |
+| 2048³ (medium)             |  0.627 | 27386 |  0.661 | 25992 | 0.949× |
+| 4096³ (large)              |  4.578 | 30020 |  4.387 | 31329 | 1.044× |
+| 8192³ (xlarge)             | 34.211 | 32139 | 35.731 | 30772 | 0.957× |
+| 512×512×8192 (skinny K)    |  0.371 | 11566 |  0.391 | 10991 | 0.950× |
+| 256×256×8192 (very skinny) |  0.371 |  2892 |  0.388 |  2764 | 0.956× |
+
+Geomean: **0.988×** (min 0.949×, max 1.072×).
+
+### Why persistent doesn't help here
+
+Three reasons converge:
+
+1. **Modern CUDA launch overhead is small** (~5-20 µs / kernel) and is
+   amortised by the timed loop's batched launches. With 30 iterations
+   the per-launch overhead is split across all of them, and it's
+   already smaller than per-tile work for problems above ~1024³.
+
+2. **No cross-tile state to reuse**. The textbook persistent-grid
+   benefit is reusing smem / register state between tiles (e.g.,
+   keeping a row of A loaded). The naive transcription used here just
+   wraps the existing kernel in a `for (tile_id ...)` loop — every
+   tile re-loads A and B from scratch, so the only thing being saved
+   is the per-block barrier setup, which is microseconds at most.
+
+3. **Block scheduler is already persistent-like**. CUDA's hardware
+   block scheduler continuously picks ready blocks off the queue and
+   dispatches to free SMs. There's no "wave" stall between tile
+   batches in normal launches; they overlap.
+
+### When persistent would help (predictions, not measured)
+
+- **Very small problems** where launch overhead is > 50% of run time
+  (e.g., 256³ where work is microseconds).
+- **State-sharing rewrites** where a row of A or column of B is loaded
+  once and reused across multiple output tiles.
+- **Cross-block reduction** (split-K with persistent + cooperative
+  groups) — different optimization, see #87.
+
+The 1024³ case showed +7.2% — consistent with the launch-overhead
+hypothesis at small sizes. Above 2048³ the measurement is uniformly
+flat or slightly negative.
+
+### Cross-check with FA persistent
+
+`flash_attn_v2_persistent_pad` (Obs X) measured 15.2 TFLOPS at
+seq=1024 vs 15.1 for `flash_attn_br16_v2_pad` baseline — also
+basically tied. Persistent dispatch alone, without state-sharing, is
+not a free 1.15×.
+
+### Closing #86
+
+The original framing was "close 1.15× across all kernels". The measurement
+shows that without state-sharing rewrites, persistent gives ≤ 1.07× on
+small problems and 0.94-0.96× on larger ones. Closing the issue as
+**not-planned in this form** — re-evaluate if a state-sharing variant
+emerges (e.g., A-row reuse across N-tiles).
+
+### Files
+
+- `phase2/hgemm/hgemm_16warp_persistent.cu` — naive persistent variant
+- `phase2/hgemm/bench_persistent_hgemm.cu` — A/B bench
