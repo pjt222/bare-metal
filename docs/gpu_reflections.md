@@ -2166,3 +2166,110 @@ the 25 categories into 9 visual families. Re-run with:
 ```
 Rscript scripts/sass_histogram.R --quiet
 ```
+
+---
+
+## Observation BB — measured roofline reveals all kernels are compute-limited (#92)
+
+**TL;DR**: Replacing estimated operational intensity with **NCU-measured**
+DRAM bytes shows that **every measured kernel sits well above the DRAM
+ceiling**. The bottleneck is uniformly the compute pipeline (HMMA queue,
+LDSM throttling), not bandwidth. This vindicates the +8 padding work
+(Obs W/X/Y) which closed compute-side stalls without touching DRAM.
+
+### Measured numbers (10 kernels)
+
+| kernel | precision | OI_DRAM | OI_L2 | achieved GFLOPS | % of ceiling |
+|---|---|---:|---:|---:|---:|
+| HGEMM 16-warp (4096³)            | FP16 | 162  | 42 | 29751 | **17.1%** |
+| Sparse INT8 GEMM (4096³)         | INT8 | 126  | 34 | 18035 |  5.2% |
+| HGEMM 16-warp+epi (4096³)        | FP16 | 162  | 62 | 16730 |  9.6% |
+| HGEMM 256x128 (4096³)            | FP16 | 274  | 82 | 16073 |  9.2% |
+| FA v2 pipeline (seq=1024)        | FP16 | 412  | 57 |  8892 |  5.1% |
+| FA v2 baseline (seq=1024)        | FP16 | 413  | 58 |  7773 |  4.5% |
+| FA v2 persistent (seq=1024)      | FP16 | 411  | 57 |  7227 |  4.2% |
+| Cross-attn v2 (1024 q, 256 kv)   | FP16 | 168  | 45 |  6417 |  3.7% |
+| FA regpv (legacy)                | FP16 | 242  | 31 |  5554 |  3.2% |
+| ResBlock implicit GEMM (320ch)   | FP16 | 420  | 19 |  2092 |  1.2% |
+
+### Regime classification
+
+At GA104's 608 GB/s DRAM, the DRAM ceiling crosses the FP16 TC peak
+(174 TFLOPS) at OI = 286. Every kernel measured has OI_DRAM ≥ 126,
+sitting **above the DRAM-only line** for some ceiling. **No kernel is
+DRAM-bound**.
+
+| OI_DRAM range | regime |
+|---|---|
+| > 286 (FP16 TC peak) | compute-bound (DRAM ceiling at peak; can't go higher) |
+| 126-286              | DRAM-shifted compute-bound (DRAM ceiling > achieved, headroom on DRAM) |
+
+The L2 ceiling (~3 TB/s) crosses FP16 peak at OI ~58. Most kernels
+have OI_L2 between 30 and 80 — the L2 traffic is closer to the L2
+ceiling than DRAM is to its ceiling, but everyone is still well below
+both.
+
+### Why every kernel is compute-limited
+
+Two compounding reasons documented earlier:
+
+1. **HMMA queue throttling** (Observation V): GA104's tensor pipe has
+   8-cycle issue latency between consecutive HMMAs, hard-capping
+   HMMA-dense kernels at ~46% TC util.
+
+2. **LDSM stalls absent padding** (Observations U, W, Y): the kernels
+   that ARE close to peak (HGEMM 16-warp at 17%) had this fixed
+   already; the others (FA, cross-attn) reached 12-15% peak after
+   padding (Obs X).
+
+The roofline formalises what we already saw: bandwidth is not the
+limiter. The forensic NCU work in U/V/W/Y/Z all pointed at the compute
+pipeline; this measurement makes the conclusion explicit and visible.
+
+### Outliers: ResBlock and Sparse INT8
+
+**ResBlock** (1.2% peak): OI_DRAM = 420 yet only 2 TFLOPS. Both
+ceilings are far above. Hypothesis: tile-shape mismatch or low
+HMMA density. NCU shows TC util = 3.19% (vs 14% on the FA family).
+Big optimization target.
+
+**Sparse INT8** (5.2% of dense INT8 peak; 10.4% if you credit 2:4
+sparsity): respectable but should be far higher. NCU shows TC util =
+14% only. Would benefit from #96 (SASS hand-tune of IMMA control
+codes, S04 → S02 pattern).
+
+### Why the previous (estimated) roofline was misleading
+
+The current `docs/figures/roofline.png` used `2·M·N·K /
+(M·K + K·N + M·N)` style estimates. For HGEMM 16-warp at 4096³:
+
+- Estimated OI: 2·4096³ / (3·4096²·2 B) = 1365 (assumes one-shot DRAM)
+- Measured OI: **162** (8.4× lower!)
+
+The estimated number assumes each byte hits DRAM exactly once. Reality:
+HGEMM tile reuse means **the L2 carries most traffic**. Measured DRAM
+is what really matters for the bandwidth ceiling. The estimated
+roofline was **placing kernels too far right**, making them look
+artificially compute-bound.
+
+After correction, kernels are still compute-bound — but the *measured
+distance* to the DRAM ceiling is much smaller (factor 5-10× less
+headroom than estimated). This means **DRAM optimization could matter**
+in some regimes, just less than previously thought.
+
+### Files
+
+- `scripts/roofline_measured.R` — generates this analysis from
+  `results/ncu/all.csv`
+- `scripts/ncu_profile.R` — extended in this commit with
+  `dram_{read,write}_bytes`, `l2_bytes`, `duration_ns`, `hmma_count`,
+  `tensor_count`, `alu_count`
+- `docs/figures/roofline_measured.png` — the figure
+- `docs/roofline_measured.md` — per-kernel data table
+
+### Re-run
+
+```
+bash scripts/ncu_profile_all.sh    # refresh results/ncu/all.csv
+Rscript scripts/roofline_measured.R
+```

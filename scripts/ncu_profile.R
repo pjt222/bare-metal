@@ -54,7 +54,23 @@ METRICS <- list(
   c("smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio",
     "stall_math_throttle", "FALSE"),
   c("smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio",
-    "stall_tex_throttle", "FALSE")
+    "stall_tex_throttle", "FALSE"),
+  # Roofline inputs (#92): byte totals + duration for measured OI.
+  c("dram__bytes_read.sum",
+    "dram_read_bytes", "FALSE"),
+  c("dram__bytes_write.sum",
+    "dram_write_bytes", "FALSE"),
+  c("lts__t_bytes.sum",
+    "l2_bytes", "FALSE"),
+  c("gpu__time_duration.sum",
+    "duration_ns", "FALSE"),
+  # HMMA / ALU counts for compute-side roofline.
+  c("smsp__inst_executed_pipe_tensor_op_hmma.sum",
+    "hmma_count", "TRUE"),
+  c("smsp__inst_executed_pipe_tensor.sum",
+    "tensor_count", "TRUE"),    # HMMA + IMMA + ...
+  c("smsp__inst_executed_pipe_alu.sum",
+    "alu_count", "TRUE")
 )
 
 CUDA_BIN <- "/usr/local/cuda/bin"
@@ -198,6 +214,14 @@ fmt_val <- function(v) {
   sprintf("%.4g", v)
 }
 
+# Quote a CSV cell if it contains comma, double-quote, or newline.
+# Doubles internal quotes per RFC 4180.
+csv_escape <- function(x) {
+  if (grepl('[,"\n]', x)) {
+    paste0('"', gsub('"', '""', x, fixed = TRUE), '"')
+  } else x
+}
+
 write_csv_row <- function(path, label, parsed) {
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
   is_new <- !file.exists(path)
@@ -208,7 +232,7 @@ write_csv_row <- function(path, label, parsed) {
     cols <- c("label", vapply(METRICS, `[`, character(1), 2))
     writeLines(paste(cols, collapse = ","), con)
   }
-  cells <- c(label,
+  cells <- c(csv_escape(label),
              vapply(METRICS, function(m) {
                entry <- parsed[[m[1]]]
                if (is.null(entry)) "NaN" else fmt_val(entry$value)
