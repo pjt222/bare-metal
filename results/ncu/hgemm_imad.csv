@@ -1,0 +1,2 @@
+label,occupancy_pct,tc_util_pct,l1_hit_pct,l2_hit_pct,dram_read_bw,dram_write_bw,load_coalesce_bytes,stall_long_sb,stall_short_sb,stall_wait,stall_mio,stall_lg_throttle,stall_barrier,stall_math_throttle,stall_tex_throttle
+HGEMM 16warp_aligned (4096³),65.35,44.4,10.67,68.59,2.86e+11,1.913e+10,0,12.56,2.48,2.64,8.24,0.966,20.66,41.74,0

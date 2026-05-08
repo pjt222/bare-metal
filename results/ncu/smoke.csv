@@ -1,0 +1,2 @@
+label,occupancy_pct,tc_util_pct,l1_hit_pct,l2_hit_pct,dram_read_bw,dram_write_bw,load_coalesce_bytes,stall_long_sb,stall_short_sb,stall_wait,stall_mio,stall_lg_throttle,stall_barrier,stall_math_throttle,stall_tex_throttle
+"FA v2 pipeline (seq=1024,b=8,h=8)",16.43,13.87,9.21,91.61,1.305e+10,8.478e+09,16,0.19,5.4,0.93,6.91,0.16,2.35,1.44,0

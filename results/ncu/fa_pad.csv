@@ -1,0 +1,2 @@
+label,occupancy_pct,tc_util_pct,l1_hit_pct,l2_hit_pct,dram_read_bw,dram_write_bw,load_coalesce_bytes,stall_long_sb,stall_short_sb,stall_wait,stall_mio,stall_lg_throttle,stall_barrier,stall_math_throttle,stall_tex_throttle
+FA v2 pipeline_pad (+8),16.35,23.95,8.638,94.21,2.254e+10,1.389e+10,16,0.16,1.96,0.904,2.816,0.1,1.184,2.22,0

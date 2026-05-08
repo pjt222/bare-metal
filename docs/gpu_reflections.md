@@ -1400,3 +1400,406 @@ pattern. Avoid it when you cannot.
 **Files**: `phase4/cymatic/{gen_cymatic_data.R, bench_cymatic.cu,
 Makefile, results/}`, `scripts/cymatic_{mapping,analyze,visualize}.R`,
 `docs/cymatic_memory_mapping.md`, `docs/figures/cymatic_*.png`.
+
+---
+
+## Observation U — NCU profiling overturns three long-held assumptions
+
+**TL;DR**: First measured-counter sweep across canonical kernels (issue #89,
+2026-05-08, GPU performance counters newly enabled on the Windows host).
+Three core assumptions were wrong. The bottleneck for Flash Attention is
+**smem traffic**, not HMMA pipeline stalls. Split-Q (#84) addresses a
+non-bottleneck for the b=8/h=8/seq=1024 shape.
+
+### What I measured
+
+`scripts/ncu_profile_all.sh` ran 10 kernel configs with 15 metrics each
+(`launch-skip 5 --launch-count 1`, see `scripts/ncu_profile.py`):
+occupancy, Tensor Core util, L1/L2 hit rates, DRAM bandwidth, coalescing
+quality, and 8 stall-reason histograms (per-issue cycles).
+
+Full results in `results/ncu/all.csv` and tabulated in
+`docs/ncu_metrics.md`. Headline rows below.
+
+### Headline measurements (per-issue stall cycles, higher = worse)
+
+| kernel | occ% | TC% | L2 hit% | wait | mio | short_sb | math_throttle | barrier |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| FA v2 baseline | 24.2 | 12.1 | 91.4 | 1.08 | 7.87 | 2.39 | 1.12 | 1.55 |
+| FA v2 pipeline | 16.4 | 13.9 | 91.6 | 0.93 | 6.89 | 5.41 | 1.44 | 2.35 |
+| FA v2 persistent | 17.1 | 11.2 | 89.4 | 1.08 | 4.66 | 2.37 | 0.97 | 0.92 |
+| FA regpv (legacy) | 24.3 | 8.6 | 94.9 | 1.48 | 4.90 | 5.47 | 0.82 | 1.70 |
+| HGEMM 16-warp | 65.1 | 46.3 | 76.4 | 2.63 | 3.47 | 2.21 | **35.46** | 5.33 |
+| HGEMM 16-warp+epi | 65.4 | 26.1 | 64.9 | 2.36 | **20.98** | **16.82** | 5.91 | **17.32** |
+| HGEMM 256x128 | 33.3 | 26.1 | 74.1 | 3.29 | **24.01** | 6.03 | 15.12 | **16.06** |
+| Sparse INT8 GEMM | 65.4 | 14.0 | 77.7 | 2.50 | **10.71** | 1.54 | 0.45 | 2.99 |
+| Cross-attn v2 | 21.0 | 10.5 | 87.0 | 1.07 | 6.18 | 2.75 | 0.99 | 1.05 |
+| ResBlock implicit | 14.5 | 3.2 | 98.2 | 2.40 | 0 | 1.06 | 0.24 | 0.56 |
+
+(`stall_long_sb` = DRAM-latency stall — was ≤2.6 everywhere except sparse
+IGEMM 10.5 and ResBlock 5.1, never the dominant factor.)
+
+### Three assumptions overturned
+
+#### 1. HMMA S08 is NOT the dominant FA bottleneck
+
+Long-held belief: "Flash Attention plateau at 11.5 TFLOPS = 6.6% peak is
+HMMA-bound. S08 stall between consecutive HMMAs is hardware-fixed, can't
+be reduced." See `docs/comparison_to_sota.md` and prior `gpu_reflections.md`
+prose.
+
+Measured: `stall_wait` (HMMA S08 + dependency wait) is **0.93** per-issue
+cycles for FA v2 pipeline. `stall_mio` (memory IO unit throttle, smem
+traffic) is **6.89** — **7.4× larger**. `stall_short_sb` (smem/L1
+latency) is **5.41** — another **5.8×**.
+
+The plateau is **smem-traffic-bound**, not HMMA-bound. The cumulative
+`stall_mio + stall_short_sb = 12.3` cycles per issue dominate everything
+else combined. HMMA pipeline is mostly waiting on smem, not vice versa.
+
+This refutes the premise of issue #84 (split-Q). Split-Q addresses SM
+starvation; we have 22× block oversubscription at b=8/h=8/seq=1024 and
+**91.6% L2 hit rate**, so DRAM is not the wall either.
+
+#### 2. HGEMM 16-warp's gap is FFMA pipe oversubscription, not Tensor Core
+
+Long-held belief: "HGEMM at 18.3% of FP16 TC peak — Tensor Cores are the
+limit, need more cp.async overlap or bigger tiles."
+
+Measured: TC util is actually **46.3%** (not 18.3%). The 18.3% number
+was achieved-throughput / nominal-peak; **46.3% is the cycle-fraction the
+TCs were busy**. The gap between cycle-busy and FLOPS-throughput is
+**`stall_math_throttle = 35.46`** — far the dominant stall.
+
+`stall_math_throttle` = FFMA/INT pipe oversubscription. Means the kernel
+is issuing FFMA (probably for accumulator scale or epilogue) faster than
+the FP32 ALUs can retire. The Tensor Cores are running at near-half
+their cycle ceiling, but every other instruction is stuck behind FFMA.
+
+Right fix: **find and reduce the FFMA chain**, probably in the epilogue
+or accumulator manipulation. Not bigger tiles. Not more pipelining.
+
+#### 3. HGEMM epilogue variant pays massive smem + barrier cost
+
+`hgemm_16warp_epi` was supposed to be a smarter epilogue (write-fused).
+Measured: TC util drops 46% → 26% relative to plain 16-warp, and three
+stalls explode:
+- `stall_mio` 3.47 → **20.98** (6×)
+- `stall_short_sb` 2.21 → **16.82** (7.6×)
+- `stall_barrier` 5.33 → **17.32** (3.3×)
+
+The "fused epilogue" routes accumulator data through smem with extra
+syncs. Cost is larger than the savings. Production HGEMM should stay on
+plain `hgemm_16warp` until the epilogue's smem path is rewritten (or
+direct-to-global like fragment-shfl pattern from Observation P).
+
+### Surprises that need follow-up
+
+- **FA pipeline coalescing**: `load_coalesce_bytes = 16 / 32` (half perfect).
+  Baseline + persistent both achieve 31. Pipeline cp.async is somehow
+  losing coalescing. Worth tracing.
+- **Sparse IGEMM L1 hit 83%**: anomalously high. Index/mask buffers cached
+  in L1? Or workload regime? Recheck.
+- **ResBlock implicit 3.2% TC util** despite 7.01× speedup headline: the
+  workload (b=1, 320ch, 32×32) is so small it can't fill the GPU. 14.5%
+  occupancy. Headline speedup came from killing 9× re-reads of input,
+  not from utilization. Confirms Observation R framing.
+- **FA regpv higher occupancy (24.3%) but lower TC util (8.6%) than v2
+  pipeline (16.4% / 13.9%)**: occupancy alone is not predictive. Pipeline
+  trades occupancy for cp.async overlap and gets more useful work out of
+  fewer warps.
+
+### Reprioritization (post-measurement)
+
+Before this measurement, the open issue queue was ordered by the
+`comparison_to_sota.md` analytic estimates. Three of the top issues are
+now suspect:
+
+- **#84 Split-Q FA** — addresses a non-bottleneck at the documented bench
+  shape. L2 hit 91.6%, no DRAM problem. Block count saturates SMs ~22×.
+  Reframe to target small-batch decoding regime, OR close as not-planned
+  for trained-attention shapes.
+- **#85 4-stage cp.async pipeline HGEMM** — TC util already 46% on
+  16-warp, gap is FFMA throttle not memory. Pipelining more loads won't
+  help. Re-evaluate after hunting the FFMA chain.
+- **#88 XOR-swizzled smem** — was deprioritized via reasoning earlier
+  (Observation O follow-up). Measurement now **promotes** it: stall_mio
+  + stall_short_sb is the dominant FA stall. Bank conflicts under XOR
+  swizzle eliminate the +8 padding tax that may be feeding short_sb.
+  Worth revisiting.
+
+New top candidates:
+1. **Hunt the FFMA chain in HGEMM 16-warp** (35.46 cycles in
+   `stall_math_throttle`). Could close most of the 46% → 100% TC util gap.
+2. **Reduce smem traffic in FA v2 pipeline** (`stall_mio = 6.89`,
+   `stall_short_sb = 5.41`). Candidates: XOR swizzle (#88), or extend
+   fragment-shfl pattern (`docs/fragment_shfl_reductions.md`) to the
+   K/V load path.
+3. **Investigate HGEMM 16-warp+epi regression** — `stall_barrier = 17.32`
+   suggests an over-syncing epilogue. Easy diagnostic.
+
+### Methodology
+
+Counters were gated on WSL2 until the Windows host was reconfigured:
+NVIDIA Control Panel → Developer Settings → Manage GPU Performance Counters
+→ "Allow access to all users". After reboot, counters opened to the
+WSL-side `ncu` binary.
+
+Harness: `scripts/ncu_profile.py` (single kernel) +
+`scripts/ncu_profile_all.sh` (sweep). Validation: all 15 metric names
+were checked against `ncu --query-metrics --chip ga104` before the first
+run, and the parser was tested on synthetic CSV.
+
+Discipline: each kernel measured with `--launch-skip 5 --launch-count 1`
+in the same warmup regime as the standard benchmark. Single-launch
+capture is noisy — re-run multiple times for any number used in a
+publication. The numbers in this observation are first-pass; any
+follow-up that depends on the precise stall count should re-measure with
+`--launch-count 5` and average.
+
+**Lesson**: trust measurement over reasoning when the measurement is
+available. The architecture doc, the gap analysis, and at least three
+prior observations were partly wrong about Flash Attention's bottleneck.
+Reasoning gave us "HMMA-bound"; counters say "smem-bound". Both can be
+true simultaneously, but the measured ratio is **smem stalls dominate
+HMMA stalls 13×**. Not close.
+
+**Files**: `scripts/ncu_profile.py`, `scripts/ncu_profile_all.sh`,
+`docs/ncu_metrics.md`, `results/ncu/all.csv`.
+
+---
+
+## Observation V — HGEMM IMAD-chain hypothesis falsified
+
+**TL;DR**: Built `hgemm_16warp_aligned.cu` (drops partial-tile branches,
+assumes M/N/K aligned to BM/BN/BK). Cubin instruction count: IMAD 139 →
+106 (-24%), ISETP 45 → 4 (-91%), BRA 15 → 6 (-60%). Performance
+delta: **1.01× — flat**.
+
+NCU on the aligned variant: `stall_math_throttle` actually rose 35.46 →
+**41.74**, `stall_long_sb` jumped 1.01 → **12.56**, `stall_barrier` 5.33
+→ **20.66**. TC util 46.3% → 44.4%. DRAM read BW 168 → 286 GB/s.
+
+### What this tells us
+
+1. **`math_pipe_throttle` is HMMA queue pressure, not IMAD chain.** Even
+   with 24% fewer IMADs and 91% fewer ISETPs, the math throttle metric
+   went up, not down. On Ampere, `math_pipe_throttle` includes the
+   Tensor Math Pipe — at 46% TC busy, HMMAs themselves are queueing
+   into a saturated pipe.
+
+2. **Aligned compiler unrolling exposes DRAM.** The compiler doubled the
+   HMMA count in the cubin (32 → 64) because it could fully unroll the K
+   loop without per-iteration branch sites. More in-flight HMMAs need
+   more A/B fragments → more LDGSTS → DRAM saturated faster → L2 misses
+   exposed (hit rate 76.4% → 68.6%). The aligned variant is genuinely
+   faster *at the math level* but the freed cycles get burned in
+   memory-latency stalls instead.
+
+3. **The real HGEMM 16-warp wall is HMMA issue rate, not anything
+   above it.** At 46% TC util with `stall_wait = 2.63` (HMMA dependency
+   wait is low), the Tensor Cores are issuing at near-maximum sustained
+   rate given the kernel's HMMA dependency graph. Closing the 46% → 100%
+   gap requires either:
+   - **Reducing inter-HMMA dependencies** (different accumulator
+     structure, smaller fragments, more parallel HMMA chains)
+   - **SASS-level instruction scheduling** (CuAssembler hand-tune,
+     issue #96)
+   - **More work per fragment-load** (bigger K, Bc to amortize loads)
+
+   None of these are about address arithmetic.
+
+### What was right and what was wrong
+
+The original NCU observation (Observation U) correctly identified
+`stall_math_throttle` as the dominant FA stall, but the **mechanism
+attribution was wrong**: I attributed it to "FFMA pipe oversubscription"
+based on the metric description ("FFMA/INT/FP pipe oversubscription").
+The actual contributor here is the Tensor Math Pipe component of that
+same metric.
+
+Ampere's NCU stall reasons are coarse-grained — `math_pipe_throttle`
+covers FMA, ALU, FP64, ADU, *and* Tensor Math. Without separation, a
+high value points only at "some math pipe is over-subscribed".
+Distinguishing requires SASS-level instruction histograms (which kernel
+op count is high) cross-referenced against the throttle metric.
+
+In retrospect: the SASS histogram already gave the answer. **64 HMMA in
+the aligned variant** vs **32 HMMA in the baseline**, both with
+`math_pipe_throttle ≈ 35-42`. If IMAD were the cause, doubling HMMA
+(while cutting IMAD 24%) would have *reduced* math throttle. It didn't.
+Therefore HMMA dominates the metric.
+
+### Lesson
+
+Coarse stall metrics are necessary but not sufficient. Pair them with
+SASS instruction histograms before deciding what to optimize. A
+hypothesis that "instruction X causes stall Y" is testable by changing
+X and re-measuring Y; in this case, the test was clean (24% IMAD
+reduction, ISETP 91% gone, BRA 60% gone) and the metric refused to
+move. Hypothesis falsified.
+
+### Reprioritization (from-Observation-V)
+
+- **HGEMM 16-warp is at its single-block-config ceiling.** The next
+  meaningful HGEMM optimization isn't "reduce IMAD chain" or "better
+  pipelining" — it's structural: split-K with cross-block reduction
+  (issue #87), persistent grid (#86), or SASS hand-tuning (#96).
+- **`hgemm_16warp_aligned` is preserved as a counterexample** — slightly
+  faster (1.01×), demonstrates aligned-only path, useful reference for
+  future variants. Not promoted to canonical because the aligned
+  precondition limits applicability.
+
+### Files
+
+- `phase2/hgemm/hgemm_16warp_aligned.cu` — counterexample variant
+- `phase2/hgemm/hgemm_16warp_aligned.sm_86.cubin` — built artifact
+- `phase2/hgemm/bench_aligned.cu` — A/B comparison harness
+- `results/ncu/hgemm_imad.csv` — NCU output for aligned variant
+
+---
+
+## Observation W — FA v2 pipeline: 2.4× from +8 smem padding (bank-conflict elimination)
+
+**TL;DR**: Adding +8 padding to K_tile, V_tile, AND weight_smem row strides
+in `flash_attn_br16_v2_pipeline.cu` delivers **1.85-2.44× speedup across
+seq ∈ {256, 512, 1024, 2048, 4096}**. NCU bank conflict counter dropped
+from 95.5M to 279K (-99.7%). TC util rose 13.9% → 36.2%. New canonical
+kernel: `flash_attn_br16_v2_pipeline_pad2.cu`.
+
+This is the single largest optimization win in the project's history,
+exceeding even the original v2 (1.40×) and pipeline (1.20×) wins.
+
+### What was hidden in plain sight
+
+K_tile and V_tile in v2_pipeline are `[Bc=64 × D_HEAD=64]` FP16 dense
+matrices with row stride 64 halfs = **128 bytes**. The smem bank period
+on Ampere is 32 banks × 4 bytes = 128 bytes. **Every `ldmatrix.x4` read
+of 8 consecutive rows landed on the same banks → 8-way conflict.**
+
+NCU counters (issue #89, this session) confirmed:
+- `l1tex__data_bank_conflicts_pipe_lsu_mem_shared.sum`: **95.5M** conflicts
+- `l1tex__data_pipe_lsu_wavefronts_mem_shared_op_ld.sum`: 100.7M load wavefronts
+- **Conflict rate: 87.5% of every load wavefront**
+
+The kernel was effectively serializing every smem load. This was the
+real cause of `stall_short_sb = 5.41` and `stall_mio = 6.89` — the
+dominant FA pipeline stalls per Observation U.
+
+### Why issue #80 was wrong to deprioritize this
+
+Issue #80 closed XOR-swizzle exploration based on the reasoning that
+"LDSM is 4.6% of cubin instructions, warp scheduler hides conflicts at
+12 warps". The argument was wrong on two counts:
+
+1. **Cubin instruction count ≠ runtime cycles spent.** 4.6% of
+   instructions can be 50%+ of cycles when each instruction stalls 8×
+   on bank conflicts. The conflict multiplier was uncounted.
+2. **Stage 3 padding (alternative) was tied with v2 within ±3%** — but
+   that comparison was between two things both still suffering from
+   the same conflict. Tying broken-vs-broken doesn't validate either
+   as conflict-free.
+
+The correct way to evaluate bank conflicts is to **measure the
+conflict counter directly**, not infer from instruction percentages.
+Once measured, the 87.5% rate was unambiguous.
+
+### The fix: +8 padding row stride
+
+K_tile/V_tile: stride 64 halfs (128 B) → 72 halfs (144 B). For
+ldmatrix.x4 reading 8 consecutive rows, byte offsets become
+{0, 144, 288, 432, 576, 720, 864, 1008}. Modulo 128 (bank period):
+{0, 16, 32, 48, 64, 80, 96, 112} — all 8 rows on distinct bank groups.
+Conflict-free.
+
+weight_smem: same stride 64 → 72 fix. Costs +1 KB per block.
+
+Total smem budget: 40 KB → 45 KB. Still under 50 KB cliff for 2
+blocks/SM. Register count actually *dropped* 140 → 133 (compiler
+optimization side-effect of removing replay scheduling).
+
+### Measurements
+
+| variant | smem | regs | blocks/SM | seq=1024 GFLOPS | speedup |
+|---|---|---|---|---:|---:|
+| `v2_pipeline` (canonical pre-this-session) | 40 KB | 140 | 2 | 9058 | 1.00× |
+| `v2_pipeline_pad` (K/V padded) | 44 KB | 134 | 2 | 14869 | 1.64× |
+| `v2_pipeline_pad2` (K/V/W padded) | 45 KB | 133 | 2 | **21410** | **2.36×** |
+
+Cross-seq robustness:
+
+| seq | unpadded | pad1 | pad2 | pad2 / unpadded |
+|---:|---:|---:|---:|---:|
+| 256  | 7553  | 10038 | **13982** | 1.85× |
+| 512  | 8415  | 14158 | **20569** | 2.44× |
+| 1024 | 9058  | 14869 | **21410** | 2.36× |
+| 2048 | 10125 | 15342 | **20580** | 2.03× |
+| 4096 | 10141 | 15343 | **21062** | 2.08× |
+
+NCU counters (seq=1024, b=8, h=8):
+
+| metric | unpadded | pad2 | change |
+|---|---:|---:|---|
+| TC util % | 13.87 | **36.20** | +161% |
+| L2 hit % | 91.55 | 94.24 | +3% |
+| stall_short_sb | 5.41 | **0.30** | -94% |
+| stall_mio | 6.89 | **0.33** | -95% |
+| stall_math_throttle | 1.44 | 3.21 | +123% (HMMA queue, expected) |
+| stall_barrier | 2.35 | 0.58 | -75% |
+| bank conflicts (M) | 95.5 | **0.28** | -99.7% |
+| conflict rate | 87.5% | 2.2% | -85 pts |
+
+### What's the new wall
+
+After pad2, the dominant stall is `stall_math_throttle = 3.21` — HMMA
+queue pressure (per Observation V, math_pipe_throttle on this kernel
+captures Tensor Math Pipe oversubscription). At 36.2% TC util we're
+roughly half-saturated; the kernel can issue HMMAs but the Tensor
+Cores can't accept them faster than the dependency graph allows.
+
+To break beyond 36% TC util needs **more parallelism inside the HMMA
+chain**: smaller fragments, more independent accumulators, or
+SASS-level reordering (CuAssembler hand-tune, issue #96).
+
+### Practical guidance: always pad small-D tensor-core smem buffers
+
+For any FP16 Tensor Core kernel where smem holds a tile with row stride
+64 halfs (128 B) or 32 halfs (64 B) — both bank-period multiples — pad
+the row stride by +8 halfs unconditionally. The cost is small (typically
++1-4 KB per block), the win is massive (1.5-2.5× in this case), and the
+mechanism is purely structural (no algorithm change).
+
+Tile geometries that need this fix in the existing repo:
+- `flash_attn_br16_v2_pipeline.cu` (D_HEAD=64) — fixed this session
+- Same family of v2 kernels (`v2`, `v2_persistent`) — likely benefit
+- HGEMM kernels: BK=32 (64 B stride for FP16) — needs check
+- Cross-attention v2: D_HEAD=64 — likely benefit
+- Any other kernel with FP16 tile column count = power-of-2 ≤ 64
+
+Each one is a 5-minute change worth measuring.
+
+### Files
+
+- `phase3/flash_attention/flash_attn_br16_v2_pipeline_pad.cu` — pad1
+  (K/V only), 1.5-1.7× win
+- `phase3/flash_attention/flash_attn_br16_v2_pipeline_pad2.cu` —
+  **new canonical**, 1.85-2.44× win
+- `phase3/flash_attention/bench_v2_pipeline_pad.cu` — A/B/C harness
+- `results/ncu/fa_pad.csv`, `results/ncu/fa_pad2.csv` — NCU output
+
+### Lesson
+
+Trust counters over instruction-percentage heuristics. The conflict
+counter took 30 seconds to query and made the optimization obvious. We
+spent multiple prior sessions reasoning about whether bank conflicts
+mattered using cubin instruction histograms — a lower-resolution proxy
+that gave the wrong answer.
+
+Pattern this session: NCU + targeted counter queries → instant
+diagnosis. Without counter access, this kernel would still be at 11.5
+TFLOPS.
+
+**Headline**: FA seq=1024,b=8,h=8 plateau **6.6% peak → 12.3% peak** in
+one session, no algorithm change, ~30 lines of code edits across two
+new variant files. 2.36× of the 7-8× FA-2 gap closed by smem padding
+alone.

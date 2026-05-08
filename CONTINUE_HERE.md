@@ -1,13 +1,43 @@
 # Continue Here
 
-> **Last updated**: 2026-05-07 (session end — 13 fresh issues filed for next sprint)
+> **Last updated**: 2026-05-08 (NCU profiling unlocked, FA pipeline
+> 2.36× from smem padding)
 >
-> **Session status**: full session arc complete. Tutorial series shipped,
-> cymatic study shipped, README + figures shipped, gap-to-SOTA analysis
-> shipped, 13 actionable issues filed for next sprint.
+> **Session status**: NCU diagnostics harness shipped (#89). First
+> measured-counter sweep overturned 3 long-held assumptions. Bank
+> conflict counter on FA pipeline showed **87.5% of every smem load
+> wavefront was conflicted**. Padding K/V/W smem strides 64 → 72 halfs
+> closed the conflicts; **FA seq=1024 plateau jumped 6.6% → 12.3% of
+> FP16 TC peak** (11.5 → 21.4 TFLOPS).
 >
-> **Open issue queue**: **13 issues** (12 freshly filed + #32 placeholder).
-> See "Next Sprint Plan" section below for ordering and dependencies.
+> **New canonical FA kernel**: `flash_attn_br16_v2_pipeline_pad2.cu`.
+> 2.36× over previous canonical, conflict rate 87.5% → 2.2%, TC util
+> 14% → 36%. Robust across seq ∈ {256, 512, 1024, 2048, 4096} (1.85×
+> to 2.44×). Same algorithm, +5 KB smem, 30 lines edited.
+>
+> **Open issue queue**: 14 issues. #84 (split-Q) and #85 (4-stage
+> pipeline) deprioritized by measurement. #88 (XOR-swizzle) effectively
+> resolved by the +8 padding fix. #89 (NCU harness) DONE this session.
+> See "Reprioritization (post-NCU)" below.
+>
+> **NCU harness shipped**:
+> - `scripts/ncu_profile.py` (211 lines, single kernel + `--dry-run`)
+> - `scripts/ncu_profile_all.sh` (sweep across phase 2-4)
+> - `docs/ncu_metrics.md` (full per-kernel diagnosis tables)
+> - `results/ncu/all.csv` (raw output, 10 kernel configs × 15 metrics)
+>
+> **Three assumptions overturned (Observation U)**:
+> 1. FA plateau is smem-traffic-bound, not HMMA S08-bound
+>    (`stall_mio + stall_short_sb = 12.3` vs `stall_wait = 0.93`)
+> 2. HGEMM 16-warp gap is FFMA pipe oversubscription
+>    (`stall_math_throttle = 35.46`), not Tensor Core density
+> 3. HGEMM 16-warp+epi epilogue is a regression
+>    (`stall_mio=21`, `stall_barrier=17`, `stall_short_sb=17`)
+>
+> **NCU prerequisite**: GPU performance counters must be enabled on the
+> Windows host (NVIDIA Control Panel → Developer Settings → Manage GPU
+> Performance Counters → "Allow access to all users") and host rebooted.
+> Once enabled, WSL-side `ncu` works without sudo.
 >
 > **Tutorial series (`docs/tutorial/`) all 6 chapters complete in full prose**:
 > ~80 KB / ~20,000 words across 01 SASS, 02 GEMM, 03 INT8, 04 Pipelining,
@@ -217,7 +247,72 @@ this session).
 
 Only placeholder issue remains. Active CUDA optimization queue: empty.
 
-## Next Sprint Plan (issues #84-96)
+## Reprioritization (post-NCU, 2026-05-08)
+
+### Three steps executed this session
+
+1. **Hunt FFMA chain in HGEMM 16-warp** — hypothesis falsified.
+   Built `hgemm_16warp_aligned.cu` (drops boundary branches), cut IMAD
+   24% / ISETP 91% / BRA 60%. **Result: 1.01× (flat).** NCU showed
+   `stall_math_throttle` actually rose 35.46 → 41.74. Conclusion: the
+   metric reflects **HMMA queue pressure, not address arithmetic**. See
+   Observation V. Aligned variant kept as counter-example reference.
+
+2. **#88 XOR-swizzled smem (reframed as +8 padding)** — **massive win.**
+   Bank conflict counter measured 95.5M / 100.7M = 87.5% rate on FA
+   pipeline. Padding K_tile + V_tile row stride 64 → 72 halfs cuts
+   conflicts by ~60%, gives 1.64× speedup. See Observation W.
+
+3. **Pad weight_smem too** (replaced original "extend fragment-shfl"
+   step) — weight_smem had same 64-half stride bank conflict.
+   Padding it gives **another 1.45× on top of step 2**, total 2.36×.
+   Conflict rate 87.5% → 2.2%. TC util 13.9% → 36.2%.
+
+### Original NCU-derived priorities (still valid)
+
+| issue | original framing | NCU verdict | action |
+|---|---|---|---|
+| #84 split-Q FA | "close 3× of FA gap" | L2 hit 94.2% (now), blocks 22× oversub | close as not-planned for trained shapes |
+| #85 4-stage pipeline HGEMM | "close 1.5×" | TC util 46%, HMMA queue throttled | re-evaluate; may need #96 SASS instead |
+| #88 XOR-swizzle smem | previously deprioritized | **resolved by +8 padding** (Observation W) | close as done |
+
+### New top candidates from this session
+
+1. **Apply +8 padding to other Tensor Core kernels** — cross-attention
+   v2, FA v2 baseline, FA v2 persistent, anywhere with FP16 tile column
+   count = power-of-2 ≤ 64. **Each is a 5-minute change worth
+   measuring.** Likely 1.5-2× wins each.
+2. **HGEMM bank conflict audit** — BK=32 (64 B stride). NCU did not
+   report bank conflicts there yet (only checked FA). Needs
+   measurement.
+3. **Investigate HGEMM 16-warp+epi over-syncing** — `stall_barrier=17`,
+   `stall_mio=21`. Easy to find by reading the cubin.
+4. **Investigate FA pipeline coalescing** — still 16 byte/sector even
+   after pad2. Baseline achieves 31. Worth a separate trace.
+5. **HGEMM SASS hand-tune (#96)** — only path to break the 46% TC util
+   wall, since pipeline + math throttle hypothesis both fell.
+
+### Headline numbers updated
+
+| kernel | before | after | speedup |
+|---|---:|---:|---:|
+| FA pipeline seq=1024 b=8 h=8 | 11.5 TFLOPS | **21.4 TFLOPS** | **2.36×** |
+| FA pipeline seq=512 | 8.4 | **20.6** | **2.44×** |
+| FA pipeline seq=4096 | 10.1 | **21.1** | **2.08×** |
+
+FA peak fraction: 6.6% → **12.3% of FP16 TC peak** at seq=1024.
+
+**Open issues from previous sprint plan still valid**:
+- #89 NCU profiling harness — **DONE this session** (close)
+- #90 SASS instruction histogram — still useful, complements NCU
+- #91 Register pressure analyzer — explains FA occupancy gap (16.4% vs
+  expected 25%)
+- #92 Measured roofline — now feasible (NCU gives DRAM BW directly)
+- #93/#94 Cymatic — unchanged
+- #95 Tile autotuner — unchanged
+- #96 SASS hand-tuning — unchanged
+
+## Original Next Sprint Plan (issues #84-96, partially invalidated)
 
 **Filed 2026-05-07. Multiplicatively could close ~3.5× of HGEMM gap and
 ~5-6× of FA gap to cuBLAS / FA-2 SOTA.**
