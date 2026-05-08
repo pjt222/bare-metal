@@ -49,13 +49,13 @@ difference matters: `cuobjdump` shows you SASS but loses information
 reassemble identically. If you only need to *read* SASS, use `cuobjdump`.
 If you need to *modify and run*, use CuAssembler.
 
-The build script `scripts/build.py` wraps CuAssembler invocations:
+The build script `scripts/build.R` wraps CuAssembler invocations:
 
 ```bash
-python scripts/build.py compile  vector_add.cu               # .cu → .cubin
-python scripts/build.py disasm   vector_add.sm_86.cubin       # .cubin → .cuasm (editable)
-python scripts/build.py assemble vector_add.sm_86.cuasm       # .cuasm → .cubin (after edits)
-python scripts/build.py roundtrip vector_add.cu               # all three, verifies bit-identical
+Rscript scripts/build.R compile  vector_add.cu               # .cu → .cubin
+Rscript scripts/build.R disasm   vector_add.sm_86.cubin       # .cubin → .cuasm (editable)
+Rscript scripts/build.R assemble vector_add.sm_86.cuasm       # .cuasm → .cubin (after edits)
+Rscript scripts/build.R roundtrip vector_add.cu               # all three, verifies bit-identical
 ```
 
 The roundtrip step is the toolchain smoke test. If it fails, your
@@ -134,7 +134,7 @@ pointer = 8 bytes, with alignment padding.
 ## Step 2 — Disassemble for editing
 
 ```bash
-python scripts/build.py disasm phase1/vector_add.sm_86.cubin
+Rscript scripts/build.R disasm phase1/vector_add.sm_86.cubin
 # produces phase1/vector_add.sm_86.cuasm
 ```
 
@@ -178,7 +178,7 @@ Save as `vector_add.sm_86.modified.cuasm`. That is the entire edit.
 ## Step 4 — Reassemble
 
 ```bash
-python scripts/build.py assemble phase1/vector_add.sm_86.modified.cuasm
+Rscript scripts/build.R assemble phase1/vector_add.sm_86.modified.cuasm
 # produces phase1/vector_add.sm_86.modified.reassembled.cubin
 ```
 
@@ -245,7 +245,7 @@ repo) that targets specific CUDA versions. If the `roundtrip` step
 fails:
 
 ```bash
-python scripts/build.py roundtrip phase1/vector_add.cu
+Rscript scripts/build.R roundtrip phase1/vector_add.cu
 # error: assembled cubin differs from original
 ```
 
@@ -290,22 +290,22 @@ the `.cuasm`.
 cd /mnt/d/dev/p/bare-metal
 
 # Verify toolchain
-python scripts/verify_setup.py
+Rscript scripts/verify_setup.R
 
 # Compile
 nvcc --cubin -arch=sm_86 -O1 -o phase1/vector_add.sm_86.cubin phase1/vector_add.cu
 
 # Roundtrip check (must pass before hand-editing)
-python scripts/build.py roundtrip phase1/vector_add.cu
+Rscript scripts/build.R roundtrip phase1/vector_add.cu
 
 # Disassemble for editing
-python scripts/build.py disasm phase1/vector_add.sm_86.cubin
+Rscript scripts/build.R disasm phase1/vector_add.sm_86.cubin
 
 # Edit the .cuasm: FADD → FMUL on the line after the LDG of input_b
 # (use any text editor)
 
 # Reassemble
-python scripts/build.py assemble phase1/vector_add.sm_86.modified.cuasm
+Rscript scripts/build.R assemble phase1/vector_add.sm_86.modified.cuasm
 
 # Compare
 nvcc -arch=sm_86 -o phase1/host.exe phase1/host.cu -lcuda
@@ -319,7 +319,7 @@ nvcc -arch=sm_86 -o phase1/host.exe phase1/host.cu -lcuda
 - `phase1/host.cu` (CPU driver, allocates buffers, launches kernel, checks output)
 - `phase1/README.md` (the deeper SASS-level walkthrough this chapter is based on)
 - `tools/CuAssembler/` (third-party SASS assembler)
-- `scripts/build.py` (compile / disasm / assemble / roundtrip wrapper)
+- `scripts/build.R` (compile / disasm / assemble / roundtrip wrapper)
 
 ## Cross-references
 

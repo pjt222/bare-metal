@@ -5,7 +5,7 @@ This project builds ML primitives from hand-optimized SASS on GA104 (RTX 3070 Ti
 ## Quick Start
 
 1. Fork and clone
-2. Run `python3 scripts/verify_setup.py` — must pass before any changes
+2. Run `Rscript scripts/verify_setup.R` — must pass before any changes
 3. Make changes on a feature branch (`git checkout -b feature/my-kernel`)
 4. Build and test your kernel
 5. Open a Pull Request
@@ -59,7 +59,7 @@ Every new kernel directory **must** have a `README.md` with:
 
 When modifying SASS via CuAssembler:
 
-1. Run `python scripts/build.py roundtrip kernel.cu` before any edits
+1. Run `Rscript scripts/build.R roundtrip kernel.cu` before any edits
 2. Make **one** change at a time
 3. Test correctness after each change
 4. Document the change and measured effect in the commit message
@@ -80,7 +80,7 @@ bash scripts/install-hooks.sh
 
 This configures a `pre-push` hook that:
 1. Runs `make test` to build and smoke-test benches
-2. Runs `scripts/bench_regress.py` to detect performance regressions against `docs/baselines.json`
+2. Runs `scripts/bench_regress.R` to detect performance regressions against `docs/baselines.json`
 3. Blocks the push if any kernel regresses beyond tolerance
 
 **Bypass** (for WIP or when you know baseline is stale):
@@ -88,7 +88,7 @@ This configures a `pre-push` hook that:
 git push --no-verify
 ```
 
-- [ ] `python3 scripts/verify_setup.py` passes
+- [ ] `Rscript scripts/verify_setup.R` passes
 - [ ] All new kernels bench correctly against CPU reference
 - [ ] Performance meets or exceeds documented baseline (or regression is explained)
 - [ ] `git diff --stat` shows only intended changes

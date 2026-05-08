@@ -224,7 +224,7 @@ After NCU:
 
 ## Files
 
-- `scripts/ncu_profile.py` — single-kernel wrapper, supports `--dry-run`
+- `scripts/ncu_profile.R` — single-kernel wrapper, supports `--dry-run`
 - `scripts/ncu_profile_all.sh` — sweep across canonical kernels
 - `results/ncu/all.csv` — raw measurement output
 - `results/ncu/smoke.csv` — single-kernel smoke test (FA v2 pipeline only)

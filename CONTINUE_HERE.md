@@ -31,7 +31,7 @@
 >   reveals hgemm_16warp_epi at 75.9% rate, fix gives 1.41×
 >
 > **NCU harness shipped**:
-> - `scripts/ncu_profile.py` (211 lines, single kernel + `--dry-run`)
+> - `scripts/ncu_profile.R` (267 lines, single kernel + `--dry-run`)
 > - `scripts/ncu_profile_all.sh` (sweep across phase 2-4)
 > - `docs/ncu_metrics.md` (full per-kernel diagnosis tables)
 > - `results/ncu/all.csv` (raw output, 10 kernel configs × 15 metrics)
@@ -59,7 +59,7 @@
 > GRID=2048² (DRAM regime). Conditional speedup: **+1.53× at sector
 > midlines, −1.89× at boundaries**. Documented in Observation T.
 >
-> **Warmup**: `python3 scripts/verify_setup.py`
+> **Warmup**: `Rscript scripts/verify_setup.R`
 
 ---
 
@@ -261,7 +261,7 @@ Only placeholder issue remains. Active CUDA optimization queue: empty.
 
 ### Five steps executed this session (commits ef77e0d, 37bc94a, f2100ac)
 
-1. **NCU diagnostics harness (#89)** — `scripts/ncu_profile.py`,
+1. **NCU diagnostics harness (#89)** — `scripts/ncu_profile.R`,
    `ncu_profile_all.sh`, `docs/ncu_metrics.md`. 15 metrics, validated
    against `ncu --query-metrics --chip ga104`. Now in routine use.
 

@@ -50,10 +50,10 @@ cuobjdump -sass kernel.sm_86.cubin | grep HMMA | wc -l
 
 ```bash
 # Via build.py (preferred)
-python scripts/build.py compile kernel.cu          # .cu → .cubin
-python scripts/build.py disasm kernel.sm_86.cubin  # .cubin → .cuasm (editable)
-python scripts/build.py assemble kernel.cuasm      # .cuasm → .cubin (after edits)
-python scripts/build.py roundtrip kernel.cu        # compile → disasm → reassemble → verify identical
+Rscript scripts/build.R compile kernel.cu          # .cu → .cubin
+Rscript scripts/build.R disasm kernel.sm_86.cubin  # .cubin → .cuasm (editable)
+Rscript scripts/build.R assemble kernel.cuasm      # .cuasm → .cubin (after edits)
+Rscript scripts/build.R roundtrip kernel.cu        # compile → disasm → reassemble → verify identical
 
 # Direct CuAssembler (when build.py isn't suitable)
 python3 -c "
@@ -66,7 +66,7 @@ CubinFile('path/to/kernel.cubin').saveAsCuAsm('kernel.cuasm')
 ### Environment Verification
 
 ```bash
-python scripts/verify_setup.py   # checks CUDA, nvcc, GPU, CuAssembler
+Rscript scripts/verify_setup.R   # checks CUDA, nvcc, GPU, CuAssembler
 ```
 
 ## Architecture
