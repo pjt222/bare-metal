@@ -6,7 +6,7 @@
 #   Rscript scripts/fix_cuda_context.R                         # all bench files
 #   Rscript scripts/fix_cuda_context.R phase2/hgemm/bench.cu   # one file
 
-# (no library() loads needed -- base R only)
+# (uses base R only — no library() loads needed)
 
 fix_cu_context <- function(path) {
   content <- paste(readLines(path, warn = FALSE), collapse = "\n")

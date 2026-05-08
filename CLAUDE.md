@@ -13,6 +13,32 @@ Hand-optimized CUDA/SASS assembly kernels targeting **RTX 3070 Ti (GA104, sm_86,
 - **The 50 KB smem cliff is load-bearing**: ≤50 KB = 2 blocks/SM = 8 warps (good); >50 KB = 1 block/SM = 4 warps (occupancy collapse, 2× regression measured). GA104 sm_86 max smem/SM is 100 KB; the cliff is at 100/2=50 KB/block, not 64 KB. (Confirmed: 48 KB → 2 blocks ✓, 56 KB → 1 block ✗)
 - L2 cache: 4 MB — implicit GEMM speedup scales with col buffer size relative to this
 
+## R Environment (renv)
+
+Project uses [renv](https://rstudio.github.io/renv/) for R package management.
+Lockfile `renv.lock` pins R 4.6.0 + all R script dependencies. The `.Rprofile`
+at the repo root auto-activates the project library on `Rscript` startup.
+
+First-time setup after clone:
+```bash
+Rscript -e 'renv::restore()'
+```
+
+Required packages:
+- `jsonlite` — JSON parse (bench_regress.R)
+- `ggplot2`, `scales`, `patchwork` — figures (sass_histogram.R, dashboards)
+- `reticulate` — Python interop for build.R (CuAssembler is Python-only)
+- `dplyr`, `tidyr`, `tibble`, `rmarkdown`, `yaml` — used by other R helpers
+
+**reticulate config**: `build.R` calls `use_python("/usr/bin/python3", required=TRUE)`
+so CuAssembler imports against the system Python that has `sympy` and
+`pyelftools` installed. Without this, reticulate falls back to its own
+ephemeral venv that doesn't have those deps.
+
+**Tooling language policy**: R is the primary language for all `scripts/*`.
+Python is acceptable only when no R alternative exists (currently only
+CuAssembler import via reticulate, used in `build.R`).
+
 ## CAUTION: Do Not Modify System Installations
 
 **Never modify, reinstall, update, or reconfigure system-level tools** — this includes CUDA toolkit (`/usr/local/cuda/`), nvcc, cuobjdump, nvdisasm, nvidia drivers, Python system packages, or any other host-installed software. These are manually configured and verified for this hardware.

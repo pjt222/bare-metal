@@ -5,7 +5,7 @@
 # Run from the repo root:
 #   Rscript scripts/verify_setup.R
 
-# (no library() loads needed -- base R only)
+# (uses base R only — no library() loads needed)
 
 REPO_ROOT <- {
   args_full <- commandArgs(trailingOnly = FALSE)

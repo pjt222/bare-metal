@@ -25,7 +25,8 @@
 # useful_pct = (HMMA + IMMA + FFMA + FMUL + FADD) / total
 # Kernels with low useful_pct are bookkeeping-bound (target for SASS hand-tune).
 
-# (no library() loads needed — base R only)
+library(ggplot2)
+library(scales)
 
 # ---------- argument parsing (base R, no deps) ----------
 parse_args <- function(argv) {
@@ -34,6 +35,8 @@ parse_args <- function(argv) {
     kernel  = NULL,
     csv_out = "docs/sass_histogram.csv",
     md_out  = "docs/sass_histogram.md",
+    fig_out = "docs/figures/sass_histogram.png",
+    no_fig  = FALSE,
     quiet   = FALSE
   )
   i <- 1
@@ -43,10 +46,13 @@ parse_args <- function(argv) {
     else if (a == "--kernel") { defaults$kernel  <- argv[i+1]; i <- i + 2 }
     else if (a == "--csv-out"){ defaults$csv_out <- argv[i+1]; i <- i + 2 }
     else if (a == "--md-out") { defaults$md_out  <- argv[i+1]; i <- i + 2 }
+    else if (a == "--fig-out"){ defaults$fig_out <- argv[i+1]; i <- i + 2 }
+    else if (a == "--no-fig") { defaults$no_fig  <- TRUE;      i <- i + 1 }
     else if (a == "--quiet")  { defaults$quiet   <- TRUE;      i <- i + 1 }
     else if (a == "--help" || a == "-h") {
       cat("Usage: sass_histogram.R [--root DIR] [--kernel SUBSTR]",
-          "                        [--csv-out PATH] [--md-out PATH] [--quiet]",
+          "                        [--csv-out PATH] [--md-out PATH]",
+          "                        [--fig-out PATH] [--no-fig] [--quiet]",
           sep = "\n")
       quit(status = 0)
     }
@@ -230,6 +236,96 @@ main <- function() {
   }
   close(con)
   cat(sprintf("Wrote markdown summary to %s\n", md_path))
+
+  # ----------------------------------------------------------------------
+  # Stacked bar visualization (top kernels by total_inst, instruction-mix)
+  # ----------------------------------------------------------------------
+  if (args$no_fig) return(invisible())
+  fig_path <- file.path(root, args$fig_out)
+  dir.create(dirname(fig_path), showWarnings = FALSE, recursive = TRUE)
+  make_figure(df, fig_path)
+  cat(sprintf("Wrote stacked bar figure to %s\n", fig_path))
+}
+
+# ----------------------------------------------------------------------
+# Visualization: stacked horizontal bar of instruction mix.
+# Buckets categories into compute / TC / smem / global / async / control / other.
+# Sorted by useful_pct so the trend is visually obvious.
+# ----------------------------------------------------------------------
+make_figure <- function(df, fig_path, top_n = 40) {
+  # Keep the top N kernels by total_inst for legibility.
+  df_keep <- head(df[order(-df$total_inst), , drop = FALSE], top_n)
+  df_keep <- df_keep[order(df_keep$useful_pct), , drop = FALSE]
+
+  # Group columns into broad families.
+  groups <- list(
+    "Tensor cores (HMMA/IMMA)"      = c("HMMA", "IMMA"),
+    "FP scalar (FFMA/FADD/FMUL)"    = c("FFMA", "FADD", "FMUL", "FSEL"),
+    "Smem traffic (LDSM/LDS/STS)"   = c("LDSM", "LDS", "STS"),
+    "Async cp.async (LDGSTS)"       = c("LDGSTS"),
+    "Global (LDG/STG)"              = c("LDG", "STG"),
+    "Special (MUFU/SHFL)"           = c("MUFU", "SHFL"),
+    "Integer arith (IMAD/ISETP/...)"= c("IMAD", "IADD3", "ISETP", "LOP3"),
+    "Control (BRA/BAR/NOP/...)"     = c("BRA", "EXIT", "BAR", "BARRIER",
+                                         "WARPSYNC", "NOP", "S2R"),
+    "Other"                         = c("other")
+  )
+
+  rows <- list()
+  for (i in seq_len(nrow(df_keep))) {
+    label <- sprintf("%s [%d]", df_keep$kernel[i], df_keep$total_inst[i])
+    for (gname in names(groups)) {
+      cnt <- sum(df_keep[i, groups[[gname]]], na.rm = TRUE)
+      if (cnt > 0L) {
+        rows[[length(rows) + 1L]] <- data.frame(
+          kernel = label,
+          group  = gname,
+          frac   = cnt / df_keep$total_inst[i],
+          useful_pct = df_keep$useful_pct[i],
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+  long <- do.call(rbind, rows)
+  long$kernel <- factor(long$kernel, levels = unique(long$kernel))
+  long$group  <- factor(long$group,  levels = names(groups))
+
+  palette <- c(
+    "Tensor cores (HMMA/IMMA)"       = "#1f77b4",
+    "FP scalar (FFMA/FADD/FMUL)"     = "#2ca02c",
+    "Smem traffic (LDSM/LDS/STS)"    = "#ff7f0e",
+    "Async cp.async (LDGSTS)"        = "#d62728",
+    "Global (LDG/STG)"               = "#9467bd",
+    "Special (MUFU/SHFL)"            = "#17becf",
+    "Integer arith (IMAD/ISETP/...)" = "#bcbd22",
+    "Control (BRA/BAR/NOP/...)"      = "#8c564b",
+    "Other"                          = "#7f7f7f"
+  )
+
+  g <- ggplot(long, aes(x = kernel, y = frac, fill = group)) +
+    geom_col(width = 0.85) +
+    coord_flip() +
+    scale_y_continuous(labels = label_percent(), expand = c(0, 0)) +
+    scale_fill_manual(values = palette, name = "Family") +
+    labs(
+      title    = "SASS instruction mix by kernel",
+      subtitle = sprintf("Top %d kernels by total instruction count, sorted by useful_pct",
+                          top_n),
+      x = NULL,
+      y = "Fraction of instructions",
+      caption = "useful_pct = (HMMA + IMMA + FFMA + FMUL + FADD) / total_inst"
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(
+      axis.text.y      = element_text(family = "mono", size = 7),
+      legend.position  = "bottom",
+      legend.direction = "horizontal",
+      panel.grid.major.y = element_blank()
+    ) +
+    guides(fill = guide_legend(nrow = 3))
+
+  ggsave(fig_path, g, width = 11, height = 9, dpi = 120)
 }
 
 if (sys.nframe() == 0L) main()

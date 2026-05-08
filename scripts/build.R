@@ -17,10 +17,14 @@
 #
 # Note on language: disasm/assemble depend on the CuAssembler library
 # (cloudcores/CuAssembler), which is Python-only. Those two operations
-# delegate to tools/cuasm_helper.py. Everything else (compile, file
+# import CuAssembler via reticulate. Everything else (compile, file
 # comparison, orchestration) is pure R.
 
-# (no library() loads needed -- base R only)
+library(reticulate)
+
+# Use system python3 -- has sympy/pyelftools/etc. that CuAssembler needs.
+# reticulate's default ephemeral environment won't have these.
+use_python("/usr/bin/python3", required = TRUE)
 
 REPO_ROOT <- {
   args_full <- commandArgs(trailingOnly = FALSE)
@@ -29,7 +33,6 @@ REPO_ROOT <- {
   else            normalizePath(getwd())
 }
 CUASSEMBLER_PATH <- file.path(REPO_ROOT, "tools", "CuAssembler")
-CUASM_HELPER     <- file.path(REPO_ROOT, "tools", "cuasm_helper.py")
 SM_ARCH          <- "sm_86"
 
 # WSL: CUDA tools live in /usr/local/cuda/bin
@@ -41,16 +44,26 @@ if (dir.exists(CUDA_BIN) && !grepl(CUDA_BIN, Sys.getenv("PATH"), fixed = TRUE)) 
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
+# Lazily import CuAssembler via reticulate. Returns the two needed
+# Python modules. CuAssembler is added to sys.path on first use.
+.cuasm_modules <- NULL
 ensure_cuassembler <- function() {
+  if (!is.null(.cuasm_modules)) return(.cuasm_modules)
   if (!dir.exists(CUASSEMBLER_PATH)) {
     cat(sprintf("ERROR: CuAssembler not found at %s\n", CUASSEMBLER_PATH))
     cat("Run: git clone https://github.com/cloudcores/CuAssembler.git tools/CuAssembler\n")
     quit(status = 1)
   }
-  if (!file.exists(CUASM_HELPER)) {
-    cat(sprintf("ERROR: cuasm_helper.py missing at %s\n", CUASM_HELPER))
-    quit(status = 1)
-  }
+  # Push CuAssembler onto sys.path. reticulate auto-converts sys.path to
+  # an R character vector when accessed via $; manipulate it from Python
+  # to keep the underlying list mutable for subsequent imports.
+  reticulate::py_run_string(sprintf(
+    "import sys\nif r'%s' not in sys.path: sys.path.insert(0, r'%s')",
+    CUASSEMBLER_PATH, CUASSEMBLER_PATH))
+  cubin_mod  <- reticulate::import("CuAsm.CubinFile")
+  parser_mod <- reticulate::import("CuAsm.CuAsmParser")
+  .cuasm_modules <<- list(cubin = cubin_mod, parser = parser_mod)
+  .cuasm_modules
 }
 
 run_shell <- function(cmd, cwd = NULL) {
@@ -88,7 +101,7 @@ cmd_compile <- function(source_path, output_path = NULL, extra_flags = "") {
 }
 
 cmd_disasm <- function(cubin_path, output_path = NULL) {
-  ensure_cuassembler()
+  mods <- ensure_cuassembler()
   cubin_path <- normalizePath(cubin_path, mustWork = TRUE)
   if (is.null(output_path)) {
     output_path <- sub("\\.cubin$", ".cuasm", cubin_path)
@@ -96,23 +109,16 @@ cmd_disasm <- function(cubin_path, output_path = NULL) {
   output_path <- normalizePath(output_path, mustWork = FALSE)
 
   cat(sprintf("\n[disasm] %s -> %s\n", cubin_path, output_path))
-  rc <- system2("python3",
-                c(shQuote(CUASM_HELPER), "disasm",
-                  shQuote(cubin_path), shQuote(output_path)))
-  if (rc != 0L) {
-    cat(sprintf("ERROR: disasm via cuasm_helper failed (rc=%d)\n", rc))
-    quit(status = rc)
-  }
+  cubin_obj <- mods$cubin$CubinFile(cubin_path)
+  cubin_obj$saveAsCuAsm(output_path)
   cat(sprintf("  -> %s (%d bytes)\n", output_path, file.info(output_path)$size))
 
   # Also produce raw nvdisasm output for reference
   raw_sass_path <- sub("\\.cubin$", ".sass", cubin_path)
-  sass_out <- tryCatch(
-    suppressWarnings(system2("cuobjdump", c("-sass", shQuote(cubin_path)),
-                             stdout = TRUE, stderr = FALSE)),
-    error = function(e) NULL
-  )
-  if (!is.null(sass_out) && length(sass_out) &&
+  sass_out <- suppressWarnings(
+    system2("cuobjdump", c("-sass", shQuote(cubin_path)),
+            stdout = TRUE, stderr = FALSE))
+  if (length(sass_out) &&
       (is.null(attr(sass_out, "status")) ||
        attr(sass_out, "status") == 0L)) {
     writeLines(sass_out, raw_sass_path)
@@ -122,7 +128,7 @@ cmd_disasm <- function(cubin_path, output_path = NULL) {
 }
 
 cmd_assemble <- function(cuasm_path, output_path = NULL) {
-  ensure_cuassembler()
+  mods <- ensure_cuassembler()
   cuasm_path <- normalizePath(cuasm_path, mustWork = TRUE)
   if (is.null(output_path)) {
     # vector_add.sm_86.cuasm -> vector_add.sm_86.reassembled.cubin
@@ -131,13 +137,9 @@ cmd_assemble <- function(cuasm_path, output_path = NULL) {
   output_path <- normalizePath(output_path, mustWork = FALSE)
 
   cat(sprintf("\n[assemble] %s -> %s\n", cuasm_path, output_path))
-  rc <- system2("python3",
-                c(shQuote(CUASM_HELPER), "assemble",
-                  shQuote(cuasm_path), shQuote(output_path)))
-  if (rc != 0L) {
-    cat(sprintf("ERROR: assemble via cuasm_helper failed (rc=%d)\n", rc))
-    quit(status = rc)
-  }
+  parser <- mods$parser$CuAsmParser()
+  parser$parse(cuasm_path)
+  parser$saveAsCubin(output_path)
   cat(sprintf("  -> %s (%d bytes)\n", output_path, file.info(output_path)$size))
   output_path
 }
