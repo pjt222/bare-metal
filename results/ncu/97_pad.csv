@@ -1,0 +1,4 @@
+label,occupancy_pct,tc_util_pct,l1_hit_pct,l2_hit_pct,dram_read_bw,dram_write_bw,load_coalesce_bytes,stall_long_sb,stall_short_sb,stall_wait,stall_mio,stall_lg_throttle,stall_barrier,stall_math_throttle,stall_tex_throttle
+flash_attn_br16_v2_pad seq=1024,24.01,22.9,14.05,90.97,2.229e+10,1.341e+10,31.06,1.062,0.16,1,0.24,0.05,0.258,1.498,0
+flash_attn_v2_persistent_pad seq=1024,17.12,21.21,8.546,92.92,2.024e+10,1.244e+10,31.06,1.932,0.172,1.02,0.268,0.076,0.262,1.406,0
+"cross_attn_v2_pad (1024q,256kv,h=8)",21.75,18.25,27.13,86.53,3.292e+10,1.701e+10,28.8,1.578,0.196,0.968,0.296,0.214,0.238,1.48,0

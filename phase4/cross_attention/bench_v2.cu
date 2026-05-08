@@ -117,10 +117,15 @@ int main(int argc, char **argv) {
                          + (size_t)Br * d_head * sizeof(float);
     size_t smem_v2 = 2 * (size_t)Bc * d_head * sizeof(__half)
                    + (size_t)Br * Bc * sizeof(__half);
+    // pad: K_tile/V_tile use D_STRIDE=72 (= D_HEAD+8); weight_smem uses W_STRIDE=72 (= Bc+8)
+    const int D_STRIDE = 72;
+    size_t smem_v2_pad = 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
+                       + (size_t)Br * D_STRIDE * sizeof(__half);
 
     V variants[] = {
-        { "cross_attn.sm_86.cubin",    "cross_attn_br16", "cross_attn baseline (48 KB)", smem_baseline },
-        { "cross_attn_v2.sm_86.cubin", "cross_attn_v2",   "cross_attn_v2  (24 KB)     ", smem_v2 },
+        { "cross_attn.sm_86.cubin",        "cross_attn_br16",   "cross_attn baseline (48 KB)    ", smem_baseline },
+        { "cross_attn_v2.sm_86.cubin",     "cross_attn_v2",     "cross_attn_v2  (24 KB)         ", smem_v2 },
+        { "cross_attn_v2_pad.sm_86.cubin", "cross_attn_v2_pad", "cross_attn_v2_pad (+8, 27 KB)  ", smem_v2_pad },
     };
 
     int n1 = 1;
