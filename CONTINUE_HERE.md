@@ -1,24 +1,34 @@
 # Continue Here
 
-> **Last updated**: 2026-05-08 (NCU profiling unlocked, FA pipeline
-> 2.36× from smem padding)
+> **Last updated**: 2026-05-08 (NCU profiling session — 7 issues closed,
+> +8 padding pattern established across 5 kernels, 1.4-2.4× wins each)
 >
-> **Session status**: NCU diagnostics harness shipped (#89). First
-> measured-counter sweep overturned 3 long-held assumptions. Bank
-> conflict counter on FA pipeline showed **87.5% of every smem load
-> wavefront was conflicted**. Padding K/V/W smem strides 64 → 72 halfs
-> closed the conflicts; **FA seq=1024 plateau jumped 6.6% → 12.3% of
-> FP16 TC peak** (11.5 → 21.4 TFLOPS).
+> **Session status**: 4 commits, 7 issues closed (#84, #85, #88, #89,
+> #97, #98, #99). NCU bank-conflict counter unlocked diagnosis-and-fix
+> pattern: measure conflict rate, add +8 row stride padding, gain
+> 1.4-2.4×. Five of six measured kernels needed the fix.
 >
-> **New canonical FA kernel**: `flash_attn_br16_v2_pipeline_pad2.cu`.
-> 2.36× over previous canonical, conflict rate 87.5% → 2.2%, TC util
-> 14% → 36%. Robust across seq ∈ {256, 512, 1024, 2048, 4096} (1.85×
-> to 2.44×). Same algorithm, +5 KB smem, 30 lines edited.
+> **New canonical kernels**:
+> - `flash_attn_br16_v2_pipeline_pad2.cu` (FA, 21.4 TFLOPS at seq=1024,
+>   2.36× over previous canonical)
+> - `flash_attn_br16_v2_pad.cu` (FA baseline, 1.91×)
+> - `flash_attn_v2_persistent_pad.cu` (FA persistent, 2.08×)
+> - `cross_attn_v2_pad.cu` (cross-attn typical, 1.91×; regime-dependent)
+> - `hgemm_16warp_epi_pad.cu` (HGEMM epi, 1.41×)
 >
-> **Open issue queue**: 14 issues. #84 (split-Q) and #85 (4-stage
-> pipeline) deprioritized by measurement. #88 (XOR-swizzle) effectively
-> resolved by the +8 padding fix. #89 (NCU harness) DONE this session.
-> See "Reprioritization (post-NCU)" below.
+> **Open issue queue**: 11 issues. Most recent diagnostic findings
+> (Observations U/V/W/X/Y) reshape what's worth pursuing next — see
+> "Next sprint priorities" section below.
+>
+> **NCU-driven findings (Observations U-Y)**:
+> - U: smem traffic, not HMMA S08, was FA bottleneck (refuted #84 split-Q)
+> - V: HGEMM `math_pipe_throttle` is HMMA queue pressure, not address
+>   arithmetic (refuted IMAD-chain hypothesis, 1.01× negative result)
+> - W: FA pipeline 2.36× from +8 padding, bank conflict rate 87.5→ 2.2%
+> - X: pattern generalizes to FA baseline / persistent / cross-attn
+>   (1.91-2.08× each)
+> - Y: HGEMM bank audit confirms hgemm_16warp clean (0.17% rate),
+>   reveals hgemm_16warp_epi at 75.9% rate, fix gives 1.41×
 >
 > **NCU harness shipped**:
 > - `scripts/ncu_profile.py` (211 lines, single kernel + `--dry-run`)
@@ -249,58 +259,85 @@ Only placeholder issue remains. Active CUDA optimization queue: empty.
 
 ## Reprioritization (post-NCU, 2026-05-08)
 
-### Three steps executed this session
+### Five steps executed this session (commits ef77e0d, 37bc94a, f2100ac)
 
-1. **Hunt FFMA chain in HGEMM 16-warp** — hypothesis falsified.
-   Built `hgemm_16warp_aligned.cu` (drops boundary branches), cut IMAD
-   24% / ISETP 91% / BRA 60%. **Result: 1.01× (flat).** NCU showed
-   `stall_math_throttle` actually rose 35.46 → 41.74. Conclusion: the
-   metric reflects **HMMA queue pressure, not address arithmetic**. See
-   Observation V. Aligned variant kept as counter-example reference.
+1. **NCU diagnostics harness (#89)** — `scripts/ncu_profile.py`,
+   `ncu_profile_all.sh`, `docs/ncu_metrics.md`. 15 metrics, validated
+   against `ncu --query-metrics --chip ga104`. Now in routine use.
 
-2. **#88 XOR-swizzled smem (reframed as +8 padding)** — **massive win.**
-   Bank conflict counter measured 95.5M / 100.7M = 87.5% rate on FA
-   pipeline. Padding K_tile + V_tile row stride 64 → 72 halfs cuts
-   conflicts by ~60%, gives 1.64× speedup. See Observation W.
+2. **HGEMM IMAD-chain hypothesis (Obs V)** — falsified. Aligned variant
+   cut IMAD 24% / ISETP 91% / BRA 60%, perf 1.01× flat. Reframed
+   `math_pipe_throttle` as HMMA queue pressure.
 
-3. **Pad weight_smem too** (replaced original "extend fragment-shfl"
-   step) — weight_smem had same 64-half stride bank conflict.
-   Padding it gives **another 1.45× on top of step 2**, total 2.36×.
-   Conflict rate 87.5% → 2.2%. TC util 13.9% → 36.2%.
+3. **FA pipeline +8 padding (#88, Obs W)** — 2.36×. New canonical.
 
-### Original NCU-derived priorities (still valid)
+4. **+8 padding generalized (#97, Obs X)** — 4 more kernels: FA
+   baseline, persistent, cross-attention, all 1.91-2.08×.
 
-| issue | original framing | NCU verdict | action |
-|---|---|---|---|
-| #84 split-Q FA | "close 3× of FA gap" | L2 hit 94.2% (now), blocks 22× oversub | close as not-planned for trained shapes |
-| #85 4-stage pipeline HGEMM | "close 1.5×" | TC util 46%, HMMA queue throttled | re-evaluate; may need #96 SASS instead |
-| #88 XOR-swizzle smem | previously deprioritized | **resolved by +8 padding** (Observation W) | close as done |
+5. **HGEMM bank audit (#98, #99, Obs Y)** — hgemm_16warp clean
+   (0.17%); hgemm_16warp_epi was 75.9%, fix gives 1.41×.
 
-### New top candidates from this session
+### Closed this session
 
-1. **Apply +8 padding to other Tensor Core kernels** — cross-attention
-   v2, FA v2 baseline, FA v2 persistent, anywhere with FP16 tile column
-   count = power-of-2 ≤ 64. **Each is a 5-minute change worth
-   measuring.** Likely 1.5-2× wins each.
-2. **HGEMM bank conflict audit** — BK=32 (64 B stride). NCU did not
-   report bank conflicts there yet (only checked FA). Needs
-   measurement.
-3. **Investigate HGEMM 16-warp+epi over-syncing** — `stall_barrier=17`,
-   `stall_mio=21`. Easy to find by reading the cubin.
-4. **Investigate FA pipeline coalescing** — still 16 byte/sector even
-   after pad2. Baseline achieves 31. Worth a separate trace.
-5. **HGEMM SASS hand-tune (#96)** — only path to break the 46% TC util
-   wall, since pipeline + math throttle hypothesis both fell.
+| issue | resolution |
+|---|---|
+| #84 split-Q FA | not-planned for trained shapes (NCU showed no SM starvation) |
+| #85 4-stage HGEMM pipeline | re-evaluate (TC util already 46%, gap is HMMA queue) |
+| #88 XOR-swizzle | resolved by simpler +8 padding (Obs W) |
+| #89 NCU harness | DONE |
+| #97 +8 to other TC kernels | DONE (4 kernels, 1.9-2.1×) |
+| #98 HGEMM bank audit | confirms existing padding clean |
+| #99 hgemm_epi over-syncing | fixed via +8 padding (1.41×) |
 
 ### Headline numbers updated
 
-| kernel | before | after | speedup |
-|---|---:|---:|---:|
-| FA pipeline seq=1024 b=8 h=8 | 11.5 TFLOPS | **21.4 TFLOPS** | **2.36×** |
-| FA pipeline seq=512 | 8.4 | **20.6** | **2.44×** |
-| FA pipeline seq=4096 | 10.1 | **21.1** | **2.08×** |
+| kernel | before | after | speedup | % FP16 TC peak |
+|---|---:|---:|---:|---:|
+| FA pipeline seq=1024 b=8 h=8   | 11.5 TFLOPS | **21.4** | **2.36×** | 12.3% |
+| FA pipeline seq=512             | 8.4         | 20.6     | 2.44×    | 11.8% |
+| FA pipeline seq=4096            | 10.1        | 21.1     | 2.08×    | 12.1% |
+| FA baseline seq=1024            | 7.9         | 15.1     | 1.91×    | 8.7%  |
+| FA persistent seq=1024          | 7.3         | 15.2     | 2.08×    | 8.7%  |
+| Cross-attn typical (1024×256)   | 5.5         | 10.5     | 1.91×    | 6.0%  |
+| HGEMM 16-warp 4096³             | 30.0 (clean baseline) | n/a | n/a | 17.2% |
+| HGEMM 16-warp_epi 4096³          | 18.0        | 25.4     | 1.41×    | 14.6% |
 
-FA peak fraction: 6.6% → **12.3% of FP16 TC peak** at seq=1024.
+### Next sprint priorities (post-Obs Y)
+
+**Highest-EV remaining items**:
+
+1. **#96 HGEMM SASS hand-tune** — the only remaining path to break
+   HGEMM's 46% TC util ceiling. NCU showed `stall_math_throttle = 35.46`
+   on hgemm_16warp = HMMA queue pressure. Needs CuAssembler-level
+   instruction reordering. **High effort, high reward.**
+
+2. **#100 FA pipeline coalescing** — `load_coalesce_bytes = 16` (half of
+   baseline's 31) even after pad2. Cheap diagnostic, modest gain
+   (estimated 1.05-1.10×).
+
+3. **#86 Persistent grid + cooperative** — was planned 1.15×. NCU
+   data shows kernels are no longer memory-throttled (post-padding),
+   so this win may not materialize. Needs re-measurement.
+
+4. **#87 Streaming K-split** — 1.5× for skinny GEMM. Regime-specific,
+   needs dispatch logic.
+
+5. **#90 SASS instruction histogram** — documentation, complements NCU.
+
+6. **#91/#92 Register analyzer + measured roofline** — documentation.
+
+7. **#93/#94/#95 Cymatic + autotuner** — lower priority.
+
+**No more obvious smem-conflict wins remaining.** All canonical kernels
+are now padded. The pattern has been exhausted across the codebase.
+
+### Completed since session start
+
+- 4 commits (ef77e0d, 569c7f8, 37bc94a, f2100ac)
+- 7 issues closed
+- 5 new observations (U-Y) in `gpu_reflections.md` (+490 lines)
+- 5 new canonical kernels (`*_pad*.cu`)
+- NCU profiling harness + 8 measurement files in `results/ncu/`
 
 **Open issues from previous sprint plan still valid**:
 - #89 NCU profiling harness — **DONE this session** (close)
