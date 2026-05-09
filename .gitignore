@@ -74,3 +74,12 @@ cymatic_locality.csv
 # can be regenerated from scripts/handtune_imma_s04.R if needed).
 *.imma_s04.sm_86.cubin
 *.imma_s02.sm_86.cubin
+
+# phase6 / cuda-oxide spike
+# Keep the small comparison artifacts so the README's measured results are
+# reproducible from disk, but exclude the upstream NVlabs/cuda-oxide example
+# copy (NVIDIA Apache-2.0 — not ours, fetched fresh by run_oxide.sh).
+phase6/rust-experiments/vecadd_oxide/
+!phase6/rust-experiments/*.cubin
+!phase6/rust-experiments/*.sass
+!phase6/rust-experiments/*.ptx
