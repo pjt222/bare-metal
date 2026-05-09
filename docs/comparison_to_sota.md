@@ -1,5 +1,8 @@
 # How does this project compare to the SOTA?
 
+> Detail view. Canonical entry point for all per-kernel comparisons:
+> [`docs/kernels.md`](kernels.md).
+
 > Honest assessment: we are **roughly 4-20× slower than NVIDIA's
 > production libraries** depending on kernel. This document quantifies
 > the gap, explains what creates it, and characterizes what closing it

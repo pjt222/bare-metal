@@ -24,6 +24,10 @@ reassembled, and run on a real RTX 3070 Ti Laptop. Performance numbers
 are measured (median of 11 runs after 5 warmup iterations), not
 extrapolated.
 
+> 📋 **Looking for per-kernel data?** [`docs/kernels.md`](docs/kernels.md)
+> is the single entry point for all comparison views (headline wins,
+> SASS mix, register audit, roofline, vs SOTA, baselines, source paths).
+
 ---
 
 ## Headline performance
