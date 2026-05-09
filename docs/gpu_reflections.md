@@ -3093,3 +3093,105 @@ sparse + non-cp.async workloads emerge.
 - `scripts/cymatic_fa_alignment.R`        — sweep driver (step 1)
 - `docs/figures/cymatic_fa_alignment_2048.csv`        — long-form data
 - `docs/figures/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
+
+## Observation KK — cuda-oxide Rust→PTX spike: pipeline portable, 2× SASS bloat
+
+NVlabs published [cuda-oxide](https://github.com/NVlabs/cuda-oxide)
+(2026-04-22, alpha) — a custom rustc backend that compiles `#[kernel]`
+Rust functions to PTX through a Pliron MIR / LLVM IR pipeline.
+Question: can we slot it in as a front-end alternative to `nvcc` while
+keeping the cuasmR SASS hand-edit research intact?
+
+Spike kernel: vecadd, matched against `phase1/vector_add.cu` baseline.
+Live install + run on RTX 3070 Ti, sm_86, CUDA 13.2. Full writeup in
+`phase6/rust-experiments/README.md`.
+
+### Headline results
+
+| Metric                              | nvcc           | cuda-oxide      | Ratio |
+|-------------------------------------|----------------|-----------------|-------|
+| Source files (kernel + host)        | 2              | 1 (unified)     | —     |
+| Kernel body LoC                     | 9              | 6               | 0.67× |
+| PTX lines                           | 55             | 86              | 1.56× |
+| PTX `.param` slots                  | 4              | 6               | 1.5×  |
+| **SASS instructions (real)**        | **~16**        | **~34**         | **2.1×** |
+| Bounds checks emitted               | 1              | 3               | 3×    |
+| Cold build                          | <1 s           | ~110 s          | 100×+ |
+| Incremental build                   | <1 s           | ~1 s            | ~1×   |
+| Correctness                         | ✓              | ✓               | —     |
+| **cuasmR roundtrip byte-identical** | ✓              | **✓**           | —     |
+| **FADD→FMUL hand-edit runs**        | ✓              | **✓**           | —     |
+
+### What the spike proved
+
+1. **Pipeline converges cleanly at PTX.** Both flows merge at PTX, so
+   ptxas + cuobjdump + cuasmR all operate downstream without changes.
+   cuasm_read/cuasm_write on a Rust-origin cubin produced byte-identical
+   output (md5 match). The phase1 FADD→FMUL opcode flip
+   (`0x...7221 / 0x...0000` → `0x...7220 / 0x...400000`) ports verbatim
+   to the oxide-emitted FADD; patched cubin loaded into the oxide host
+   binary outputs `0,2,8,18,32` instead of `0,3,6,9,12`. **The hand-edit
+   research is fully source-language-agnostic.**
+
+2. **CUDA 13.2 + sm_86 is supported in practice** despite the README
+   pitching Hopper/Blackwell as the target. `cargo oxide doctor` greens
+   on libNVVM 2.0, nvJitLink 13.2, llc 21.1.8.
+
+### What the spike measured against integration
+
+1. **2× SASS bloat for safety-typed kernels.** Three sources, none
+   reducible without dropping Rust's safety pitch:
+   - **Independent slice bounds checks**: `&[f32], &[f32], DisjointSlice<f32>`
+     are three independent length values; LLVM/ptxas cannot prove
+     `a.len == b.len == c.len`. nvcc passes one `int num_elements` and
+     emits one `ISETP.GE + @P0 EXIT`. oxide emits three.
+   - **`Option<&mut T>` discriminant tracking**: `c.get_mut(idx)` returns
+     an Option; the `Some/None` tag round-trips through PRMT, LOP3.LUT,
+     ISETP, branch (4 SASS instr) before being collapsed.
+   - **64-bit indexing throughout**: oxide threads `u64` indices through
+     IADD3 + IADD3.X extended-precision pairs; nvcc fuses to IMAD.WIDE.
+
+   For DRAM-bound kernels (vecadd, GroupNorm) this is invisible — DRAM
+   is the bottleneck. For compute-bound kernels (HGEMM, sparse mma.sp,
+   FA v2 — the entire thrust of phases 2/3/5) the extra ALU lands on
+   the critical path.
+
+2. **16 GB toolchain footprint** to support a single-language alt
+   front-end. LLVM 21.1.8 (1.9 GB tarball, 11 GB extracted), nightly
+   Rust + rust-src + rustc-dev (~2 GB), cuda-oxide checkout + cargo
+   target/ (~3 GB). Repo lives on D: which was at 99% capacity, so the
+   install went under `~/cuda-oxide-deps/` on /home (Linux ext4, 809 GB
+   free). Repo footprint: 64 KB.
+
+3. **Cold build ~110 s.** Backend `librustc_codegen_cuda.so` rebuild +
+   path-deps. Iteration cost real on first build per machine; per-kernel
+   incremental edits run in ~1 s.
+
+4. **Sub-cliff to phase 1–5 thesis**: SASS hand-edit research operates
+   below PTX. Source language (.cu vs .rs) is invisible at the level we
+   care about. There is no measured win to integrating cuda-oxide for
+   the existing phases.
+
+### Verdict
+
+**Don't replace nvcc.** Treat phase6 as a sandbox for narrow
+experiments where Rust's front-end features earn their cost:
+
+- ptxas output diffs vs nvcc on a hand-tuned phase2/3 kernel
+- generic kernel templating with `Fn` closures vs `#define` macros
+- early stake in sm_100a / Blackwell tcgen05 / WGMMA when GPU lands
+  (cuda-oxide exposes these as native intrinsics; nvcc currently
+  needs raw PTX inline asm)
+
+For phase 1–5 SASS hand-edit work: **stay on nvcc**. The 2× ALU
+overhead from Rust's safety abstractions structurally conflicts with
+the project's compute-bound thesis.
+
+### Files
+
+- `phase6/rust-experiments/README.md`           — full writeup, all numbers
+- `phase6/rust-experiments/run_oxide.sh`        — bootstrap + driver script
+- `phase6/rust-experiments/vecadd_nvcc.ptx`     — nvcc PTX baseline
+- `phase6/rust-experiments/vecadd_oxide.ptx`    — oxide PTX
+- `phase6/rust-experiments/vecadd_*.sm_86.sass` — disassembly side-by-side
+- `phase6/rust-experiments/vecadd_oxide.fmul.cubin` — hand-edited
