@@ -69,7 +69,8 @@ parse_args <- function(argv) {
 }
 
 # ----------------------------------------------------------------------
-# Find executable for a kernel .cu path
+# Find executable for a kernel .cu path. Used as fallback when the
+# baseline entry doesn't carry an explicit `exe` override.
 # ----------------------------------------------------------------------
 find_executable <- function(kernel_path) {
   base <- tools::file_path_sans_ext(basename(kernel_path))
@@ -82,9 +83,101 @@ find_executable <- function(kernel_path) {
 }
 
 # ----------------------------------------------------------------------
+# Output parsing
+#
+# Bench stdout typically holds multiple `<X> ms ... <Y> (GFLOPS|TOPS)`
+# lines, one per kernel variant. The baseline entry tells us which one
+# is *this* kernel's number via three optional fields:
+#
+#   match        substring of the line containing the kernel's label
+#   section      substring of an earlier section header (only consider
+#                lines after this header until the next header)
+#   value_label  text immediately following the throughput number on
+#                the matched line; required when the line has multiple
+#                numbers (e.g. 'eff GFLOPS' vs 'dense-equiv GFLOPS')
+#
+# Without `match`, falls back to first-ms-GFLOPS-line legacy behavior.
+# ----------------------------------------------------------------------
+
+# Heuristic: a section header is a line whose stripped form starts
+# with `===` or `---` or contains '---' immediately after the trim.
+# Used by the `section` filter to bracket the search.
+.is_section_header <- function(line) {
+  s <- trimws(line)
+  grepl("^(===|---)", s, perl = TRUE)
+}
+
+# Filter raw output (a character vector of lines) to the lines inside
+# the requested section. If section_match is NULL, returns lines as-is.
+.filter_section <- function(lines, section_match) {
+  if (is.null(section_match) || !nzchar(section_match)) return(lines)
+  in_section <- FALSE
+  keep <- logical(length(lines))
+  for (i in seq_along(lines)) {
+    is_hdr <- .is_section_header(lines[[i]])
+    if (is_hdr) {
+      in_section <- grepl(section_match, lines[[i]], fixed = TRUE)
+      next  # drop the header itself
+    }
+    keep[[i]] <- in_section
+  }
+  lines[keep]
+}
+
+# Parse a single line into ms + throughput, honoring value_label when
+# given so the right column is picked out of multi-number lines.
+.parse_line <- function(line, value_label = NULL) {
+  out <- list()
+  m_ms <- regmatches(line,
+                     regexec("([0-9.]+)\\s*ms", line, perl = TRUE))[[1]]
+  if (length(m_ms) >= 2) out$ms <- as.numeric(m_ms[2])
+
+  if (!is.null(value_label) && nzchar(value_label)) {
+    # Number followed by literal value_label (e.g. 'dense-equiv GFLOPS').
+    pat <- sprintf("([0-9][0-9,.]*)\\s*%s",
+                   gsub("([][}{()|.+*?^$\\\\])", "\\\\\\1", value_label, perl = TRUE))
+    m <- regmatches(line, regexec(pat, line, perl = TRUE,
+                                  ignore.case = TRUE))[[1]]
+    if (length(m) >= 2) {
+      out$throughput <- as.numeric(gsub(",", "", m[2], fixed = TRUE))
+      # Unit: take the trailing GFLOPS/TOPS word from value_label if
+      # present, else default to GFLOPS.
+      u <- regmatches(value_label,
+                      regexec("(GFLOPS|TOPS)\\b", value_label,
+                              perl = TRUE, ignore.case = TRUE))[[1]]
+      out$unit <- if (length(u) >= 2) toupper(u[2]) else "GFLOPS"
+    }
+  } else {
+    m_tp <- regmatches(line,
+                       regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
+                               line, perl = TRUE, ignore.case = TRUE))[[1]]
+    if (length(m_tp) >= 3) {
+      out$throughput <- as.numeric(gsub(",", "", m_tp[2], fixed = TRUE))
+      out$unit <- toupper(m_tp[3])
+    }
+  }
+  out
+}
+
+# Pick the right line out of bench output, given a baseline-config's
+# match/section directives. Returns the chosen line (string) or NULL.
+.pick_line <- function(output_lines, match_str = NULL, section_str = NULL) {
+  candidates <- .filter_section(output_lines, section_str)
+  has_metrics <- grepl("ms", candidates) &
+                 grepl("GFLOPS|TOPS", candidates, ignore.case = TRUE)
+  candidates <- candidates[has_metrics]
+  if (!length(candidates)) return(NULL)
+  if (is.null(match_str) || !nzchar(match_str)) {
+    return(candidates[[1]])  # legacy: first metric-bearing line
+  }
+  hits <- candidates[grepl(match_str, candidates, fixed = TRUE)]
+  if (length(hits)) hits[[1]] else NULL
+}
+
+# ----------------------------------------------------------------------
 # Benchmark runner
 # ----------------------------------------------------------------------
-run_benchmark <- function(exe_path, args) {
+run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   # Benches use cuModuleLoad with a relative cubin filename, so they must
   # run from their own directory or the cubin won't be found. Resolve
   # the absolute path to the executable, then chdir into its parent for
@@ -107,26 +200,21 @@ run_benchmark <- function(exe_path, args) {
   output <- paste(out, collapse = "\n")
 
   metrics <- list(raw_output = output, returncode = rc)
-  # Try the combined regex first.
-  m <- regmatches(output,
-                  regexec("([0-9.]+)\\s*ms.*?([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                          output, perl = TRUE, ignore.case = TRUE))[[1]]
-  if (length(m) >= 4) {
-    metrics$ms         <- as.numeric(m[2])
-    metrics$throughput <- as.numeric(gsub(",", "", m[3], fixed = TRUE))
-    metrics$unit       <- toupper(m[4])
-  } else {
-    m_ms <- regmatches(output,
-                       regexec("([0-9.]+)\\s*ms", output, perl = TRUE))[[1]]
-    m_tp <- regmatches(output,
-                       regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                               output, perl = TRUE, ignore.case = TRUE))[[1]]
-    if (length(m_ms) >= 2) metrics$ms <- as.numeric(m_ms[2])
-    if (length(m_tp) >= 3) {
-      metrics$throughput <- as.numeric(gsub(",", "", m_tp[2], fixed = TRUE))
-      metrics$unit <- toupper(m_tp[3])
-    }
+
+  match_str   <- if (!is.null(baseline_cfg)) baseline_cfg$match       else NULL
+  section_str <- if (!is.null(baseline_cfg)) baseline_cfg$section     else NULL
+  value_label <- if (!is.null(baseline_cfg)) baseline_cfg$value_label else NULL
+
+  picked <- .pick_line(out, match_str = match_str, section_str = section_str)
+  if (is.null(picked)) {
+    # Nothing matched our hints; fall back to whole-output scan as before.
+    picked <- output
   }
+  parsed <- .parse_line(picked, value_label = value_label)
+  metrics$ms         <- parsed$ms
+  metrics$throughput <- parsed$throughput
+  metrics$unit       <- parsed$unit
+  metrics$matched_line <- picked
   metrics
 }
 
@@ -186,8 +274,11 @@ main <- function() {
                 if (!is.null(baselines$platform)) baselines$platform else "unknown"))
     for (kernel in names(baselines$kernels)) {
       cat(sprintf("\n%s\n", kernel))
-      for (cfg in names(baselines$kernels[[kernel]])) {
-        d <- baselines$kernels[[kernel]][[cfg]]
+      entry <- baselines$kernels[[kernel]]
+      # Skip kernel-level metadata keys; iterate config keys only.
+      cfg_names <- setdiff(names(entry), c("exe"))
+      for (cfg in cfg_names) {
+        d <- entry[[cfg]]
         unit <- if (!is.null(d$gflops)) "GFLOPS" else "TOPS"
         val  <- if (unit == "GFLOPS") d$gflops else d$tops
         cat(sprintf("  %s: %s ms, %s %s\n",
@@ -218,17 +309,25 @@ main <- function() {
 
   regressions <- 0L; improvements <- 0L; total <- 0L
 
+  # Reserved keys at the kernel-entry level that are not config names.
+  RESERVED_KEYS <- c("exe")
+
   for (kernel_path in names(kernels)) {
-    exe <- find_executable(kernel_path)
-    if (is.null(exe)) {
-      cat(sprintf("\n%s\n  SKIP -- executable not found (try: make benches)\n", kernel_path))
+    entry <- kernels[[kernel_path]]
+    # `exe` override (Tier 9 schema): use it if present, else heuristic.
+    exe <- if (!is.null(entry$exe)) entry$exe else find_executable(kernel_path)
+    if (is.null(exe) || !file.exists(exe)) {
+      cat(sprintf("\n%s\n  SKIP -- executable not found (try: make benches)\n",
+                  kernel_path))
       next
     }
-    for (cfg in names(kernels[[kernel_path]])) {
+    cfg_names <- setdiff(names(entry), RESERVED_KEYS)
+    for (cfg in cfg_names) {
       total <- total + 1L
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
-      current <- run_benchmark(exe, cfg_args)
-      verdict <- check_regression(current, kernels[[kernel_path]][[cfg]], args$tolerance)
+      baseline_cfg <- entry[[cfg]]
+      current <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
+      verdict <- check_regression(current, baseline_cfg, args$tolerance)
 
       cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
       if (verdict$is_reg) regressions <- regressions + 1L

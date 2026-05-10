@@ -2,23 +2,48 @@
   "recorded_date": "2026-05-05",
   "platform": "RTX 3070 Ti Laptop (GA104, sm_86, Ampere)",
   "note": "Recorded on WSL2, CUDA 12.8. Values are best-of-3 warm runs.",
+  "schema": {
+    "exe": "(optional) path to bench binary; defaults to <kernel-dir>/bench or <kernel-dir>/bench_<basename>",
+    "match": "(optional) substring of the bench-output line that holds this kernel's number; required when bench.cu prints multiple kernels",
+    "section": "(optional) substring of a section header; parser only considers lines after this header until the next header",
+    "value_label": "(optional) text immediately following the throughput number on the matched line; required when the line has multiple numbers (e.g. 'eff GFLOPS' vs 'dense-equiv GFLOPS')"
+  },
   "kernels": {
     "phase2/hgemm/hgemm_16warp.cu": {
-      "2048_2048_2048": {"ms": 0.527, "gflops": 31910},
-      "4096_4096_4096": {"ms": 4.220, "gflops": 31910}
+      "exe": "phase2/hgemm/bench",
+      "2048_2048_2048": {"ms": 0.527, "gflops": 31910,
+                         "match": "hgemm_16warp (128x128 2blk/SM)"},
+      "4096_4096_4096": {"ms": 4.220, "gflops": 31910,
+                         "match": "hgemm_16warp (128x128 2blk/SM)"}
     },
     "phase2/igemm/igemm_sparse_tiled.cu": {
-      "2048_2048_2048": {"ms": 0.433, "tops": 39674, "note": "dense-equiv after #65 metadata preload"},
-      "4096_4096_4096": {"ms": 4.317, "tops": 31835, "note": "dense-equiv after #65, -19.8% vs 2048^3"}
+      "exe": "phase2/igemm/bench_sparse",
+      "2048_2048_2048": {"ms": 0.433, "tops": 39674,
+                         "note": "dense-equiv after #65 metadata preload",
+                         "match": "igemm_sparse_tiled",
+                         "value_label": "dense-equiv GFLOPS"},
+      "4096_4096_4096": {"ms": 4.317, "tops": 31835,
+                         "note": "dense-equiv after #65, -19.8% vs 2048^3",
+                         "match": "igemm_sparse_tiled",
+                         "value_label": "dense-equiv GFLOPS"}
     },
     "phase2/igemm/igemm_pipelined_cpasync.cu": {
-      "4096_4096_4096": {"ms": 6.600, "tops": 20688}
+      "exe": "phase2/igemm/bench",
+      "4096_4096_4096": {"ms": 6.600, "tops": 20688,
+                         "match": "igemm_cpasync"}
     },
     "phase3/flash_attention/flash_attn_br16_regpv.cu": {
-      "1024_8_8": {"ms": 2.810, "gflops": 6112, "config_note": "seq_len=1024, batch=8, heads=8"}
+      "exe": "phase3/flash_attention/bench_br16_regpv",
+      "1024_8_8": {"ms": 2.810, "gflops": 6112,
+                   "config_note": "seq_len=1024, batch=8, heads=8",
+                   "match": "flash_attn_br16_regpv"}
     },
     "phase4/conv2d/conv2d_implicit_gemm.cu": {
-      "1_64_64_320_320": {"ms": 1.130, "gflops": 6687, "config_note": "N=1, H=W=64, Cin=Cout=320"}
+      "exe": "phase4/conv2d/bench_implicit_gemm",
+      "1_64_64_320_320": {"ms": 1.130, "gflops": 6687,
+                          "config_note": "N=1, H=W=64, Cin=Cout=320; bench shape 'SD 64x64 Cin=Cout=320'",
+                          "section": "SD 64",
+                          "match": "Implicit (single kern)"}
     }
   }
 }

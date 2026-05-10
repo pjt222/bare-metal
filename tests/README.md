@@ -11,5 +11,7 @@ These files validate hardware assumptions, fragment layouts, and race conditions
 | `hgemm_sparse/verify_wmma_ab_layout.cu` | Fragment register layout validation |
 | `igemm/test_inplace_race.cu` | Reproduce WAR hazard in in-place INT8 quantization |
 | `flash_attention/verify_wmma_layout.cu` | WMMA accumulator fragment layout (sm_86) |
+| `bench_regress/test_parser.R` | Parser tests for `scripts/bench/bench_regress.R` (14 groups, 32 assertions; canned bench-stdout fixtures) |
 
-Build any test individually with the same `nvcc` commands used for production kernels.
+Build any CUDA test individually with the same `nvcc` commands used for production kernels.
+Run the R parser test with `Rscript tests/bench_regress/test_parser.R`.

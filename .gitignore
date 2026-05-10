@@ -12,6 +12,8 @@ bench_*
 !bench_*.cu
 !scripts/bench_*.R
 !scripts/bench_*.py
+!tests/bench_regress/
+!tests/bench_regress/**
 phase1/host
 test_dense_manual
 test_mma_sp
