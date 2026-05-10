@@ -391,7 +391,13 @@ main <- function() {
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
       baseline_cfg <- entry[[cfg]]
       current <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
-      verdict <- check_regression(current, baseline_cfg, args$tolerance,
+      # Per-config tolerance override (Tier 10 follow-up): some
+      # kernels are intrinsically noisy on this hardware (bimodal
+      # boost-state behavior) and need a wider tolerance band.
+      eff_tol <- if (!is.null(baseline_cfg$tolerance))
+                   as.numeric(baseline_cfg$tolerance)
+                 else args$tolerance
+      verdict <- check_regression(current, baseline_cfg, eff_tol,
                                   default_valid_when = .default_vw)
 
       cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
