@@ -15,6 +15,13 @@ suppressMessages({
     library(tidyr)
 })
 
+# Project-wide theme + viridis palettes (audit follow-up).
+for (p in c("scripts/audit/_theme.R",
+            "../audit/_theme.R",
+            "../../scripts/audit/_theme.R")) {
+    if (file.exists(p)) { source(p); break }
+}
+
 WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
 if (dir.exists(WSL_CUDA_LIB) &&
     !grepl(WSL_CUDA_LIB, Sys.getenv("LD_LIBRARY_PATH"), fixed = TRUE)) {
@@ -182,18 +189,17 @@ for (tr in focus_traces) {
     p <- ggplot(sub, aes(x = factor(n), y = factor(m), fill = speedup)) +
         geom_tile(color = "white") +
         geom_text(aes(label = sprintf("%.2f", speedup)), size = 3.0) +
-        scale_fill_gradient2(midpoint = 1.0, low = "steelblue",
-                             mid = "white", high = "firebrick",
-                             name = "speedup\n(>1 = cymatic wins)") +
+        scale_fill_bm_div(midpoint = 1.0,
+                          name = "speedup\n(>1 = cymatic wins)") +
         labs(title = sprintf("%s (grid=%d²): cymatic speedup over (n, m)",
                               tr, grid_n),
              x = "n (angular frequency)",
              y = "m (radial bands)") +
-        theme_minimal(base_size = 11) +
+        theme_baremetal() +
         theme(panel.grid = element_blank())
     out_png <- file.path(fig_dir,
                          sprintf("cymatic_optimize_%d_%s.png", grid_n, tr))
-    ggsave(out_png, p, width = 7.5, height = 4.0, dpi = 130)
+    bm_save(p, out_png, width = 7.5, height = 4.0)
     cat(sprintf("[opt] wrote %s\n", out_png))
 }
 

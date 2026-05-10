@@ -10,6 +10,13 @@ suppressMessages({
     library(ggplot2); library(dplyr)
 })
 
+# Project-wide theme + viridis palettes (audit follow-up).
+for (p in c("scripts/audit/_theme.R",
+            "../audit/_theme.R",
+            "../../scripts/audit/_theme.R")) {
+    if (file.exists(p)) { source(p); break }
+}
+
 WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
 if (dir.exists(WSL_CUDA_LIB) &&
     !grepl(WSL_CUDA_LIB, Sys.getenv("LD_LIBRARY_PATH"), fixed = TRUE)) {
@@ -114,16 +121,15 @@ for (tr in unique(data$trace)) {
     p <- ggplot(sub, aes(x = factor(n), y = factor(m), fill = speedup)) +
         geom_tile(color = "white") +
         geom_text(aes(label = sprintf("%.2f", speedup)), size = 3) +
-        scale_fill_gradient2(midpoint = 1.0, low = "steelblue",
-                             mid = "white", high = "firebrick",
-                             name = "speedup") +
+        scale_fill_bm_div(midpoint = 1.0, name = "speedup") +
         labs(title = sprintf("FA trace %s @ grid=%d²: cymatic vs row-major",
                               tr, grid_n),
              x = "n", y = "m") +
-        theme_minimal(base_size = 11) +
+        theme_baremetal() +
         theme(panel.grid = element_blank())
-    ggsave(file.path(fig_dir,
-                     sprintf("cymatic_fa_alignment_%d_%s.png", grid_n, tr)),
-           p, width = 7, height = 4, dpi = 130)
+    bm_save(p,
+            file.path(fig_dir,
+                      sprintf("cymatic_fa_alignment_%d_%s.png", grid_n, tr)),
+            width = 7, height = 4)
 }
 cat("\n[fa_align] done.\n")

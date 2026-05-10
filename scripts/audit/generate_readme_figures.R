@@ -12,7 +12,7 @@
 #   5. phase_progression.png     — cumulative speedup through phases 1-5
 
 suppressPackageStartupMessages({
-  for (pkg in c("ggplot2", "scales")) {
+  for (pkg in c("ggplot2", "scales", "viridisLite")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop(sprintf("install.packages('%s')", pkg))
     }
@@ -20,6 +20,9 @@ suppressPackageStartupMessages({
   library(ggplot2)
   library(scales)
 })
+
+# Project-wide theme + viridis palettes (audit follow-up).
+source("scripts/audit/_theme.R")
 
 OUT <- "docs/figures"
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
@@ -29,18 +32,6 @@ FP32_PEAK_TFLOPS    <- 21.7
 FP16_TC_PEAK_TFLOPS <- 174.0
 INT8_TC_PEAK_TFLOPS <- 348.0
 DRAM_BW_GBPS        <- 608.0
-
-theme_kernel <- function() {
-  theme_minimal(base_size = 11) +
-    theme(
-      plot.title = element_text(face = "bold", size = 13),
-      plot.subtitle = element_text(colour = "grey40", size = 9),
-      plot.caption  = element_text(colour = "grey50", size = 8, hjust = 0),
-      panel.grid.minor = element_blank(),
-      panel.grid.major.x = element_blank(),
-      axis.title = element_text(size = 10)
-    )
-}
 
 # ---- 1. Headline performance overview --------------------------------------
 
@@ -102,13 +93,7 @@ p1 <- ggplot(perf, aes(x = kernel, y = gflops, fill = category)) +
             hjust = -0.05, size = 2.9, lineheight = 0.95) +
   coord_flip() +
   scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.32))) +
-  scale_fill_manual(values = c(
-    "FP32"            = "#5B8FF9",
-    "FP16 TC"         = "#5AD8A6",
-    "FP16 TC sparse"  = "#5D7092",
-    "INT8 TC"         = "#F6BD16",
-    "INT8 TC sparse"  = "#E8684A"
-  )) +
+  scale_fill_bm_disc() +
   labs(
     title = "Kernel Performance Headline",
     subtitle = "RTX 3070 Ti (GA104, sm_86) — measured GFLOPS; sparse = dense-equivalent",
@@ -116,12 +101,12 @@ p1 <- ggplot(perf, aes(x = kernel, y = gflops, fill = category)) +
     fill = NULL,
     caption = "Each kernel labelled with achieved GFLOPS and percent of its precision-class peak (FP32 = 21.7 TFLOPS, FP16 TC = 174, INT8 TC = 348)"
   ) +
-  theme_kernel() +
+  theme_baremetal() +
   theme(legend.position = "bottom",
         axis.text.y = element_text(size = 9))
 
-ggsave(file.path(OUT, "performance_overview.png"), p1,
-       width = 10, height = 6, dpi = 130)
+bm_save(p1, file.path(OUT, "performance_overview.png"),
+        width = 10, height = 6)
 cat("[fig] wrote performance_overview.png\n")
 
 # ---- 2. Roofline ----------------------------------------------------------
@@ -184,7 +169,7 @@ p2 <- ggplot() +
             linewidth = 0.6, linetype = "dotted") +
   geom_point(data = roof,
              aes(x = oi_flops_per_byte, y = achieved_tflops),
-             size = 3.5, colour = "#E8684A") +
+             size = 3.5, colour = BM_VIRIDIS_HIGH) +
   geom_text(data = roof,
             aes(x = oi_flops_per_byte, y = achieved_tflops, label = kernel),
             vjust = -1.0, size = 2.8, colour = "grey20") +
@@ -192,24 +177,20 @@ p2 <- ggplot() +
                 labels = c("0.1", "1", "10", "100", "1000")) +
   scale_y_log10(breaks = c(0.01, 0.1, 1, 10, 100, 174),
                 labels = c("0.01", "0.1", "1", "10", "100", "174")) +
-  scale_colour_manual(values = c(
-    "FP16 TC peak"        = "#5AD8A6",
-    "FP32 peak"           = "#5B8FF9",
-    "DRAM BW (608 GB/s)"  = "grey50"
-  )) +
+  scale_colour_bm_disc() +
   labs(
     title = "Roofline — GA104 RTX 3070 Ti",
     subtitle = "Operational intensity (FLOP/byte) vs achieved TFLOPS",
     x = "Operational intensity (FLOP / byte, log)",
     y = "TFLOPS (log)",
     colour = NULL,
-    caption = "Solid green: FP16 Tensor Core peak. Dashed blue: FP32 peak. Dotted: DRAM bandwidth ceiling. Points: measured kernels."
+    caption = "Three viridis-coloured ceilings: FP16 Tensor Core (solid), FP32 (dashed), DRAM bandwidth (dotted). Points: measured kernels at viridis high-end yellow."
   ) +
-  theme_kernel() +
+  theme_baremetal() +
   theme(legend.position = "bottom")
 
-ggsave(file.path(OUT, "roofline.png"), p2,
-       width = 9, height = 6, dpi = 130)
+bm_save(p2, file.path(OUT, "roofline.png"),
+        width = 9, height = 6)
 cat("[fig] wrote roofline.png\n")
 
 # ---- 3. Flash Attention waterfall -----------------------------------------
@@ -228,24 +209,27 @@ fa <- data.frame(
 fa$cumulative <- fa$gflops / fa$gflops[1]
 fa$step <- factor(fa$step, levels = fa$step)
 
-p3 <- ggplot(fa, aes(x = step, y = gflops)) +
-  geom_col(fill = "#5AD8A6", width = 0.6) +
+# Cumulative speedup also encoded as fill colour - viridis sequential maps
+# the optimisation arc onto perceptual order.
+p3 <- ggplot(fa, aes(x = step, y = gflops, fill = cumulative)) +
+  geom_col(width = 0.6) +
   geom_text(aes(label = sprintf("%s GFLOPS\n(%.2f ms, %.2fx)",
                                  format(gflops, big.mark = ",", trim = TRUE),
                                  ms, cumulative)),
             vjust = -0.4, size = 3.0, lineheight = 0.95) +
   scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.18))) +
+  scale_fill_bm_seq(name = "cumulative\nspeedup") +
   labs(
     title = "Flash Attention Optimization Waterfall",
     subtitle = "seq=1024, batch=8, heads=8 — cumulative 1.60x from regpv to v2_pipeline",
     x = NULL, y = "GFLOPS",
-    caption = "Per-step gain: lean state +6%, Q reg cache +16%, smem_work elimination +14%, cp.async +14%"
+    caption = "Per-step gain: lean state +6%, Q reg cache +16%, smem_work elimination +14%, cp.async +14%. Bar fill encodes cumulative speedup (viridis)."
   ) +
-  theme_kernel() +
+  theme_baremetal() +
   theme(axis.text.x = element_text(angle = 18, hjust = 1, size = 9))
 
-ggsave(file.path(OUT, "fa_waterfall.png"), p3,
-       width = 10, height = 5.5, dpi = 130)
+bm_save(p3, file.path(OUT, "fa_waterfall.png"),
+        width = 10, height = 5.5)
 cat("[fig] wrote fa_waterfall.png\n")
 
 # ---- 4. Cymatic speedup grid ----------------------------------------------
@@ -296,31 +280,32 @@ if (nrow(cym_df) > 0) {
   ord <- ord[order(-ord$speedup), ]
   cym_df$trace <- factor(cym_df$trace, levels = rev(ord$trace))
 
-  p4 <- ggplot(cym_df, aes(x = trace, y = speedup, fill = category)) +
+  # Continuous speedup encoded directly with diverging viridis-rooted scale
+  # (purple <-> white <-> yellow, midpoint = 1.0). Drops the 3-bucket
+  # categorical fill in favour of finer perceptual gradient.
+  p4 <- ggplot(cym_df, aes(x = trace, y = speedup, fill = speedup)) +
     geom_hline(yintercept = 1.0, colour = "grey50", linetype = "dashed") +
     geom_col(width = 0.75) +
     coord_flip() +
     facet_wrap(~ grid_label, nrow = 1) +
-    scale_fill_manual(values = c(
-      "cymatic wins"  = "#5AD8A6",
-      "neutral"       = "grey75",
-      "cymatic loses" = "#E8684A"
-    )) +
+    scale_fill_bm_div(midpoint = 1.0,
+                      name = "speedup\n(>1 = cymatic wins)") +
     scale_y_continuous(breaks = c(0.5, 1.0, 1.5, 2.0)) +
     labs(
       title = "Cymatic Memory Layout — Speedup vs Row-Major (per access trace)",
       subtitle = "RTX 3070 Ti — Mode (n=6, m=4), gather-sum kernel, median of 11 runs",
       x = NULL, y = "Speedup (row_ms / cym_ms; >1 = cymatic wins)",
-      fill = NULL,
-      caption = "Win/loss thresholds at 1.20x / 0.83x. 2048² is DRAM regime; smaller grids are L2-resident with locality differences hidden."
+      caption = "Diverging viridis-derived fill centred at 1.0. 2048² is DRAM regime; smaller grids are L2-resident with locality differences hidden."
     ) +
-    theme_kernel() +
-    theme(legend.position = "bottom",
-          axis.text.y = element_text(size = 8),
-          strip.text = element_text(face = "bold"))
+    theme_baremetal() +
+    theme(legend.position = "right",
+          axis.text.y = element_text(size = 8))
 
-  ggsave(file.path(OUT, "cymatic_speedup_grid.png"), p4,
-         width = 12, height = 5.5, dpi = 130)
+  # Cymatic figures grouped under docs/figures/cymatic/ since audit Tier 7.
+  cym_dir <- file.path(OUT, "cymatic")
+  dir.create(cym_dir, showWarnings = FALSE, recursive = TRUE)
+  bm_save(p4, file.path(cym_dir, "cymatic_speedup_grid.png"),
+          width = 12, height = 5.5)
   cat("[fig] wrote cymatic_speedup_grid.png\n")
 } else {
   cat("[fig] cymatic results not found, skipping cymatic_speedup_grid.png\n")
@@ -352,28 +337,30 @@ phases <- data.frame(
 phases <- phases[!is.na(phases$gflops), ]
 
 p5 <- ggplot(phases, aes(x = phase, y = cum_speedup, group = 1)) +
-  geom_line(linewidth = 0.8, colour = "#5B8FF9") +
-  geom_point(aes(size = gflops), colour = "#1F1F1F", fill = "#5AD8A6", shape = 21) +
+  geom_line(linewidth = 0.8, colour = BM_VIRIDIS_MID) +
+  geom_point(aes(size = gflops, fill = cum_speedup), colour = "grey20",
+             shape = 21) +
   geom_text(aes(label = sprintf("%.1fx\n%s GFLOPS",
                                  cum_speedup,
                                  format(gflops, big.mark = ",", trim = TRUE))),
             vjust = -1.5, size = 2.9, lineheight = 0.95) +
   scale_y_log10() +
   scale_size_continuous(range = c(3, 9), labels = comma) +
+  scale_fill_bm_seq(guide = "none") +
   expand_limits(y = 200) +
   labs(
     title = "Cumulative Kernel Speedup Through the Phases",
     subtitle = "Naive SGEMM → 2:4 Sparse HGEMM (~91× cumulative)",
     x = NULL, y = "Cumulative speedup (log scale)",
     size = "GFLOPS",
-    caption = "Each layer of amortization (tiling → register blocking → Tensor Cores → 16-warp occupancy → sparsity) compounds"
+    caption = "Each layer of amortization (tiling → register blocking → Tensor Cores → 16-warp occupancy → sparsity) compounds. Point fill encodes cumulative speedup (viridis)."
   ) +
-  theme_kernel() +
+  theme_baremetal() +
   theme(legend.position = "bottom",
         axis.text.x = element_text(size = 8))
 
-ggsave(file.path(OUT, "phase_progression.png"), p5,
-       width = 10, height = 5.5, dpi = 130)
+bm_save(p5, file.path(OUT, "phase_progression.png"),
+        width = 10, height = 5.5)
 cat("[fig] wrote phase_progression.png\n")
 
 cat("\n[fig] all figures written to ", OUT, "/\n", sep = "")
@@ -418,10 +405,7 @@ p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
   scale_y_continuous(limits = c(0, 105),
                      expand = expansion(mult = c(0, 0.02)),
                      labels = function(x) paste0(x, "%")) +
-  scale_fill_manual(values = c(
-    "this project (measured)"               = "#5AD8A6",
-    "SOTA estimate (cuBLAS / cuDNN / FA-2)" = "#5B8FF9"
-  )) +
+  scale_fill_bm_disc() +
   labs(
     title = "Gap to State of the Art",
     subtitle = "Percent of hardware peak — this project vs production libraries (RTX 3070 Ti class)",
@@ -429,10 +413,10 @@ p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
     fill = NULL,
     caption = "SOTA estimates from CUTLASS / FA-2 published numbers scaled to GA104; ±10-15% uncertainty. Gap factors are illustrative."
   ) +
-  theme_kernel() +
+  theme_baremetal() +
   theme(legend.position = "bottom",
         axis.text.y = element_text(size = 9))
 
-ggsave(file.path(OUT, "gap_to_sota.png"), p6,
-       width = 11, height = 5.5, dpi = 130)
+bm_save(p6, file.path(OUT, "gap_to_sota.png"),
+        width = 11, height = 5.5)
 cat("[fig] wrote gap_to_sota.png\n")

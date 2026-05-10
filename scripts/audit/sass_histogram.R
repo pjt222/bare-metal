@@ -28,6 +28,9 @@
 library(ggplot2)
 library(scales)
 
+# Project-wide theme + viridis palettes (audit follow-up).
+source("scripts/audit/_theme.R")
+
 # ---------- argument parsing (base R, no deps) ----------
 parse_args <- function(argv) {
   defaults <- list(
@@ -300,23 +303,15 @@ make_figure <- function(df, fig_path, top_n = 40) {
   long$kernel <- factor(long$kernel, levels = unique(long$kernel))
   long$group  <- factor(long$group,  levels = names(groups))
 
-  palette <- c(
-    "Tensor cores (HMMA/IMMA)"       = "#1f77b4",
-    "FP scalar (FFMA/FADD/FMUL)"     = "#2ca02c",
-    "Smem traffic (LDSM/LDS/STS)"    = "#ff7f0e",
-    "Async cp.async (LDGSTS)"        = "#d62728",
-    "Global (LDG/STG)"               = "#9467bd",
-    "Special (MUFU/SHFL)"            = "#17becf",
-    "Integer arith (IMAD/ISETP/...)" = "#bcbd22",
-    "Control (BRA/BAR/NOP/...)"      = "#8c564b",
-    "Other"                          = "#7f7f7f"
-  )
-
+  # 9 categories - viridis_d with `option = "turbo"` would give max
+  # discrimination at the cost of perceptual uniformity. Sticking with
+  # plain viridis (option "viridis") for visual coherence with the rest
+  # of the project; the legend disambiguates ties.
   g <- ggplot(long, aes(x = kernel, y = frac, fill = group)) +
     geom_col(width = 0.85) +
     coord_flip() +
     scale_y_continuous(labels = label_percent(), expand = c(0, 0)) +
-    scale_fill_manual(values = palette, name = "Family") +
+    scale_fill_bm_disc(name = "Family") +
     labs(
       title    = "SASS instruction mix by kernel",
       subtitle = sprintf("Top %d kernels by total instruction count, sorted by useful_pct",
@@ -325,16 +320,16 @@ make_figure <- function(df, fig_path, top_n = 40) {
       y = "Fraction of instructions",
       caption = "useful_pct = (HMMA + IMMA + FFMA + FMUL + FADD) / total_inst"
     ) +
-    theme_minimal(base_size = 9) +
+    theme_baremetal(base_size = 9) +
     theme(
-      axis.text.y      = element_text(family = "mono", size = 7),
-      legend.position  = "bottom",
-      legend.direction = "horizontal",
+      axis.text.y        = element_text(family = "mono", size = 7),
+      legend.position    = "bottom",
+      legend.direction   = "horizontal",
       panel.grid.major.y = element_blank()
     ) +
     guides(fill = guide_legend(nrow = 3))
 
-  ggsave(fig_path, g, width = 11, height = 9, dpi = 120)
+  bm_save(g, fig_path, width = 11, height = 9, dpi = 120)
 }
 
 if (sys.nframe() == 0L) main()

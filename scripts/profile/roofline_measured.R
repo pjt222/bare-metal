@@ -18,6 +18,13 @@
 library(ggplot2)
 library(scales)
 
+# Project-wide theme + viridis palettes (audit follow-up).
+for (p in c("scripts/audit/_theme.R",
+            "../audit/_theme.R",
+            "../../scripts/audit/_theme.R")) {
+    if (file.exists(p)) { source(p); break }
+}
+
 # ----------------------------------------------------------------------
 # GA104 hardware ceilings (RTX 3070 Ti Laptop, sm_86)
 # ----------------------------------------------------------------------
@@ -100,13 +107,16 @@ make_roofline <- function(d, out_path) {
                stringsAsFactors = FALSE)
   )
 
+  # Three ceilings + three precisions - viridis_d at fixed positions so
+  # ceilings and kernels share the same colour family.
+  vir5 <- viridisLite::viridis(5, begin = 0.05, end = 0.95)
   pal <- c(
-    "DRAM (608 GB/s) -> FP16 TC peak" = "#1f77b4",
-    "L2 (~3 TB/s)   -> FP16 TC peak"  = "#2ca02c",
-    "DRAM (608 GB/s) -> INT8 TC peak" = "#d62728"
+    "DRAM (608 GB/s) -> FP16 TC peak" = vir5[1],   # deep purple
+    "L2 (~3 TB/s)   -> FP16 TC peak"  = vir5[3],   # teal
+    "DRAM (608 GB/s) -> INT8 TC peak" = vir5[5]    # yellow
   )
 
-  pal_kernels <- c(FP16 = "#1f77b4", INT8 = "#d62728", FP32 = "#7f7f7f")
+  pal_kernels <- c(FP16 = vir5[1], INT8 = vir5[5], FP32 = vir5[3])
 
   # Single combined plot showing both DRAM-bounded and L2-bounded.
   g <- ggplot() +
@@ -147,19 +157,18 @@ make_roofline <- function(d, out_path) {
         sep = "  -  "
       )
     ) +
-    theme_minimal(base_size = 10) +
+    theme_baremetal(base_size = 10) +
     theme(
       legend.position  = "bottom",
       legend.direction = "vertical",
-      legend.box       = "horizontal",
-      plot.caption     = element_text(size = 7, color = "grey40")
+      legend.box       = "horizontal"
     ) +
     guides(color    = guide_legend(order = 1),
            linetype = guide_legend(order = 1),
            fill     = guide_legend(order = 2))
 
   dir.create(dirname(out_path), showWarnings = FALSE, recursive = TRUE)
-  ggsave(out_path, g, width = 10.5, height = 8, dpi = 130)
+  bm_save(g, out_path, width = 10.5, height = 8)
 }
 
 # ----------------------------------------------------------------------
