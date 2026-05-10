@@ -1,12 +1,18 @@
 {
   "recorded_date": "2026-05-05",
   "platform": "RTX 3070 Ti Laptop (GA104, sm_86, Ampere)",
-  "note": "Recorded on WSL2, CUDA 12.8. Values are best-of-3 warm runs.",
+  "note": "Recorded on WSL2, CUDA 12.8. Values are best-of-3 warm runs. Tier 10 retrofit pending: re-baseline against captured GPU state to make numbers durable across thermal/power conditions.",
+  "default_valid_when": {
+    "require_no_throttle": true,
+    "allow_throttle": ["GpuIdle"],
+    "comment": "Inherited by every kernel that doesn't set its own valid_when. Override per-kernel for stricter requirements (min_clock_sm, max_temp_c, require_ac)."
+  },
   "schema": {
-    "exe": "(optional) path to bench binary; defaults to <kernel-dir>/bench or <kernel-dir>/bench_<basename>",
-    "match": "(optional) substring of the bench-output line that holds this kernel's number; required when bench.cu prints multiple kernels",
-    "section": "(optional) substring of a section header; parser only considers lines after this header until the next header",
-    "value_label": "(optional) text immediately following the throughput number on the matched line; required when the line has multiple numbers (e.g. 'eff GFLOPS' vs 'dense-equiv GFLOPS')"
+    "exe":         "(optional) path to bench binary; defaults to <kernel-dir>/bench or <kernel-dir>/bench_<basename>",
+    "match":       "(optional) substring of the bench-output line that holds this kernel's number; required when bench.cu prints multiple kernels",
+    "section":     "(optional) substring of a section header; parser only considers lines after this header until the next header",
+    "value_label": "(optional) text immediately following the throughput number on the matched line; required when the line has multiple numbers",
+    "valid_when":  "(optional) GPU/host state requirement for a fair comparison; refuses to compare if violated. Fields: require_no_throttle (default TRUE), allow_throttle (default ['GpuIdle']), min_clock_sm (MHz), max_temp_c (degC), require_ac (laptop). Tier 10."
   },
   "kernels": {
     "phase2/hgemm/hgemm_16warp.cu": {

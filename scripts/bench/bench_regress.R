@@ -13,6 +13,21 @@
 
 library(jsonlite)
 
+# Tier 10 metadata capture: GPU + host state pre/post each bench. Sourced
+# here so other modules can rely on bench_regress.R + meta together.
+.bench_meta_path <- {
+  candidates <- c(
+    file.path(dirname(sub("^--file=", "",
+                          grep("^--file=", commandArgs(trailingOnly = FALSE),
+                               value = TRUE)[1])),
+              "bench_meta.R"),
+    "scripts/bench/bench_meta.R"
+  )
+  ok <- candidates[file.exists(candidates)]
+  if (length(ok)) ok[[1]] else NA_character_
+}
+if (!is.na(.bench_meta_path)) source(.bench_meta_path)
+
 # WSL CUDA libpath (R subprocesses can't see GPU otherwise).
 .WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
 if (dir.exists(.WSL_CUDA_LIB) &&
@@ -187,6 +202,14 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   prev_wd <- getwd()
   setwd(exe_dir)
   on.exit(setwd(prev_wd), add = TRUE)
+
+  # Tier 10: snapshot GPU + host state around the bench launch so we
+  # can refuse to compare against baseline if the GPU was thermally
+  # throttled, on battery, etc. capture_gpu_state() is a no-op (NULL)
+  # if bench_meta.R didn't load (e.g. running on a CI box without nvidia-smi).
+  pre_meta <- if (exists("capture_gpu_state", mode = "function"))
+                capture_gpu_state() else NULL
+
   out <- tryCatch(
     suppressWarnings(system2(abs_exe, args, stdout = TRUE, stderr = TRUE,
                              timeout = 120)),
@@ -195,11 +218,16 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
       character(0)
     }
   )
+
+  post_meta <- if (exists("capture_gpu_state", mode = "function"))
+                 capture_gpu_state() else NULL
+
   status <- attr(out, "status")
   rc <- if (is.null(status)) 0L else as.integer(status)
   output <- paste(out, collapse = "\n")
 
-  metrics <- list(raw_output = output, returncode = rc)
+  metrics <- list(raw_output = output, returncode = rc,
+                  meta_pre = pre_meta, meta_post = post_meta)
 
   match_str   <- if (!is.null(baseline_cfg)) baseline_cfg$match       else NULL
   section_str <- if (!is.null(baseline_cfg)) baseline_cfg$section     else NULL
@@ -221,11 +249,30 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
 # ----------------------------------------------------------------------
 # Regression decision
 # ----------------------------------------------------------------------
-check_regression <- function(current, baseline, tolerance) {
+check_regression <- function(current, baseline, tolerance,
+                             default_valid_when = list()) {
   if (!is.null(current$returncode) && current$returncode != 0L) {
     return(list(is_reg = TRUE,
                 msg = sprintf("CRASH (exit=%d)", current$returncode)))
   }
+
+  # Tier 10: refuse to compare if the GPU was in an unfair state
+  # during the run (thermal throttle, sw power cap, etc). Reported as
+  # SKIPPED, not REGRESSION — the measurement isn't comparable to
+  # baseline regardless of what the number says.
+  if (exists("classify_meta", mode = "function") &&
+      !is.null(current$meta_pre) && !is.null(current$meta_post)) {
+    valid_when <- if (!is.null(baseline$valid_when)) baseline$valid_when
+                  else default_valid_when
+    cls <- classify_meta(current$meta_pre, current$meta_post, valid_when)
+    if (isFALSE(cls$ok)) {
+      return(list(is_reg = FALSE, skipped = TRUE,
+                  msg = sprintf("SKIPPED (%s) [%s]",
+                                paste(cls$reasons, collapse = "; "),
+                                cls$summary)))
+    }
+  }
+
   unit <- if (!is.null(current$unit)) current$unit else "GFLOPS"
   baseline_val <- baseline[[tolower(unit)]]
   if (is.null(baseline_val)) baseline_val <- baseline$gflops
@@ -307,10 +354,27 @@ main <- function() {
               if (!is.null(baselines$recorded_date)) baselines$recorded_date else "unknown"))
   cat(strrep("=", 70), "\n")
 
-  regressions <- 0L; improvements <- 0L; total <- 0L
+  regressions <- 0L; improvements <- 0L; skipped <- 0L; total <- 0L
 
   # Reserved keys at the kernel-entry level that are not config names.
   RESERVED_KEYS <- c("exe")
+
+  # Tier 10: print one-line GPU state header so the user can see
+  # whether the run started under unfair conditions.
+  if (exists("capture_gpu_state", mode = "function")) {
+    .pre_session <- capture_gpu_state()
+    if (!is.null(.pre_session)) {
+      cat(sprintf("  GPU state: %s\n",
+                  summarise_meta(.pre_session, .pre_session)))
+      cat(strrep("=", 70), "\n")
+    }
+  }
+
+  # Tier 10: project-wide default valid_when (e.g. require no throttle).
+  # Per-kernel valid_when overrides this; absent both, classify_meta
+  # uses its own internal defaults.
+  .default_vw <- if (!is.null(baselines$default_valid_when))
+                   baselines$default_valid_when else list()
 
   for (kernel_path in names(kernels)) {
     entry <- kernels[[kernel_path]]
@@ -327,17 +391,19 @@ main <- function() {
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
       baseline_cfg <- entry[[cfg]]
       current <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
-      verdict <- check_regression(current, baseline_cfg, args$tolerance)
+      verdict <- check_regression(current, baseline_cfg, args$tolerance,
+                                  default_valid_when = .default_vw)
 
       cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
-      if (verdict$is_reg) regressions <- regressions + 1L
+      if (isTRUE(verdict$skipped)) skipped <- skipped + 1L
+      else if (verdict$is_reg)     regressions <- regressions + 1L
       else if (grepl("IMPROVED", verdict$msg, fixed = TRUE)) improvements <- improvements + 1L
     }
   }
 
   cat("\n", strrep("=", 70), "\n", sep = "")
-  cat(sprintf("  Total: %d | Regressions: %d | Improvements: %d\n",
-              total, regressions, improvements))
+  cat(sprintf("  Total: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
+              total, regressions, improvements, skipped))
   if (regressions > 0L) {
     cat(sprintf("  RESULT: FAILED -- %d regression(s) detected\n", regressions))
     quit(status = 1)
