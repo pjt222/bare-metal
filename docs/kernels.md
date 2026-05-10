@@ -215,6 +215,7 @@ Phase directories (kernel families):
 | 4       | `phase4/cymatic/`                 | Speculative Chladni-pattern memory study       |
 | 5       | `phase5/attention_layer/`         | Multi-head attention layer composition         |
 | 6       | `phase6/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
+| 6       | `phase6/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |
 
 ---
 

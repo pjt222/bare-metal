@@ -3195,3 +3195,76 @@ the project's compute-bound thesis.
 - `phase6/rust-experiments/vecadd_oxide.ptx`    — oxide PTX
 - `phase6/rust-experiments/vecadd_*.sm_86.sass` — disassembly side-by-side
 - `phase6/rust-experiments/vecadd_oxide.fmul.cubin` — hand-edited
+
+## Observation LL — cuda-oxide gather_sum: fewer SASS instructions, slower runtime (vecadd inverted, unroll dominates)
+
+**Phase**: phase6/rust-experiments/cymatic_oxide
+**Hardware**: GA104, sm_86, RTX 3070 Ti
+**Date**: 2026-05-10
+
+Second cuda-oxide spike, this time on the phase4/cymatic gather_sum
+kernel — a serialised `data[idx[k]]` chain rather than vecadd's flat
+LDG. Same toolchain (Rust nightly + LLVM 21 + cuda-oxide) on the same
+machine that ran Obs KK.
+
+### Headline numbers
+
+| Metric                              | nvcc           | oxide           | Ratio |
+|-------------------------------------|---------------:|----------------:|------:|
+| PTX lines                           |            149 |              89 |  0.60×|
+| SASS real instructions              |            120 |              80 |  0.67×|
+| Inner-loop LDG/FADD count           |             21 |               3 |  0.14×|
+| Inner-loop unroll factor            |             4× |              1× |       |
+| `rowmajor_full` row layout, GB/s    |         1858.1 |          1489.9 |  0.80×|
+| `rowmajor_full` cymatic layout, GB/s|         1453.6 |           965.4 |  0.66×|
+
+**oxide emits ~33% fewer instructions but runs 20-35% slower.** Inverse
+of Obs KK (vecadd: 2× SASS, runtime parity).
+
+### Why
+
+nvcc unrolls the inner gather loop 4×; oxide does not. Per nvcc inner
+iteration the SASS hot path issues 4 independent `LDG idx[k..k+3]`,
+followed by 4 dependent `LDG data[idx_value]`, into 4 serial FADDs.
+That's ~8 in-flight DRAM transactions per warp before any FADD waits.
+oxide's inner body is one LDG (idx), one dependent LDG (data), one
+FADD, branch — **no memory pipelining**. On a DRAM-bound trace the
+unroll ratio is the bandwidth ratio.
+
+The 3 panic-EXIT blocks for Rust slice bounds checks (idx[k],
+data[idx_value], out[0]) are visible in oxide's SASS — ~9 cold
+instructions, no measured runtime cost (correctly predicted-not-taken
+on the hot path).
+
+### Implications
+
+1. **Rust safety bloat is not the dominant story for non-trivial
+   kernels.** The Obs KK conclusion ("2× SASS from `Option<&mut T>` and
+   per-slice bounds checks") was a vecadd artifact: vecadd's hot path
+   is so short that bounds-check overhead dominates instruction count.
+   For loops with real bodies, **loop-optimization heuristics in the
+   compiler dominate**, not the front-end abstraction.
+
+2. **cuda-oxide → LLVM 21 NVPTX backend is missing nvcc's unroll
+   heuristic** for gather-style accumulator loops. Manual unrolling
+   (Rust source `for _ in 0..4 { ... }` with constant strides, or
+   `unsafe { get_unchecked }` with explicit body duplication) is the
+   gap-closer. Not yet attempted.
+
+3. **Cymatic layout effect (Obs T) is backend-agnostic.** Both nvcc
+   (row > cym 0.78×) and oxide (row > cym 0.65×) preserve the pattern
+   on the only DRAM-bound trace. Layout magnitude differs because
+   bandwidth ceiling differs, not because the layout effect changed.
+
+4. **Same conclusion for phase 1–5**: keep nvcc. The reason is
+   different now (loop-opt heuristic gap, not safety bloat) but the
+   recommendation stands.
+
+### Files
+
+- `phase6/rust-experiments/cymatic_oxide/README.md`         — full writeup
+- `phase6/rust-experiments/cymatic_oxide/src/main.rs`       — Rust kernel port
+- `phase6/rust-experiments/cymatic_oxide/gather_oxide.ptx`  — oxide PTX
+- `phase6/rust-experiments/cymatic_oxide/gather_nvcc.cu`    — nvcc-only kernel source
+- `phase6/rust-experiments/cymatic_oxide/gather_*.sm_86.sass` — disassembly side-by-side
+- `phase6/rust-experiments/cymatic_oxide/bench_gather_driver.cu` — Driver-API harness

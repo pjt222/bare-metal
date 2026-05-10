@@ -223,6 +223,7 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 | 4     | Diffusion UNet: timestep, GroupNorm, conv2d, ResNet, cross-attn | ✅ | Full SASS primitive inventory + cymatic study |
 | 5     | Sparse 2:4 GEMM, INT8 quant, optimized epilogues | ✅  | 41,721 sparse-equiv GFLOPS                            |
 | 6     | Front-end alternatives: cuda-oxide Rust→PTX spike | ✅  | Pipeline portable, 2× SASS bloat, nvcc stays default  |
+| 6     | cuda-oxide on gather_sum (cymatic kernel)         | ✅  | oxide 0.67× SASS but 0.65–0.80× runtime; nvcc unroll heuristic dominates (Obs LL) |
 
 ---
 
@@ -346,6 +347,7 @@ phase4/             — Diffusion UNet primitives
   cymatic/          — speculative Chladni-pattern memory layout study
 phase6/             — Front-end alternatives sandbox
   rust-experiments/ — cuda-oxide Rust→PTX spike vs nvcc baseline
+    cymatic_oxide/    — cuda-oxide gather_sum vs nvcc gather_sum (Obs LL)
 docs/
   tutorial/         — 6-chapter tutorial series
   figures/          — regenerable plots (R + ggplot2)
