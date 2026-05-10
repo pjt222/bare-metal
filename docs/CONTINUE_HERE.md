@@ -398,7 +398,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 
 ## Cymatic Memory Layout (this session, post-tutorial)
 
-**Speculative layout study — fully tested on GPU**
+**Chladni memory layout study — fully tested on GPU (audit Tier 12: treated as regular phase4 kernel)**
 
 - `scripts/cymatic/cymatic_mapping.R` — Bessel zeros, Chladni mode field, region
   flood fill (O(N²) preallocated queue), radial-then-angular ordering,

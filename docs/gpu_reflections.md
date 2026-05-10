@@ -1278,7 +1278,7 @@ the padding regressions in Observation O).
 ## Observation T — Cymatic memory layout: angle-dependent gather locality on real DRAM
 
 **Date**: 2026-05-07
-**Phase**: speculative layout study (`phase4/cymatic/`)
+**Phase**: memory layout study (`phase4/cymatic/`)
 **Headline**: layout aligned with Chladni-mode antinodes gives **+1.53× gather throughput at sector midlines**, **−1.89× at sector boundaries** on RTX 3070 Ti, GRID=2048² (13 MB DRAM-resident buffer).
 
 ### Setup

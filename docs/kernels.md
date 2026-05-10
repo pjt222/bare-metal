@@ -1,8 +1,13 @@
 # Kernel Inventory & Comparison
 
 **Single entry point** for all per-kernel comparison data in this
-project. Detailed views live in their own files (each linked below);
-this page exists so you don't have to hunt across `docs/` to find the
+project (kernels indexed by **development phase**). For the
+same kernels indexed by **content / internal structure** (GEMM
+family, reductions, attention, convolution, elementwise, ...), see
+[`kernels_by_family.md`](kernels_by_family.md).
+
+Detailed views live in their own files (each linked below); this
+page exists so you don't have to hunt across `docs/` to find the
 right slice.
 
 121 kernels measured, all on **RTX 3070 Ti Laptop (GA104, sm_86)**.
@@ -212,7 +217,7 @@ Phase directories (kernel families):
 | 3       | `phase3/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
 | 4       | `phase4/conv2d/`                  | Direct 9× → implicit GEMM (22× win)            |
 | 4       | `phase4/{groupnorm,resblock,cross_attention,timestep_emb}/` | UNet primitives        |
-| 4       | `phase4/cymatic/`                 | Speculative Chladni-pattern memory study       |
+| 4       | `phase4/cymatic/`                 | Chladni-pattern memory layout study            |
 | 5       | `phase5/attention_layer/`         | Multi-head attention layer composition         |
 | Exp     | `experiments/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
 | Exp     | `experiments/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |

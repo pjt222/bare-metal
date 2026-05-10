@@ -24,7 +24,7 @@ reassembled, and run on a real RTX 3070 Ti Laptop. Performance numbers
 are measured (median of 11 runs after 5 warmup iterations), not
 extrapolated.
 
-> 📋 **Looking for per-kernel data?** [`docs/kernels.md`](docs/kernels.md)
+> 📋 **Per-kernel data:** [`docs/kernels.md`](docs/kernels.md) (by phase) · [`docs/kernels_by_family.md`](docs/kernels_by_family.md) (by content)
 > is the single entry point for all comparison views (headline wins,
 > SASS mix, register audit, roofline, vs SOTA, baselines, source paths).
 
@@ -152,7 +152,7 @@ to close the gap" in [docs/comparison_to_sota.md](docs/comparison_to_sota.md).
 
 ---
 
-## Cymatic memory layout — speculative geometry-aligned addressing
+## Cymatic memory layout — geometry-aligned addressing study
 
 ![Cymatic speedup grid](docs/figures/cymatic/cymatic_speedup_grid.png)
 
@@ -322,12 +322,15 @@ few utility / setup drivers used as named CLI tools. See
 All R scripts use the renv project library (`renv.lock`, R 4.6.0).
 First-time setup: `Rscript -e 'renv::restore()'`.
 
-### Speculative
+### Memory layout studies
 
 - [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md) +
   [phase4/cymatic/](phase4/cymatic/) — Chladni-pattern memory layout
   with measured GPU benchmarks. Conditional 1.53× win on
-  mode-aligned access, 1.89× loss on nodal-line access.
+  mode-aligned access, 1.89× loss on nodal-line access. Treated
+  as a regular phase4 kernel (audit Tier 12); not gated by the
+  regression hook because its bench prints multi-column row-vs-cym
+  output that doesn't fit the single-number baselines schema.
 
 ---
 
@@ -361,7 +364,7 @@ phase4/             — Diffusion UNet primitives
   conv2d/           — direct 9× → implicit GEMM (22× win)
   resblock/         — full UNet block, 7.01× via implicit GEMM
   cross_attention/  — HMMA + SHFL + MUFU; regime-dependent v2
-  cymatic/          — speculative Chladni-pattern memory layout study
+  cymatic/          — Chladni-pattern memory layout study
 experiments/             — Front-end alternatives sandbox
   rust-experiments/ — cuda-oxide Rust→PTX spike vs nvcc baseline
     cymatic_oxide/    — cuda-oxide gather_sum vs nvcc gather_sum (Obs LL)
