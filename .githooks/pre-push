@@ -16,9 +16,12 @@ echo "  bare-metal pre-push hook"
 echo "  (bypass with: git push --no-verify)"
 echo "========================================"
 
-# Only run on the main repo (not externals)
-if [ ! -f "scripts/bench_regress.py" ]; then
-    echo -e "${YELLOW}WARNING: bench_regress.py not found — skipping${NC}"
+# Only run on the main repo (not externals).
+# After audit Tier 5, scripts/bench_regress.py was retired in favour of
+# scripts/bench/bench_regress.R (project's R-only tooling policy).
+REGRESS_SCRIPT="scripts/bench/bench_regress.R"
+if [ ! -f "$REGRESS_SCRIPT" ]; then
+    echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
     exit 0
 fi
 
@@ -32,10 +35,10 @@ else
     echo "  Regression check will still run on already-built executables.${NC}"
 fi
 
-# Run performance regression checker
+# Run performance regression checker (R + renv)
 echo ""
-echo "--- Running bench_regress.py ---"
-if python3 scripts/bench_regress.py; then
+echo "--- Running $REGRESS_SCRIPT ---"
+if Rscript "$REGRESS_SCRIPT"; then
     echo ""
     echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"
     exit 0
@@ -44,8 +47,8 @@ else
     echo -e "${RED}BENCHMARK REGRESSION DETECTED${NC}"
     echo ""
     echo "To investigate:"
-    echo "  python3 scripts/bench_regress.py --kernel <kernel_path>"
-    echo "  python3 scripts/bench_regress.py --tolerance 0.20"
+    echo "  Rscript $REGRESS_SCRIPT --kernel <kernel_path>"
+    echo "  Rscript $REGRESS_SCRIPT --tolerance 0.20"
     echo ""
     echo "To update baselines after legitimate improvements:"
     echo "  edit docs/baselines.json"
