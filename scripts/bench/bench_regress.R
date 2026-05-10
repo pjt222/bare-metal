@@ -85,8 +85,17 @@ find_executable <- function(kernel_path) {
 # Benchmark runner
 # ----------------------------------------------------------------------
 run_benchmark <- function(exe_path, args) {
+  # Benches use cuModuleLoad with a relative cubin filename, so they must
+  # run from their own directory or the cubin won't be found. Resolve
+  # the absolute path to the executable, then chdir into its parent for
+  # the duration of the call.
+  abs_exe <- normalizePath(exe_path, mustWork = TRUE)
+  exe_dir <- dirname(abs_exe)
+  prev_wd <- getwd()
+  setwd(exe_dir)
+  on.exit(setwd(prev_wd), add = TRUE)
   out <- tryCatch(
-    suppressWarnings(system2(exe_path, args, stdout = TRUE, stderr = TRUE,
+    suppressWarnings(system2(abs_exe, args, stdout = TRUE, stderr = TRUE,
                              timeout = 120)),
     error = function(e) {
       attr(character(0), "status") <- 1L
