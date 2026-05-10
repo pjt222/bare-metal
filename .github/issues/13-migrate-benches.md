@@ -17,7 +17,7 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `kernels/gemm/sgemm/bench.cu`
 - [ ] `kernels/reductions/softmax/bench.cu`
 - [ ] `kernels/reductions/layernorm/bench.cu`
-- [ ] `phase2/activations/bench.cu`
+- [ ] `kernels/elementwise/activations/bench.cu`
 - [ ] `kernels/gemm/igemm/bench.cu`
 - [ ] `kernels/gemm/igemm/bench_sparse.cu`
 - [ ] `kernels/gemm/hgemm_sparse/bench.cu`
@@ -41,7 +41,7 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `kernels/attention/cross_attention/bench_pipelined.cu`
 - [ ] `kernels/reductions/groupnorm/bench.cu`
 - [ ] `kernels/convolution/resblock/bench.cu`
-- [ ] `phase4/timestep_emb/bench.cu`
+- [ ] `kernels/elementwise/timestep_emb/bench.cu`
 
 ### Phase 5
 - [ ] `phase5/attention_layer/bench.cu`

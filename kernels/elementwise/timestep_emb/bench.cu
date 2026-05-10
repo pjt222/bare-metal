@@ -7,7 +7,7 @@
 #include <cuda.h>
 #include <cstdio>
 #include <cmath>
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 #define LOG_MAX_PERIOD 9.210340371976183f
 

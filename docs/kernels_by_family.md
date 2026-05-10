@@ -84,8 +84,8 @@ One read, transform, one write. Bandwidth-bound. Showcase for
 
 | Path | Operation | Lead SASS |
 |---|---|---|
-| `phase4/timestep_emb/`            | sinusoidal positional encoding         | `MUFU.SIN` + `MUFU.COS` + `MUFU.EX2` |
-| `phase2/activations/`             | ReLU / GELU / Swish                    | `MUFU.EX2` (fast-math), `IMNMX` |
+| `kernels/elementwise/timestep_emb/`            | sinusoidal positional encoding         | `MUFU.SIN` + `MUFU.COS` + `MUFU.EX2` |
+| `kernels/elementwise/activations/`             | ReLU / GELU / Swish                    | `MUFU.EX2` (fast-math), `IMNMX` |
 
 ## F. Multi-kernel layer composition
 
