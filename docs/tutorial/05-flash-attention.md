@@ -341,15 +341,15 @@ Expected steady-state (RTX 3070 Ti):
 
 ## Source files
 
-- `phase3/flash_attention/flash_attn.cu` (scalar, version 1)
-- `phase3/flash_attention/flash_attn_br16.cu` (Br=16 HMMA, version 2)
-- `phase3/flash_attention/flash_attn_br16_regpv.cu` (regpv, version 3)
-- `phase3/flash_attention/flash_attn_br16_regpv_pad.cu` (failed padding)
-- `phase3/flash_attention/flash_attn_br16_regpv_lean.cu` (stage 1)
-- `phase3/flash_attention/flash_attn_br16_regpv_lean_qcache.cu` (stage 2)
-- `phase3/flash_attention/flash_attn_br16_v2.cu` (**canonical**, smem elim)
-- `phase3/flash_attention/flash_attn_br16_v2_pipeline.cu` (**best**, +cp.async)
-- `phase3/flash_attention/flash_attn_br16_v2_bc128.cu` (failed bigger tile)
+- `kernels/attention/flash_attention/flash_attn.cu` (scalar, version 1)
+- `kernels/attention/flash_attention/flash_attn_br16.cu` (Br=16 HMMA, version 2)
+- `kernels/attention/flash_attention/flash_attn_br16_regpv.cu` (regpv, version 3)
+- `kernels/attention/flash_attention/flash_attn_br16_regpv_pad.cu` (failed padding)
+- `kernels/attention/flash_attention/flash_attn_br16_regpv_lean.cu` (stage 1)
+- `kernels/attention/flash_attention/flash_attn_br16_regpv_lean_qcache.cu` (stage 2)
+- `kernels/attention/flash_attention/flash_attn_br16_v2.cu` (**canonical**, smem elim)
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pipeline.cu` (**best**, +cp.async)
+- `kernels/attention/flash_attention/flash_attn_br16_v2_bc128.cu` (failed bigger tile)
 
 ## Cross-references
 

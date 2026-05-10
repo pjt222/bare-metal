@@ -1780,11 +1780,11 @@ Each one is a 5-minute change worth measuring.
 
 ### Files
 
-- `phase3/flash_attention/flash_attn_br16_v2_pipeline_pad.cu` — pad1
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pipeline_pad.cu` — pad1
   (K/V only), 1.5-1.7× win
-- `phase3/flash_attention/flash_attn_br16_v2_pipeline_pad2.cu` —
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pipeline_pad2.cu` —
   **new canonical**, 1.85-2.44× win
-- `phase3/flash_attention/bench_v2_pipeline_pad.cu` — A/B/C harness
+- `kernels/attention/flash_attention/bench_v2_pipeline_pad.cu` — A/B/C harness
 - `results/ncu/fa_pad.csv`, `results/ncu/fa_pad2.csv` — NCU output
 
 ### Lesson
@@ -1827,12 +1827,12 @@ at typical). Pattern confirmed as broadly applicable.
 
 ### Per-kernel files
 
-- `phase3/flash_attention/flash_attn_br16_v2_pad.cu` — baseline padded
-- `phase3/flash_attention/flash_attn_br16_v2_pipeline_pad2.cu` — pipeline, full padding (Obs W)
-- `phase3/flash_attention/flash_attn_v2_persistent_pad.cu` — persistent padded
-- `phase4/cross_attention/cross_attn_v2_pad.cu` — cross-attention padded
-- `phase3/flash_attention/bench_v2_{baseline,persistent}_pad.cu` — A/B harnesses
-- `phase4/cross_attention/bench_v2.cu` — extended to include _pad variant
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pad.cu` — baseline padded
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pipeline_pad2.cu` — pipeline, full padding (Obs W)
+- `kernels/attention/flash_attention/flash_attn_v2_persistent_pad.cu` — persistent padded
+- `kernels/attention/cross_attention/cross_attn_v2_pad.cu` — cross-attention padded
+- `kernels/attention/flash_attention/bench_v2_{baseline,persistent}_pad.cu` — A/B harnesses
+- `kernels/attention/cross_attention/bench_v2.cu` — extended to include _pad variant
 
 ### Pipeline still wins largest
 

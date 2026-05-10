@@ -7,7 +7,7 @@ labels: ["refactoring", "bench-driver"]
 PR #53 introduced `kernels/_common/bench_driver.h` and refactored 3 pilot files:
 - `kernels/gemm/hgemm/bench_refactored.cu` (348 → 96 lines)
 - `kernels/gemm/igemm/bench_refactored.cu` (1093 → 79 lines)
-- `phase3/flash_attention/bench_refactored.cu` (298 → 122 lines)
+- `kernels/attention/flash_attention/bench_refactored.cu` (298 → 122 lines)
 
 Total reduction: 1,739 → 297 lines (-83%).
 
@@ -23,22 +23,22 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `kernels/gemm/hgemm_sparse/bench.cu`
 
 ### Phase 3
-- [ ] `phase3/flash_attention/bench.cu`
-- [ ] `phase3/flash_attention/bench_bc128.cu`
-- [ ] `phase3/flash_attention/bench_br16.cu`
-- [ ] `phase3/flash_attention/bench_br16_regpv.cu`
-- [ ] `phase3/flash_attention/bench_fused.cu`
-- [ ] `phase3/flash_attention/bench_persistent.cu`
-- [ ] `phase3/flash_attention/bench_pipeline.cu`
-- [ ] `phase3/flash_attention/bench_split_q.cu`
-- [ ] `phase3/flash_attention/bench_wmma.cu`
+- [ ] `kernels/attention/flash_attention/bench.cu`
+- [ ] `kernels/attention/flash_attention/bench_bc128.cu`
+- [ ] `kernels/attention/flash_attention/bench_br16.cu`
+- [ ] `kernels/attention/flash_attention/bench_br16_regpv.cu`
+- [ ] `kernels/attention/flash_attention/bench_fused.cu`
+- [ ] `kernels/attention/flash_attention/bench_persistent.cu`
+- [ ] `kernels/attention/flash_attention/bench_pipeline.cu`
+- [ ] `kernels/attention/flash_attention/bench_split_q.cu`
+- [ ] `kernels/attention/flash_attention/bench_wmma.cu`
 
 ### Phase 4
 - [ ] `phase4/conv2d/bench.cu`
 - [ ] `phase4/conv2d/bench_im2col.cu`
 - [ ] `phase4/conv2d/bench_implicit_gemm.cu`
-- [ ] `phase4/cross_attention/bench.cu`
-- [ ] `phase4/cross_attention/bench_pipelined.cu`
+- [ ] `kernels/attention/cross_attention/bench.cu`
+- [ ] `kernels/attention/cross_attention/bench_pipelined.cu`
 - [ ] `kernels/reductions/groupnorm/bench.cu`
 - [ ] `phase4/resblock/bench.cu`
 - [ ] `phase4/timestep_emb/bench.cu`

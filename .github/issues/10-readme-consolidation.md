@@ -19,7 +19,7 @@ The top-level `README.md` shows Phase 4 as complete but does not mention Phase 5
 ### Phase READMEs
 - `kernels/gemm/hgemm/README.md`: Shows 7,853 GFLOPS as best, but `hgemm_16warp` achieves **31,910 GFLOPS**
 - `kernels/gemm/igemm/README.md`: Good but missing online-quant variants (16,646+ GFLOPS)
-- `phase3/flash_attention/README.md`: Probably stale vs `gpu_reflections.md` findings
+- `kernels/attention/flash_attention/README.md`: Probably stale vs `gpu_reflections.md` findings
 - `phase4/README.md`: May not include implicit GEMM results
 
 ## Proposed Changes

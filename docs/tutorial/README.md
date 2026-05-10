@@ -50,7 +50,7 @@ Each tutorial cross-references actual files in this repository:
 
 - `kernels/tutorial/vector_add/` — the SASS hello world
 - `phase2/{sgemm,hgemm,igemm,...}/` — GEMM variants
-- `phase3/flash_attention/` — Flash Attention implementations
+- `kernels/attention/flash_attention/` — Flash Attention implementations
 - `phase4/{conv2d,resblock,groupnorm,...}/` — diffusion primitives
 - `phase5/` — optimization experiments
 - `docs/gpu_reflections.md` — empirical observations (17+ postmortems)

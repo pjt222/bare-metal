@@ -1,13 +1,15 @@
 /*
- * bench_v2_baseline_pad.cu — A/B test of v2 baseline vs v2_pad.
- *
- * Tests whether the +8 padding pattern from Observation W (verified
- * 2.36× on v2_pipeline) transfers to the non-pipelined v2 baseline.
+ * bench_br16_regpv_pad.cu — Padded smem variants vs unpadded regpv baseline
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin     flash_attn_br16_v2.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pad.sm_86.cubin flash_attn_br16_v2_pad.cu
- *   nvcc -arch=sm_86 -O2 -o bench_v2_baseline_pad bench_v2_baseline_pad.cu \
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_regpv.sm_86.cubin flash_attn_br16_regpv.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=8 -DSCORE_PAD_FLOATS=4 \
+ *        -o flash_br16_regpv_pad_kv8_w4.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=8 -DSCORE_PAD_FLOATS=0 \
+ *        -o flash_br16_regpv_pad_kv8_w0.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=0 -DSCORE_PAD_FLOATS=4 \
+ *        -o flash_br16_regpv_pad_kv0_w4.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *   nvcc -arch=sm_86 -O2 -o bench_br16_regpv_pad bench_br16_regpv_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
 
@@ -15,19 +17,21 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
-static void cpu_attention(const float *Q, const float *K, const float *V,
-                          float *O, float *score_buf,
-                          int seq, int d, float scale) {
+static void cpu_attention(
+    const float *Q, const float *K, const float *V, float *O,
+    float *score_buf, int seq, int d, float scale
+) {
     for (int q = 0; q < seq; q++) {
         float row_max = -3.402823466e+38f;
         for (int k = 0; k < seq; k++) {
             float dot = 0.0f;
-            for (int i = 0; i < d; i++) dot += Q[q*d+i] * K[k*d+i];
+            for (int i = 0; i < d; i++) dot += Q[q * d + i] * K[k * d + i];
             score_buf[k] = dot * scale;
             row_max = fmaxf(row_max, score_buf[k]);
         }
@@ -36,11 +40,11 @@ static void cpu_attention(const float *Q, const float *K, const float *V,
             score_buf[k] = expf(score_buf[k] - row_max);
             exp_sum += score_buf[k];
         }
-        for (int i = 0; i < d; i++) O[q*d+i] = 0.0f;
+        for (int i = 0; i < d; i++) O[q * d + i] = 0.0f;
         float rcp = 1.0f / exp_sum;
         for (int k = 0; k < seq; k++) {
             float w = score_buf[k] * rcp;
-            for (int i = 0; i < d; i++) O[q*d+i] += w * V[k*d+i];
+            for (int i = 0; i < d; i++) O[q * d + i] += w * V[k * d + i];
         }
     }
 }
@@ -48,6 +52,15 @@ static void cpu_attention(const float *Q, const float *K, const float *V,
 static void fp32_to_fp16(const float *src, __half *dst, size_t n) {
     for (size_t i = 0; i < n; i++) dst[i] = __float2half(src[i]);
 }
+
+struct Variant {
+    const char *cubin;
+    const char *symbol;
+    const char *label;
+    int kv_pad_halfs;
+    int score_pad_floats;
+    bool nosmem;  // true: 24 KB layout (K+V+weight FP16, no FP32 score smem)
+};
 
 int main(int argc, char **argv) {
     int seq   = (argc > 1) ? atoi(argv[1]) : 1024;
@@ -61,7 +74,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("=== FA v2 baseline: unpadded vs +8 padded ===\n");
+    Variant variants[] = {
+        { "flash_br16_regpv.sm_86.cubin",            "flash_attn_br16_regpv",      "regpv (baseline)            ", 0, 0, false },
+        { "flash_br16_regpv_lean.sm_86.cubin",       "flash_attn_br16_regpv_lean",        "regpv_lean (4 reg state)    ", 0, 0, false },
+        { "flash_br16_regpv_lean_qcache.sm_86.cubin", "flash_attn_br16_regpv_lean_qcache", "regpv_lean + Q reg cache    ", 0, 0, false },
+        { "flash_br16_v2.sm_86.cubin",                "flash_attn_br16_v2",                "flash_attn_br16_v2 (winner) ", 0, 0, true  },
+        { "flash_br16_regpv_full.sm_86.cubin",       "flash_attn_br16_regpv_full",        "+ pad K/V/W (27 KB, no conf)", 8, 0, false },
+        { "flash_br16_regpv_pad_kv8_w4.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + KV+8 + W+4 (both)   ", 8, 4, false },
+        { "flash_br16_regpv_pad_kv8_w0.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + KV+8 only           ", 8, 0, false },
+        { "flash_br16_regpv_pad_kv0_w4.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + W+4 only            ", 0, 4, false },
+    };
+    int n_var = sizeof(variants) / sizeof(variants[0]);
+
+    printf("=== Flash Attention RegPV: smem padding sweep ===\n");
     printf("seq=%d d=%d batch=%d heads=%d\n\n", seq, d, batch, heads);
 
     BenchDriver driver;
@@ -93,10 +118,12 @@ int main(int argc, char **argv) {
     auto dKh = driver.device_alloc<__half>(ne);
     auto dVh = driver.device_alloc<__half>(ne);
     auto dO  = driver.device_alloc<float>(ne);
+
     driver.copy_h2d(dQh, hQh, ne * sizeof(__half));
     driver.copy_h2d(dKh, hKh, ne * sizeof(__half));
     driver.copy_h2d(dVh, hVh, ne * sizeof(__half));
 
+    // Multi-head buffers
     size_t tot = (size_t)batch * heads * ne;
     auto dQm = driver.device_alloc<__half>(tot);
     auto dKm = driver.device_alloc<__half>(tot);
@@ -106,23 +133,43 @@ int main(int argc, char **argv) {
     CHECK_CU(cuMemsetD16((CUdeviceptr)dKm.ptr, 0x3800, tot));
     CHECK_CU(cuMemsetD16((CUdeviceptr)dVm.ptr, 0x3800, tot));
 
+    int n1 = 1;
     int grid_x = seq / Br_block;
     double total_flops = (double)batch * heads * seq
                        * ((double)seq * d * 2.0 + (double)seq * 5.0 + (double)seq * d * 2.0);
 
-    printf("%-36s %-10s %-7s %-8s %-9s %-9s\n",
-           "variant", "smem_KB", "regs", "blocks", "ms", "GFLOPS");
-    printf("------------------------------------------------------------------------------------------\n");
+    printf("%-32s %-9s %-7s %-8s %-7s %-9s %-9s\n",
+           "variant", "smem_KB", "regs", "blocks", "warps", "ms", "GFLOPS");
+    printf("%s\n", std::string(90, '-').c_str());
 
-    auto run_variant = [&](const char *cubin, const char *kname,
-                            const char *label, size_t smem) -> double {
-        CUfunction fn = driver.load_kernel(cubin, kname);
+    float ms_baseline = 0.0f;
+    for (int i = 0; i < n_var; i++) {
+        Variant &v = variants[i];
+        CUfunction fn = driver.load_kernel(v.cubin, v.symbol);
+
+        int stride_K = d  + v.kv_pad_halfs;
+        int stride_W = Bc + v.score_pad_floats;
+        size_t smem;
+        if (v.nosmem) {
+            // K_tile + V_tile + weight_smem all FP16, no FP32 scratch
+            smem = 2 * (size_t)Bc * d * sizeof(__half)
+                 + (size_t)Br_block * Bc * sizeof(__half);
+        } else if (strstr(v.symbol, "_full") != NULL) {
+            // Padded nosmem layout (full): K + V + weight all FP16, padded
+            int stride_w_h = Bc + 8;  // matches WEIGHT_PAD_HALFS=8 default
+            smem = 2 * (size_t)Bc * stride_K * sizeof(__half)
+                 + (size_t)Br_block * stride_w_h * sizeof(__half);
+        } else {
+            smem = 2 * (size_t)Bc * stride_K * sizeof(__half)
+                 + (size_t)Br_block * stride_W * sizeof(float);
+        }
         CHECK_CU(cuFuncSetAttribute(fn, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
-        int regs = 0, blocks = 0;
-        cuFuncGetAttribute(&regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn);
-        cuOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, fn, 128, smem);
 
-        int n1 = 1;
+        int regs = 0, max_blocks = 0;
+        cuFuncGetAttribute(&regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fn);
+        cuOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks, fn, 128, smem);
+
+        // Correctness (single head)
         void *args1[] = { &dQh.ptr, &dKh.ptr, &dVh.ptr, &dO.ptr, &seq, &n1, &scale };
         CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
         CHECK_CU(cuLaunchKernel(fn, grid_x, 1, 1, 128, 1, 1, (unsigned)smem, nullptr, args1, nullptr));
@@ -131,36 +178,25 @@ int main(int argc, char **argv) {
         CheckResult cr = check_fp32(hOut.get(), hRef.get(), (int)ne, 1e-2f, 1.0f, false);
         bool ok = (cr.num_errors == 0);
 
+        // Performance (multi-head)
         void *argsm[] = { &dQm.ptr, &dKm.ptr, &dVm.ptr, &dOm.ptr, &seq, &heads, &scale };
         for (int w = 0; w < 5; w++)
             CHECK_CU(cuLaunchKernel(fn, grid_x, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, argsm, nullptr));
         CHECK_CU(cuCtxSynchronize());
         BenchTimer timer; timer.start();
-        const int iters = 50;
-        for (int j = 0; j < iters; j++)
+        for (int j = 0; j < 50; j++)
             CHECK_CU(cuLaunchKernel(fn, grid_x, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, argsm, nullptr));
         CHECK_CU(cuCtxSynchronize());
-        float ms = timer.stop_ms() / iters;
+        float ms = timer.stop_ms() / 50.0f;
         double gflops = total_flops / (ms / 1000.0) / 1e9;
-        printf("%-36s %-10.2f %-7d %-8d %-9.3f %-9.0f %s\n",
-               label, smem/1024.0f, regs, blocks, ms, gflops, ok ? "✓" : "✗");
-        return gflops;
-    };
 
-    // unpadded baseline: K + V + W = 3 × Bc × d
-    size_t smem_unpad = 3 * (size_t)Bc * d * sizeof(__half);
-    double gf_unpad = run_variant("flash_br16_v2.sm_86.cubin",
-                                   "flash_attn_br16_v2",
-                                   "v2 baseline (unpadded, 24 KB)", smem_unpad);
+        if (i == 0) ms_baseline = ms;
+        float speedup = ms_baseline / ms;
 
-    // padded: K + V + W use D_STRIDE / W_STRIDE = 72 instead of 64
-    const int D_STRIDE = 72;
-    size_t smem_pad = 2 * (size_t)Bc * D_STRIDE * sizeof(__half)   // K_tile + V_tile
-                    + (size_t)Br_block * D_STRIDE * sizeof(__half); // weight_smem (uses W_STRIDE=72 too)
-    double gf_pad   = run_variant("flash_br16_v2_pad.sm_86.cubin",
-                                   "flash_attn_br16_v2_pad",
-                                   "v2 baseline_pad (+8 K/V/W, 27 KB)", smem_pad);
+        printf("%-32s %-9.2f %-7d %-8d %-7d %-9.3f %-9.0f %s  %.2fx\n",
+               v.label, smem / 1024.0f, regs, max_blocks, max_blocks * 4,
+               ms, gflops, ok ? "✓" : "✗", speedup);
+    }
 
-    printf("\nSpeedup pad vs unpad: %.3fx\n", gf_pad / gf_unpad);
     return 0;
 }

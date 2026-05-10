@@ -201,7 +201,7 @@ Headline-7 kernels and where their source lives:
 | HGEMM 16-warp                | `kernels/gemm/hgemm/hgemm_16warp.cu`                           |
 | IGEMM 128×256                | `kernels/gemm/igemm/igemm_8warp_*.cu`                          |
 | Online FP16→INT8 GEMM        | `kernels/gemm/igemm/igemm_online_quant*.cu`                    |
-| Flash Attention v2           | `phase3/flash_attention/flash_attn_br16_v2*.cu`          |
+| Flash Attention v2           | `kernels/attention/flash_attention/flash_attn_br16_v2*.cu`          |
 | Conv2d implicit GEMM         | `phase4/conv2d/conv2d_implicit_gemm.cu`                  |
 
 Phase directories (kernel families):
@@ -214,7 +214,7 @@ Phase directories (kernel families):
 | 2       | `kernels/gemm/hgemm_sparse/`            | 2:4 sparse mma.sp                              |
 | 2       | `kernels/gemm/igemm/`                   | INT8 IMMA + sparse + online quant              |
 | 2       | `phase2/{softmax,layernorm,activations}/` | Reductions + MUFU SFU                  |
-| 3       | `phase3/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
+| 3       | `kernels/attention/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
 | 4       | `phase4/conv2d/`                  | Direct 9× → implicit GEMM (22× win)            |
 | 4       | `phase4/{groupnorm,resblock,cross_attention,timestep_emb}/` | UNet primitives        |
 | 4       | `phase4/cymatic/`                 | Chladni-pattern memory layout study            |

@@ -178,7 +178,7 @@ local register — other lanes' copies remain unchanged but unused.
 
 ## Reference Implementation
 
-`phase3/flash_attention/flash_attn_br16_v2.cu` is the canonical reference
+`kernels/attention/flash_attention/flash_attn_br16_v2.cu` is the canonical reference
 implementation. Inspect Phase B → Phase C → Phase D for the full pattern.
 
 ## Measured Impact (Flash Attention, RTX 3070 Ti)
@@ -199,7 +199,7 @@ implementation. Inspect Phase B → Phase C → Phase D for the full pattern.
   occupancy gain
 - `flash_attn_br16_bc128.cu` — Bc=128 currently crosses 50 KB cliff; nosmem
   brings it back under
-- `phase4/cross_attention/*.cu` — CLIP-77 cross-attention has the same
+- `kernels/attention/cross_attention/*.cu` — CLIP-77 cross-attention has the same
   smem_work pattern, expect 15-25% gain (smaller because fewer KV iters)
 
 ## Why the Pattern Works

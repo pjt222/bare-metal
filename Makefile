@@ -87,7 +87,7 @@ kernels/tutorial/host: kernels/tutorial/host.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
 
 # Flash Attention has multiple bench variants
-phase3/flash_attention/bench_%: phase3/flash_attention/bench_%.cu
+kernels/attention/flash_attention/bench_%: kernels/attention/flash_attention/bench_%.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 

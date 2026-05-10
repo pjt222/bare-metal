@@ -1,14 +1,13 @@
 /*
- * bench_v2_pipeline_pad.cu — A/B test of v2_pipeline vs v2_pipeline_pad.
+ * bench_v2_baseline_pad.cu — A/B test of v2 baseline vs v2_pad.
  *
- * Tests the +8 padding (D_HEAD 64 → 72 row stride) that breaks the
- * 128-byte bank period in K_tile/V_tile. Predicted: bank conflicts drop
- * from 87.5% to ~0%, stall_short_sb + stall_mio drop substantially.
+ * Tests whether the +8 padding pattern from Observation W (verified
+ * 2.36× on v2_pipeline) transfers to the non-pipelined v2 baseline.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline.sm_86.cubin     flash_attn_br16_v2_pipeline.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline_pad.sm_86.cubin flash_attn_br16_v2_pipeline_pad.cu
- *   nvcc -arch=sm_86 -O2 -o bench_v2_pipeline_pad bench_v2_pipeline_pad.cu \
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin     flash_attn_br16_v2.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pad.sm_86.cubin flash_attn_br16_v2_pad.cu
+ *   nvcc -arch=sm_86 -O2 -o bench_v2_baseline_pad bench_v2_baseline_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
 
@@ -19,7 +18,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_attention(const float *Q, const float *K, const float *V,
                           float *O, float *score_buf,
@@ -62,7 +61,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("=== FA v2 pipeline: unpadded vs +8 padded ===\n");
+    printf("=== FA v2 baseline: unpadded vs +8 padded ===\n");
     printf("seq=%d d=%d batch=%d heads=%d\n\n", seq, d, batch, heads);
 
     BenchDriver driver;
@@ -124,7 +123,6 @@ int main(int argc, char **argv) {
         cuOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, fn, 128, smem);
 
         int n1 = 1;
-        // correctness
         void *args1[] = { &dQh.ptr, &dKh.ptr, &dVh.ptr, &dO.ptr, &seq, &n1, &scale };
         CHECK_CU(cuMemsetD32((CUdeviceptr)dO.ptr, 0, ne));
         CHECK_CU(cuLaunchKernel(fn, grid_x, 1, 1, 128, 1, 1, (unsigned)smem, nullptr, args1, nullptr));
@@ -133,7 +131,6 @@ int main(int argc, char **argv) {
         CheckResult cr = check_fp32(hOut.get(), hRef.get(), (int)ne, 1e-2f, 1.0f, false);
         bool ok = (cr.num_errors == 0);
 
-        // perf
         void *argsm[] = { &dQm.ptr, &dKm.ptr, &dVm.ptr, &dOm.ptr, &seq, &heads, &scale };
         for (int w = 0; w < 5; w++)
             CHECK_CU(cuLaunchKernel(fn, grid_x, heads, batch, 128, 1, 1, (unsigned)smem, nullptr, argsm, nullptr));
@@ -150,31 +147,20 @@ int main(int argc, char **argv) {
         return gflops;
     };
 
-    // unpadded: K_tile + V_tile = 2 × (Bc × d) bytes × 2 buffers + weight
-    size_t smem_unpad = 2 * 2 * (size_t)Bc * d * sizeof(__half)
-                      + (size_t)Br_block * Bc * sizeof(__half);
-    double gf_unpad = run_variant("flash_br16_v2_pipeline.sm_86.cubin",
-                                  "flash_attn_br16_v2_pipeline",
-                                  "v2 pipeline (unpadded, 40 KB)", smem_unpad);
+    // unpadded baseline: K + V + W = 3 × Bc × d
+    size_t smem_unpad = 3 * (size_t)Bc * d * sizeof(__half);
+    double gf_unpad = run_variant("flash_br16_v2.sm_86.cubin",
+                                   "flash_attn_br16_v2",
+                                   "v2 baseline (unpadded, 24 KB)", smem_unpad);
 
-    // pad1: K_tile + V_tile use D_STRIDE=72 instead of 64
+    // padded: K + V + W use D_STRIDE / W_STRIDE = 72 instead of 64
     const int D_STRIDE = 72;
-    size_t smem_pad = 2 * 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
-                    + (size_t)Br_block * Bc * sizeof(__half);
-    double gf_pad   = run_variant("flash_br16_v2_pipeline_pad.sm_86.cubin",
-                                  "flash_attn_br16_v2_pipeline_pad",
-                                  "v2 pipeline_pad (+8 K/V, 44 KB)", smem_pad);
+    size_t smem_pad = 2 * (size_t)Bc * D_STRIDE * sizeof(__half)   // K_tile + V_tile
+                    + (size_t)Br_block * D_STRIDE * sizeof(__half); // weight_smem (uses W_STRIDE=72 too)
+    double gf_pad   = run_variant("flash_br16_v2_pad.sm_86.cubin",
+                                   "flash_attn_br16_v2_pad",
+                                   "v2 baseline_pad (+8 K/V/W, 27 KB)", smem_pad);
 
-    // pad2: also pad weight_smem stride 64 -> 72
-    const int W_STRIDE = 72;
-    size_t smem_pad2 = 2 * 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
-                     + (size_t)Br_block * W_STRIDE * sizeof(__half);
-    double gf_pad2  = run_variant("flash_br16_v2_pipeline_pad2.sm_86.cubin",
-                                  "flash_attn_br16_v2_pipeline_pad2",
-                                  "v2 pipeline_pad2 (+8 K/V/W, 45 KB)", smem_pad2);
-
-    printf("\nSpeedup pad1 vs unpad : %.3fx\n", gf_pad  / gf_unpad);
-    printf("Speedup pad2 vs unpad : %.3fx\n", gf_pad2 / gf_unpad);
-    printf("Speedup pad2 vs pad1  : %.3fx\n", gf_pad2 / gf_pad);
+    printf("\nSpeedup pad vs unpad: %.3fx\n", gf_pad / gf_unpad);
     return 0;
 }

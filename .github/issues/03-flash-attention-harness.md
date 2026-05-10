@@ -24,7 +24,7 @@ Determining "current best" requires reading `docs/gpu_reflections.md` or manuall
 Plus 10 corresponding `bench_*.cu` files.
 
 ## Proposed Solution
-Create `phase3/flash_attention/bench_all.cu`:
+Create `kernels/attention/flash_attention/bench_all.cu`:
 ```cpp
 // Single binary: ./bench_all <seq_len> <batch> <heads>
 // Compiles ALL kernels, runs each, prints comparison table

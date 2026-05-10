@@ -4,7 +4,7 @@
 # Usage:
 #   Rscript scripts/profile/ncu_profile.R \
 #       --kernel flash_attn_br16_v2_pipeline \
-#       --bench phase3/flash_attention/bench_v2_variants \
+#       --bench kernels/attention/flash_attention/bench_v2_variants \
 #       --args "1024 8 8" \
 #       --label "FA v2 pipeline (seq=1024, b=8, h=8)" \
 #       --launch-skip 5 --launch-count 1 \

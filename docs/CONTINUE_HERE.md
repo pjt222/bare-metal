@@ -445,7 +445,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 
 ## Files Map (current canonical kernels)
 
-### Flash Attention (`phase3/flash_attention/`)
+### Flash Attention (`kernels/attention/flash_attention/`)
 
 - `flash_attn_br16_v2.cu` — **canonical** (smem_work eliminated, 24 KB, 3 blocks/SM)
 - `flash_attn_br16_v2_pipeline.cu` — **best perf** (cp.async double-buffer, 40 KB, 2 blocks/SM)
@@ -458,7 +458,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 - `bench_v2_variants.cu` — sweep harness for v2 / v2_pipeline / v2_persistent
 - `bench_br16_regpv_pad.cu` — sweep harness covering all regpv variants
 
-### Cross-Attention (`phase4/cross_attention/`)
+### Cross-Attention (`kernels/attention/cross_attention/`)
 
 - `cross_attn.cu` — original (use at small KV, e.g. CLIP-77)
 - `cross_attn_v2.cu` — **nosmem variant** (use at typical sizes)

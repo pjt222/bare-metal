@@ -2,7 +2,7 @@
 # bench_flash_all.R - Unified Flash Attention benchmark harness.
 # Mirrors bench_flash_all.py.
 #
-# Discovers and runs all FA bench executables in phase3/flash_attention/,
+# Discovers and runs all FA bench executables in kernels/attention/flash_attention/,
 # producing a comparison table.
 #
 # Usage:
@@ -115,7 +115,7 @@ main <- function() {
 
   benches <- discover_benches()
   if (!length(benches)) {
-    cat("No bench executables found in phase3/flash_attention/\n")
+    cat("No bench executables found in kernels/attention/flash_attention/\n")
     if (do_build) {
       cat("Attempting to build...\n")
       system2("make", c("-C", dirname(FLASH_DIR), "phase3"))

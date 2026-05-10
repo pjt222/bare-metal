@@ -48,17 +48,17 @@ the butterfly-tree pattern catalog.
 
 Online algorithm: streams Kᵀ + V tiles, maintains running row max
 + denom, never materializes the N² intermediate. All 21 variants
-in `phase3/flash_attention/` and the cross-attention kin in
-`phase4/cross_attention/`.
+in `kernels/attention/flash_attention/` and the cross-attention kin in
+`kernels/attention/cross_attention/`.
 
 | Path | Tile / variant | Peak | Lead SASS |
 |---|---|---:|---|
-| `phase3/flash_attention/flash_attn.cu`              | scalar reference          | (~0.4 TFLOPS)        | scalar FFMA |
-| `phase3/flash_attention/flash_attn_wmma.cu`         | WMMA fragments            | (~3 TFLOPS)          | `HMMA` |
-| `phase3/flash_attention/flash_attn_br16_regpv.cu`   | Br=16, V in registers     | **7.2 TFLOPS**        | `HMMA` + `SHFL` + `MUFU.EX2` |
-| `phase3/flash_attention/flash_attn_persistent.cu`   | persistent grid           | similar               | + persistent CTA |
-| `phase3/flash_attention/flash_attn_split_q.cu`      | + split-Q (frontier)      | TBD                   | + workload split |
-| `phase4/cross_attention/cross_attn_pipelined.cu`    | image-Q + text-KV + cp.async | (working)         | `HMMA` + `LDGSTS` |
+| `kernels/attention/flash_attention/flash_attn.cu`              | scalar reference          | (~0.4 TFLOPS)        | scalar FFMA |
+| `kernels/attention/flash_attention/flash_attn_wmma.cu`         | WMMA fragments            | (~3 TFLOPS)          | `HMMA` |
+| `kernels/attention/flash_attention/flash_attn_br16_regpv.cu`   | Br=16, V in registers     | **7.2 TFLOPS**        | `HMMA` + `SHFL` + `MUFU.EX2` |
+| `kernels/attention/flash_attention/flash_attn_persistent.cu`   | persistent grid           | similar               | + persistent CTA |
+| `kernels/attention/flash_attention/flash_attn_split_q.cu`      | + split-Q (frontier)      | TBD                   | + workload split |
+| `kernels/attention/cross_attention/cross_attn_pipelined.cu`    | image-Q + text-KV + cp.async | (working)         | `HMMA` + `LDGSTS` |
 
 The 21 phase-3 variants arc 19× over the scalar reference. See
 [Obs C, D, E, F, J, JJ](gpu_reflections.md).

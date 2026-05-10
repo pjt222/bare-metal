@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_attention(
     const float *Q, const float *K, const float *V, float *O,

@@ -11,7 +11,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 #define D_HEAD   64
 #define Br_BLOCK 64

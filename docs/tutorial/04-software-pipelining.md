@@ -341,8 +341,8 @@ in disguise.
 - `kernels/gemm/igemm/igemm_pipelined_cpasync.cu` (cp.async double-buffer, IGEMM)
 - `kernels/gemm/igemm/igemm_pipelined_cpasync_bk64.cu` (BK=64 variant)
 - `kernels/gemm/igemm/igemm_pipelined_cpasync_perchannel.cu` (per-channel scale fusion)
-- `phase3/flash_attention/flash_attn_br16_pipeline.cu` (original, lost at 4 warps)
-- `phase3/flash_attention/flash_attn_br16_v2_pipeline.cu` (won after smem reduction)
+- `kernels/attention/flash_attention/flash_attn_br16_pipeline.cu` (original, lost at 4 warps)
+- `kernels/attention/flash_attention/flash_attn_br16_v2_pipeline.cu` (won after smem reduction)
 
 ## Cross-references
 

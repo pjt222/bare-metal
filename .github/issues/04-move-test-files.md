@@ -23,7 +23,7 @@ Development/debug artifacts live alongside production kernels. They clutter the 
 ### Phase 3 Flash Attention
 | Current | Suggested | Type |
 |---------|-----------|------|
-| `phase3/flash_attention/verify_wmma_layout.cu` | `tests/flash_attention/verify_wmma_layout.cu` | WMMA layout verify |
+| `kernels/attention/flash_attention/verify_wmma_layout.cu` | `tests/flash_attention/verify_wmma_layout.cu` | WMMA layout verify |
 
 ## Proposed Directory Structure
 ```

@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
 
 ## Files to Refactor (priority order)
 1. `kernels/gemm/igemm/bench.cu` — most complex, tests multiple variants
-2. `phase3/flash_attention/bench.cu` — many variants, good test case
+2. `kernels/attention/flash_attention/bench.cu` — many variants, good test case
 3. `kernels/gemm/hgemm/bench.cu` — simplest, good reference
 4. Remaining 23 bench files
 

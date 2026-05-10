@@ -293,7 +293,7 @@ Implementation costs:
 2. **Hierarchical cymatic**: outer mode for coarse partition, inner
    mode within each region for fine layout. Might capture multi-scale
    patterns.
-3. **Real-kernel integration**: replace `phase3/flash_attention/`
+3. **Real-kernel integration**: replace `kernels/attention/flash_attention/`
    Q/K/V buffer layout with cymatic and measure end-to-end FA
    throughput. The QK^T pattern has rotational structure (each query
    attends across all keys); could match midline radial alignment.
