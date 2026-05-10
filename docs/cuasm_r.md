@@ -101,7 +101,7 @@ subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 
 - **Encode instruction text → bytes.** Upstream's `CuInsAssembler` does this via per-SM regex tables (~200 KB of pickled state per architecture). We don't need this for control-code edits or family-swap operations. If you want to insert a brand-new instruction with novel operands, write it as a sibling `.cu`, compile, and copy the encoding.
 - **Restructure ELF sections.** `cuasm_write` only changes bytes inside existing `.text.<kernel>` slots. It cannot insert/remove instructions, change section sizes, or reorder symbols.
-- **Validate semantics.** A patched control code that violates dependency rules will simply produce wrong results at runtime. Pair every hand-edit with a bench + correctness check (the `phase2/common/check.h` `check_fp32` pattern).
+- **Validate semantics.** A patched control code that violates dependency rules will simply produce wrong results at runtime. Pair every hand-edit with a bench + correctness check (the `kernels/_common/check.h` `check_fp32` pattern).
 
 ## Round-trip guarantees
 

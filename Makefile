@@ -62,19 +62,19 @@ benches: $(BENCH_EXES)
 # Benchmarks in phase2+ need common headers and -lcuda
 phase2/%/bench: phase2/%/bench.cu
 	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
 phase3/%/bench: phase3/%/bench.cu
 	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
 phase4/%/bench: phase4/%/bench.cu
 	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
 phase5/%/bench: phase5/%/bench.cu
 	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
 kernels/tutorial/host: kernels/tutorial/host.cu
 	@echo "[HOST]  $<"
@@ -83,7 +83,7 @@ kernels/tutorial/host: kernels/tutorial/host.cu
 # Flash Attention has multiple bench variants
 phase3/flash_attention/bench_%: phase3/flash_attention/bench_%.cu
 	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
 # ------------------------------------------------------------------
 # Phase targets

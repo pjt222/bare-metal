@@ -18,7 +18,7 @@ the inverse square root.
 
 ```bash
 nvcc -arch=sm_86 -O2 --cubin groupnorm.cu -o groupnorm.sm_86.cubin
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 ./bench
 ```
 

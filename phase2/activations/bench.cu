@@ -18,7 +18,7 @@
 #include <cuda.h>
 #include <cstdio>
 #include <cmath>
-#include "../common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 // -----------------------------------------------------------------------
 // CPU references

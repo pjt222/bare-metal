@@ -4,7 +4,7 @@
  * Tests flash_attn_br16 (FP16 HMMA) vs flash_attn_4warp (FP32 scalar).
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench_br16 bench_br16.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_br16 bench_br16.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -13,7 +13,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_attention(
     const float *Q, const float *K, const float *V, float *O,

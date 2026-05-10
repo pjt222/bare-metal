@@ -32,8 +32,8 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 
-#include "../common/bench.h"
-#include "../common/check.h"
+#include "../../kernels/_common/bench.h"
+#include "../../kernels/_common/check.h"
 
 // Dense mma.sync bridging test: WMMA fragments → PTX mma.sync.m16n8k16
 extern "C" __global__ void dense_manual_m16n8(

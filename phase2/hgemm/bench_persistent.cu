@@ -18,8 +18,8 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../common/bench.h"
-#include "../common/check.h"
+#include "../../kernels/_common/bench.h"
+#include "../../kernels/_common/check.h"
 
 #define BM 128
 #define BN 128

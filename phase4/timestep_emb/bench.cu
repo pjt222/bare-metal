@@ -1,13 +1,13 @@
 /*
  * bench.cu — Timestep Embedding benchmark (BenchDriver refactor)
  *
- * Build: nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ * Build: nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  */
 
 #include <cuda.h>
 #include <cstdio>
 #include <cmath>
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 #define LOG_MAX_PERIOD 9.210340371976183f
 

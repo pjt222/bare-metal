@@ -1,4 +1,4 @@
-# phase2/common — shared benchmark headers
+# kernels/_common — shared benchmark headers
 
 Three header-only utilities included by every `bench.cu` across phases 2–5.
 

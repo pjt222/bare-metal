@@ -2,7 +2,7 @@
  * bench_im2col.cu — im2col + WMMA Conv2d vs direct conv2d
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench_im2col bench_im2col.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_im2col bench_im2col.cu -lcuda -I../../kernels/_common
  *
  * Usage:
  *   ./bench_im2col                         # default: N=1, H=64, W=64, Cin=320, Cout=320
@@ -17,8 +17,8 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../kernels/_common/bench.h"
+#include "../../kernels/_common/check.h"
 #include <unistd.h>
 
 // Helper: find cubin in CWD or in the binary's directory

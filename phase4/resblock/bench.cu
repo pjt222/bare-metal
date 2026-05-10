@@ -4,7 +4,7 @@
  * Chains: GroupNorm+SiLU -> Conv2d(3x3) -> GroupNorm+SiLU -> Conv2d(3x3) -> +x
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static float cpu_silu(float x) { return x / (1.0f + expf(-x)); }
 

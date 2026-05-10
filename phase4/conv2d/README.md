@@ -47,7 +47,7 @@ for tile-shape / smem-layout investigations during the v1→v2 transition.
 
 ```bash
 nvcc -arch=sm_86 -O2 --cubin conv2d_implicit_gemm_v2.cu -o conv2d_implicit_gemm_v2.sm_86.cubin
-nvcc -arch=sm_86 -O2 -o bench_implicit_v2 bench_implicit_v2.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench_implicit_v2 bench_implicit_v2.cu -lcuda -I../../kernels/_common
 ./bench_implicit_v2
 ```
 

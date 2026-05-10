@@ -17,8 +17,8 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../common/bench.h"
-#include "../common/check.h"
+#include "../../kernels/_common/bench.h"
+#include "../../kernels/_common/check.h"
 
 // -----------------------------------------------------------------------
 // Main

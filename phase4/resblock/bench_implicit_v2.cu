@@ -17,7 +17,7 @@
  *
  * Build:
  *   nvcc -arch=sm_86 -O2 -o bench_implicit_v2 bench_implicit_v2.cu \
- *        -lcuda -I../../phase2/common
+ *        -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -27,7 +27,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static float cpu_silu(float x) { return x / (1.0f + expf(-x)); }
 

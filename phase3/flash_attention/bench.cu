@@ -4,7 +4,7 @@
  * Tests correctness (single-head) and throughput (multi-head).
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_attention(
     const float *Q, const float *K, const float *V, float *O,

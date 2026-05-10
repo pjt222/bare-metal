@@ -9,7 +9,7 @@
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline.sm_86.cubin     flash_attn_br16_v2_pipeline.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline_pad.sm_86.cubin flash_attn_br16_v2_pipeline_pad.cu
  *   nvcc -arch=sm_86 -O2 -o bench_v2_pipeline_pad bench_v2_pipeline_pad.cu \
- *        -lcuda -I../../phase2/common
+ *        -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -19,7 +19,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_attention(const float *Q, const float *K, const float *V,
                           float *O, float *score_buf,

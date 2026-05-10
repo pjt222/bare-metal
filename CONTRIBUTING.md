@@ -30,7 +30,7 @@ This project builds ML primitives from hand-optimized SASS on GA104 (RTX 3070 Ti
 
 Every new kernel **must** have a `bench.cu` with:
 
-1. **CUDA Driver API** launch (not Runtime API) — see `phase2/common/bench.h`
+1. **CUDA Driver API** launch (not Runtime API) — see `kernels/_common/bench.h`
 2. **CPU reference** computation for correctness verification
 3. `WARMUP()` before `BENCH()` — GPU clocks must stabilize
 4. `check_fp32()` or equivalent with **documented tolerance**

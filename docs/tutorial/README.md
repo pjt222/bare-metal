@@ -61,7 +61,7 @@ Each tutorial cross-references actual files in this repository:
 
 - All performance numbers measured on RTX 3070 Ti Laptop GPU (8 GB)
 - All builds use `nvcc -arch=sm_86 -O2`
-- All correctness checks use `phase2/common/check.h` AND-logic tolerances:
+- All correctness checks use `kernels/_common/check.h` AND-logic tolerances:
   fail only if BOTH absolute AND relative error exceed threshold
 - Code blocks are tested; if a snippet doesn't compile, file an issue
 

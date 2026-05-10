@@ -17,7 +17,7 @@ phases stack when run back-to-back on the same on-chip resources.
 
 ```bash
 nvcc -arch=sm_86 -O2 --cubin utils.cu -o utils.sm_86.cubin
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 ./bench
 ```
 

@@ -188,7 +188,7 @@ Expected speedup: 8× from Tensor Cores for the matmul steps + better K/V tile r
 nvcc --cubin -arch=sm_86 -O2 -o flash_attn.sm_86.cubin flash_attn.cu
 
 # Benchmark binary
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # Run
 ./bench 512                    # single-head, seq_len=512
@@ -300,7 +300,7 @@ cuobjdump -sass flash_br16_v2.sm_86.cubin | grep -E 'HMMA|LDSM|SHFL'
 ```bash
 nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu
 nvcc -arch=sm_86 -O2 -o bench_br16_regpv_pad bench_br16_regpv_pad.cu \
-     -lcuda -I../../phase2/common
+     -lcuda -I../../kernels/_common
 ./bench_br16_regpv_pad 1024 8 8
 ```
 

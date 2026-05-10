@@ -6,7 +6,7 @@
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_persistent.sm_86.cubin flash_attn_persistent.cu
- *   nvcc -arch=sm_86 -O2 -o bench_persistent bench_persistent.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_persistent bench_persistent.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -15,7 +15,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_attention(
     const float *Q, const float *K, const float *V, float *O,

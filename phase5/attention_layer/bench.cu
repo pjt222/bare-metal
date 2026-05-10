@@ -2,7 +2,7 @@
  * bench.cu — Attention layer pipeline benchmark (BenchDriver refactor)
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -12,7 +12,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_layer(const float *X, const float *g, const float *b,
     const float *Wq, const float *Wk, const float *Wv, const float *Wo,

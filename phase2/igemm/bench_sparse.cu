@@ -13,7 +13,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 #include "sparse_meta_int8.h"
 
 int main(int argc, char **argv) {

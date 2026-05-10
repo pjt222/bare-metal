@@ -4,7 +4,7 @@ labels: ["refactoring", "bench-driver"]
 ---
 
 ## Background
-PR #53 introduced `phase2/common/bench_driver.h` and refactored 3 pilot files:
+PR #53 introduced `kernels/_common/bench_driver.h` and refactored 3 pilot files:
 - `phase2/hgemm/bench_refactored.cu` (348 → 96 lines)
 - `phase2/igemm/bench_refactored.cu` (1093 → 79 lines)
 - `phase3/flash_attention/bench_refactored.cu` (298 → 122 lines)

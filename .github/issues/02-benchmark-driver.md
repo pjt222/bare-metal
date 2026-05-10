@@ -31,7 +31,7 @@ CheckResult r = check_fp32(h_C, cpu_ref, ...);
 ```
 
 ## Proposed Solution
-Create `phase2/common/bench_driver.h` with template/struct-based driver:
+Create `kernels/_common/bench_driver.h` with template/struct-based driver:
 
 ```cpp
 // Usage in bench.cu:
@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
 4. Remaining 23 bench files
 
 ## Acceptance Criteria
-- [ ] `bench_driver.h` exists in `phase2/common/`
+- [ ] `bench_driver.h` exists in `kernels/_common/`
 - [ ] At least 3 bench files refactored to use it
 - [ ] No functionality lost (same timing, same correctness checks)
 - [ ] PR includes before/after line count comparison

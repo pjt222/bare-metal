@@ -21,7 +21,7 @@ positional-encoding formula. Showcase kernel for `MUFU.SIN`,
 nvcc -arch=sm_86 -O2 --use_fast_math --cubin timestep_emb.cu \
      -o timestep_emb.sm_86.cubin
 nvcc -arch=sm_86 -O2 --use_fast_math -o bench bench.cu \
-     -lcuda -I../../phase2/common
+     -lcuda -I../../kernels/_common
 ./bench
 ```
 

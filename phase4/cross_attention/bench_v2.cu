@@ -4,7 +4,7 @@
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o cross_attn.sm_86.cubin cross_attn.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o cross_attn_v2.sm_86.cubin cross_attn_v2.cu
- *   nvcc -arch=sm_86 -O2 -o bench_v2 bench_v2.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_v2 bench_v2.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -13,7 +13,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_cross_attn(
     const float *Q, const float *K, const float *V, float *O,

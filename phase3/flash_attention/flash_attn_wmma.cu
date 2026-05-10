@@ -39,7 +39,7 @@
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o flash_wmma.sm_86.cubin flash_attn_wmma.cu
- *   nvcc -arch=sm_86 -O2 -o bench_wmma bench_wmma.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_wmma bench_wmma.cu -lcuda -I../../kernels/_common
  *   cuobjdump -sass flash_wmma.sm_86.cubin | grep -E 'SHFL|MUFU|LDS|STS'
  */
 

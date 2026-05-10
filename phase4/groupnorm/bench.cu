@@ -4,7 +4,7 @@
  * Tests both NHWC (groupnorm) and NCHW (groupnorm_nchw) kernels.
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_groupnorm_nhwc(
     const float *X, const float *gamma, const float *beta,

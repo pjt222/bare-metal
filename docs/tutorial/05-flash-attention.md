@@ -326,7 +326,7 @@ nvcc --cubin -arch=sm_86 -O2 -o flash_v2_persistent.sm_86.cubin flash_attn_v2_pe
 nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_bc128.sm_86.cubin flash_attn_br16_v2_bc128.cu
 
 # Build bench
-nvcc -arch=sm_86 -O2 -o bench_v2_variants bench_v2_variants.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench_v2_variants bench_v2_variants.cu -lcuda -I../../kernels/_common
 
 # Run twice (first run cold, second run is the steady-state number)
 ./bench_v2_variants 1024 8 8

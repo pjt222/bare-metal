@@ -6,7 +6,7 @@
 
 #include <cuda.h>
 #include <cstdio>
-#include "../common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 int main(int argc, char **argv) {
     int M = (argc > 1) ? atoi(argv[1]) : 1024;

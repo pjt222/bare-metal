@@ -60,7 +60,7 @@ or the child sees "no CUDA-capable device is detected".
 nvcc --cubin -arch=sm_86 -O2 -o kernel.sm_86.cubin kernel.cu
 
 # Compile benchmark executable (most phases use CUDA Driver API)
-nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # Run benchmark (args vary per kernel — typically M N K or seq_len batch heads)
 ./bench 4096 4096 4096
@@ -112,7 +112,7 @@ Each phase directory contains kernel `.cu` files, `bench_*.cu` benchmarks, a `Ma
 - **phase2/** — ML primitives: `sgemm/`, `hgemm/`, `softmax/`, `layernorm/`, `activations/`
 - **phase3/** — Flash Attention variants: scalar → 4-warp → Br=16 HMMA (19x speedup)
 - **phase4/** — Diffusion UNet: `timestep_emb/`, `groupnorm/`, `conv2d/`, `resblock/`, `cross_attention/`
-- **phase2/common/** — Shared headers (`bench.h`, `check.h`) included by all benchmarks
+- **kernels/_common/** — Shared headers (`bench.h`, `check.h`) included by all benchmarks
 - **docs/** — Deep technical references (SASS instruction set, control codes, memory hierarchy, optimization postmortems)
 - **scripts/** — `build.R` (compile / disasm / roundtrip), `verify_setup.R`,
   `install_cuasmR.R`, NCU + bench harnesses
@@ -121,8 +121,8 @@ Each phase directory contains kernel `.cu` files, `bench_*.cu` benchmarks, a `Ma
 
 ### Shared Headers
 
-- `phase2/common/bench.h` — `BenchTimer` (CUDA events), `CHECK_CU` macro, GFLOPS calculation
-- `phase2/common/check.h` — `check_fp32()` correctness verification against CPU reference
+- `kernels/_common/bench.h` — `BenchTimer` (CUDA events), `CHECK_CU` macro, GFLOPS calculation
+- `kernels/_common/check.h` — `check_fp32()` correctness verification against CPU reference
 
 ## Correctness Verification
 

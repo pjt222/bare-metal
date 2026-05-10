@@ -307,7 +307,7 @@ nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu
 nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline.sm_86.cubin flash_attn_br16_v2_pipeline.cu
 
 # Compare
-nvcc -arch=sm_86 -O2 -o bench_v2_variants bench_v2_variants.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench_v2_variants bench_v2_variants.cu -lcuda -I../../kernels/_common
 ./bench_v2_variants 1024 8 8
 ./bench_v2_variants 1024 8 8   # second run is steady-state
 

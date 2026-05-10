@@ -2,7 +2,7 @@
  * bench.cu — Conv2d benchmark: correctness + throughput
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
  *
  * Usage:
  *   ./bench                         # default: N=1, H=64, W=64, Cin=64, Cout=64
@@ -15,8 +15,8 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench.h"
-#include "../../phase2/common/check.h"
+#include "../../kernels/_common/bench.h"
+#include "../../kernels/_common/check.h"
 #include <unistd.h>
 
 // Helper: find cubin in CWD or in the binary's directory

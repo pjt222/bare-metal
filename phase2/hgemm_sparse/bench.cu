@@ -15,7 +15,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 #include "sparse_meta.h"
 
 // -----------------------------------------------------------------------

@@ -2,7 +2,7 @@
  * bench.cu — Flash Attention: 4-warp vs 1-warp benchmark (BenchDriver refactor)
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench_wmma bench_wmma.cu -lcuda -I../../phase2/common
+ *   nvcc -arch=sm_86 -O2 -o bench_wmma bench_wmma.cu -lcuda -I../../kernels/_common
  */
 
 #include <cstdio>
@@ -10,7 +10,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../phase2/common/bench_driver.h"
+#include "../../kernels/_common/bench_driver.h"
 
 static void cpu_attention(
     const float *Q, const float *K, const float *V, float *O,

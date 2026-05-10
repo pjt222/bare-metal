@@ -25,7 +25,7 @@ That shape asymmetry changes what tiling wins.
 
 ```bash
 nvcc -arch=sm_86 -O2 --cubin cross_attn_pipelined.cu -o cross_attn_pipelined.sm_86.cubin
-nvcc -arch=sm_86 -O2 -o bench_pipelined bench_pipelined.cu -lcuda -I../../phase2/common
+nvcc -arch=sm_86 -O2 -o bench_pipelined bench_pipelined.cu -lcuda -I../../kernels/_common
 ./bench_pipelined
 ```
 
