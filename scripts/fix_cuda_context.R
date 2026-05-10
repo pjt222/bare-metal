@@ -56,9 +56,7 @@ main <- function() {
   files <- if (length(argv)) argv else {
     fs1 <- list.files(".", pattern = "^bench(_.*)?\\.cu$",
                       recursive = TRUE, full.names = FALSE)
-    keep <- grepl("^phase", fs1) &
-            !grepl("bench_refactored", fs1, fixed = TRUE) &
-            !grepl("\\.bak", fs1)
+    keep <- grepl("^phase", fs1) & !grepl("\\.bak", fs1)
     sort(fs1[keep])
   }
 

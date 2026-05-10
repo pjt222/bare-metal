@@ -26,10 +26,33 @@ Per-precision defaults used across the project:
 ## `BenchDriver` usage pattern
 
 `bench_driver.h` is the post-#85 refactor target. Before: ~350 lines of
-boilerplate per `bench.cu`; after: ~80 lines, plus the actual launch.
-Migrated benchmarks: see `bench_refactored.cu` in `phase2/hgemm`,
-`phase2/igemm`, `phase3/flash_attention`. Not yet promoted to the
-canonical `bench.cu` — see audit Tier 1 follow-up.
+boilerplate per `bench.cu`; after: ~80 lines plus the actual launch.
+The header itself documents the API; per-kernel migration into the
+canonical `bench.cu` files is incremental.
+
+## Bench-variant naming convention
+
+Most kernel directories in phases 2–5 hold multiple bench harnesses
+(per-variant comparisons, padding sweeps, persistent-kernel tests).
+Project-wide convention:
+
+| Filename pattern         | Meaning                                  |
+|--------------------------|------------------------------------------|
+| `bench.cu`               | Canonical primary benchmark (per dir)    |
+| `bench_<variant>.cu`     | Single-variant comparison driver         |
+| `bench_<kernel>_<variant>.cu` | When the dir hosts multiple kernels (e.g. `bench_persistent_hgemm.cu` in a multi-kernel dir) |
+
+Untracked / gitignored:
+
+| Binary pattern  | Status |
+|-----------------|--------|
+| `bench`         | compiled output of `bench.cu` (gitignored) |
+| `bench_*`       | compiled outputs of variant sources (gitignored) |
+
+Deprecated names cleaned up in audit Tier 6: `bench_refactored.cu`
+(BenchDriver demo files, removed once the API was documented in this
+README), `bench_orig` / `bench_new` / `*_orig` (stale binaries and
+superseded source variants).
 
 ## Cross-references
 
