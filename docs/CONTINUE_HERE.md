@@ -1,7 +1,40 @@
 # Continue Here
 
-> **Last updated**: 2026-05-08 (NCU profiling session — 7 issues closed,
-> +8 padding pattern established across 5 kernels, 1.4-2.4× wins each)
+> **Last updated**: 2026-05-10 (cosmetic-only — dark-theme ggplot pass)
+>
+> **2026-05-10 session (commit `6cf4161`)**: switched project ggplot
+> theme `theme_baremetal()` in `scripts/audit/_theme.R` to a dark
+> palette (plot bg `grey10`, panel `grey14`, light `grey90` text,
+> recessive `grey22/30` grids). Diverging scale midpoint flipped from
+> `"white"` to `"grey20"` so neutral ratios blend into the panel.
+> `generate_readme_figures.R` had hard-coded `"grey20"` / `"grey25"`
+> label colours and a default-black `geom_text` set; rerouted through
+> new `BM_DARK_FG` / `BM_DARK_FG_MUTED` constants exported from the
+> theme. All seven figures re-rendered:
+> `performance_overview.png`, `roofline.png`, `fa_waterfall.png`,
+> `cymatic/cymatic_speedup_grid.png`, `phase_progression.png`,
+> `gap_to_sota.png`, `sass_histogram.png`. `sass_histogram.R` needed no
+> script change — its theme inheritance flows through
+> `theme_baremetal()` automatically.
+>
+> **No kernel, benchmark, or perf changes this session.** Pre-push
+> hook ran full smoke + link audit + regression suite: 0 regressions,
+> 1 incidental improvement (`conv2d_implicit_gemm` 113.7% of baseline,
+> noise band). All numbers in the rest of this document remain
+> authoritative.
+>
+> **Reusable note for next theme/style swap**: when changing a global
+> ggplot theme, grep dependent render scripts for hard-coded colour
+> aesthetics *before* re-rendering, e.g.
+> `grep -nE 'colou?r\s*=\s*"(black|grey[12][05]|white)"' scripts/audit/*.R`.
+> Catches geom-level overrides the theme cannot reach. Saves a
+> render+visual-inspection cycle.
+>
+> ---
+>
+> **Last technical update**: 2026-05-08 (NCU profiling session — 7 issues
+> closed, +8 padding pattern established across 5 kernels, 1.4-2.4×
+> wins each)
 >
 > **Session status**: 4 commits, 7 issues closed (#84, #85, #88, #89,
 > #97, #98, #99). NCU bank-conflict counter unlocked diagnosis-and-fix
