@@ -90,7 +90,8 @@ p1 <- ggplot(perf, aes(x = kernel, y = gflops, fill = category)) +
   geom_text(aes(label = sprintf("%s\n%.1f%% peak",
                                  format(gflops, big.mark = ",", trim = TRUE),
                                  pct_peak)),
-            hjust = -0.05, size = 2.9, lineheight = 0.95) +
+            hjust = -0.05, size = 2.9, lineheight = 0.95,
+            colour = BM_DARK_FG) +
   coord_flip() +
   scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.32))) +
   scale_fill_bm_disc() +
@@ -172,7 +173,7 @@ p2 <- ggplot() +
              size = 3.5, colour = BM_VIRIDIS_HIGH) +
   geom_text(data = roof,
             aes(x = oi_flops_per_byte, y = achieved_tflops, label = kernel),
-            vjust = -1.0, size = 2.8, colour = "grey20") +
+            vjust = -1.0, size = 2.8, colour = BM_DARK_FG) +
   scale_x_log10(breaks = c(0.1, 1, 10, 100, 1000),
                 labels = c("0.1", "1", "10", "100", "1000")) +
   scale_y_log10(breaks = c(0.01, 0.1, 1, 10, 100, 174),
@@ -216,7 +217,8 @@ p3 <- ggplot(fa, aes(x = step, y = gflops, fill = cumulative)) +
   geom_text(aes(label = sprintf("%s GFLOPS\n(%.2f ms, %.2fx)",
                                  format(gflops, big.mark = ",", trim = TRUE),
                                  ms, cumulative)),
-            vjust = -0.4, size = 3.0, lineheight = 0.95) +
+            vjust = -0.4, size = 3.0, lineheight = 0.95,
+            colour = BM_DARK_FG) +
   scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.18))) +
   scale_fill_bm_seq(name = "cumulative\nspeedup") +
   labs(
@@ -284,7 +286,7 @@ if (nrow(cym_df) > 0) {
   # (purple <-> white <-> yellow, midpoint = 1.0). Drops the 3-bucket
   # categorical fill in favour of finer perceptual gradient.
   p4 <- ggplot(cym_df, aes(x = trace, y = speedup, fill = speedup)) +
-    geom_hline(yintercept = 1.0, colour = "grey50", linetype = "dashed") +
+    geom_hline(yintercept = 1.0, colour = "grey60", linetype = "dashed") +
     geom_col(width = 0.75) +
     coord_flip() +
     facet_wrap(~ grid_label, nrow = 1) +
@@ -338,12 +340,13 @@ phases <- phases[!is.na(phases$gflops), ]
 
 p5 <- ggplot(phases, aes(x = phase, y = cum_speedup, group = 1)) +
   geom_line(linewidth = 0.8, colour = BM_VIRIDIS_MID) +
-  geom_point(aes(size = gflops, fill = cum_speedup), colour = "grey20",
+  geom_point(aes(size = gflops, fill = cum_speedup), colour = BM_DARK_FG,
              shape = 21) +
   geom_text(aes(label = sprintf("%.1fx\n%s GFLOPS",
                                  cum_speedup,
                                  format(gflops, big.mark = ",", trim = TRUE))),
-            vjust = -1.5, size = 2.9, lineheight = 0.95) +
+            vjust = -1.5, size = 2.9, lineheight = 0.95,
+            colour = BM_DARK_FG) +
   scale_y_log10() +
   scale_size_continuous(range = c(3, 9), labels = comma) +
   scale_fill_bm_seq(guide = "none") +
@@ -400,7 +403,7 @@ p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
             aes(x = kernel, y = sota_pct + 4,
                 label = sprintf("%.1fx gap", gap_factor)),
             inherit.aes = FALSE,
-            hjust = 0, size = 3.0, colour = "grey25", fontface = "italic") +
+            hjust = 0, size = 3.0, colour = BM_DARK_FG_MUTED, fontface = "italic") +
   coord_flip() +
   scale_y_continuous(limits = c(0, 105),
                      expand = expansion(mult = c(0, 0.02)),

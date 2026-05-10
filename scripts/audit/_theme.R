@@ -49,32 +49,56 @@ BM_VIRIDIS_LOW    <- viridisLite::viridis(3)[1]  # deep purple "#440154"
 BM_VIRIDIS_MID    <- viridisLite::viridis(3)[2]  # teal/green  "#21908C"
 BM_VIRIDIS_HIGH   <- viridisLite::viridis(3)[3]  # yellow      "#FDE725"
 
-# Reduced-grid theme used everywhere. Subtle minor grid for heatmaps,
-# stronger major for bar charts. Captions in muted grey.
+# Dark theme. Same minimal base, inverted background + text + grid colours.
+# Background "grey10" (#1a1a1a) reads near-black without crushing to pure black,
+# so antialiased text edges still blend. Grids visible but recessive.
+BM_DARK_BG_PLOT   <- "grey10"   # outer canvas
+BM_DARK_BG_PANEL  <- "grey14"   # plot panel, slightly lighter for separation
+BM_DARK_BG_STRIP  <- "grey20"   # facet strip
+BM_DARK_FG        <- "grey90"   # primary text / axis
+BM_DARK_FG_MUTED  <- "grey70"   # subtitle
+BM_DARK_FG_FAINT  <- "grey60"   # caption
+BM_DARK_GRID_MAJ  <- "grey30"
+BM_DARK_GRID_MIN  <- "grey22"
+
 theme_baremetal <- function(base_size = BM_BASE_SIZE_DEFAULT,
                             base_family = BM_FONT_FAMILY) {
   ggplot2::theme_minimal(base_size = base_size, base_family = base_family) +
     ggplot2::theme(
+      plot.background  = ggplot2::element_rect(fill = BM_DARK_BG_PLOT,
+                                                colour = NA),
+      panel.background = ggplot2::element_rect(fill = BM_DARK_BG_PANEL,
+                                                colour = NA),
       plot.title       = ggplot2::element_text(face = "bold",
+                                               colour = BM_DARK_FG,
                                                size = base_size + 1),
-      plot.subtitle    = ggplot2::element_text(colour = "grey40",
+      plot.subtitle    = ggplot2::element_text(colour = BM_DARK_FG_MUTED,
                                                size = base_size - 1),
-      plot.caption     = ggplot2::element_text(colour = "grey50",
+      plot.caption     = ggplot2::element_text(colour = BM_DARK_FG_FAINT,
                                                size = base_size - 3,
                                                hjust = 0),
       plot.caption.position = "plot",
-      axis.title       = ggplot2::element_text(size = base_size - 1),
-      axis.text        = ggplot2::element_text(size = base_size - 2),
-      legend.title     = ggplot2::element_text(size = base_size - 1),
-      legend.text      = ggplot2::element_text(size = base_size - 2),
+      axis.title       = ggplot2::element_text(colour = BM_DARK_FG,
+                                               size = base_size - 1),
+      axis.text        = ggplot2::element_text(colour = BM_DARK_FG_MUTED,
+                                               size = base_size - 2),
+      legend.title     = ggplot2::element_text(colour = BM_DARK_FG,
+                                               size = base_size - 1),
+      legend.text      = ggplot2::element_text(colour = BM_DARK_FG_MUTED,
+                                               size = base_size - 2),
+      legend.background = ggplot2::element_rect(fill = BM_DARK_BG_PLOT,
+                                                 colour = NA),
+      legend.key       = ggplot2::element_rect(fill = BM_DARK_BG_PLOT,
+                                                colour = NA),
       legend.position  = "right",
-      panel.grid.minor = ggplot2::element_line(colour = "grey92",
+      panel.grid.minor = ggplot2::element_line(colour = BM_DARK_GRID_MIN,
                                                linewidth = 0.25),
-      panel.grid.major = ggplot2::element_line(colour = "grey85",
+      panel.grid.major = ggplot2::element_line(colour = BM_DARK_GRID_MAJ,
                                                linewidth = 0.35),
       strip.text       = ggplot2::element_text(face = "bold",
+                                               colour = BM_DARK_FG,
                                                size = base_size - 1),
-      strip.background = ggplot2::element_rect(fill = "grey95",
+      strip.background = ggplot2::element_rect(fill = BM_DARK_BG_STRIP,
                                                colour = NA)
     )
 }
@@ -113,16 +137,18 @@ scale_colour_bm_disc <- scale_color_bm_disc
 
 # Diverging palette - ratio plots centred on `midpoint` (e.g. speedup vs
 # baseline = 1.0). Endpoints from viridis to keep visual coherence.
+# Diverging midpoint flipped to a dark grey so the neutral region blends with
+# the dark panel background instead of punching a white hole through it.
 scale_fill_bm_div <- function(midpoint = 1.0, ...,
                               low  = BM_VIRIDIS_LOW,
-                              mid  = "white",
+                              mid  = "grey20",
                               high = BM_VIRIDIS_HIGH) {
   ggplot2::scale_fill_gradient2(midpoint = midpoint,
                                 low = low, mid = mid, high = high, ...)
 }
 scale_color_bm_div <- function(midpoint = 1.0, ...,
                                low  = BM_VIRIDIS_LOW,
-                               mid  = "white",
+                               mid  = "grey20",
                                high = BM_VIRIDIS_HIGH) {
   ggplot2::scale_color_gradient2(midpoint = midpoint,
                                  low = low, mid = mid, high = high, ...)
