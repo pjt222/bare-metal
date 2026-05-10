@@ -4,7 +4,7 @@ FP16 GEMM where every contiguous 4-element group of operand A has at
 most 2 non-zeros. Encoded via NVIDIA's 2:4 sparsity primitive
 (`mma.sp.sync.aligned.m16n8k16` PTX, `HMMA.16816.SP` SASS). Throughput
 matches dense HGEMM at 2048³, regresses at 4096³ (see
-[Obs N](../../docs/gpu_reflections.md), [Obs HH](../../docs/gpu_reflections.md)).
+[Obs N](../../../docs/gpu_reflections.md), [Obs HH](../../../docs/gpu_reflections.md)).
 
 ## Files
 
@@ -45,7 +45,7 @@ nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
 
 ## Cross-references
 
-- [Obs N](../../docs/gpu_reflections.md) — full development arc, naive → Tensor Core path
-- [Obs HH](../../docs/gpu_reflections.md) — IMMA stall hand-tunes do not reproduce on CUDA 13.2 (sub-task A)
-- [docs/int8_sparse_4096_regression_analysis.md](../../docs/int8_sparse_4096_regression_analysis.md) — regression hypotheses (companion analysis for INT8 path; same pattern)
-- [docs/tutorial/03-int8-tensor-cores.md](../../docs/tutorial/03-int8-tensor-cores.md) — sparsity walkthrough
+- [Obs N](../../../docs/gpu_reflections.md) — full development arc, naive → Tensor Core path
+- [Obs HH](../../../docs/gpu_reflections.md) — IMMA stall hand-tunes do not reproduce on CUDA 13.2 (sub-task A)
+- [docs/int8_sparse_4096_regression_analysis.md](../../../docs/int8_sparse_4096_regression_analysis.md) — regression hypotheses (companion analysis for INT8 path; same pattern)
+- [docs/tutorial/03-int8-tensor-cores.md](../../../docs/tutorial/03-int8-tensor-cores.md) — sparsity walkthrough

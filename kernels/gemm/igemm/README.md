@@ -33,7 +33,7 @@ FP16 HGEMM reference: **31,910 GFLOPS** at 4096³ (hgemm_16warp).
 
 **Why only 4.0% of INT8 peak?** The tiled kernel without pipelining was fully bandwidth-bound: 2 GB at 608 GB/s = ~3.3 ms floor vs 9.0 ms total. Software pipelining (double-buffered smem) overlaps LDG for tile N+1 with IMMA compute on tile N, reclaiming ~2.4 ms of pipeline bubble. The 128×256 variant with 1 block/SM (8 warps) achieves the best balance of compute density vs occupancy. The remaining gap to the 0.2 ms compute minimum is still dominated by DRAM bandwidth.
 
-See [`docs/gpu_reflections.md`](../docs/gpu_reflections.md) for the full optimization timeline (Insight 12: "IMMA pipelining is memory-bound until tile size grows", Insight 20: "L2 reuse from persistent grid is negligible").
+See [`docs/gpu_reflections.md`](../../../docs/gpu_reflections.md) for the full optimization timeline (Insight 12: "IMMA pipelining is memory-bound until tile size grows", Insight 20: "L2 reuse from persistent grid is negligible").
 
 ## CuAssembler Hand-Tuning (Issue #2)
 
@@ -236,4 +236,4 @@ See `kernels/composition/` (formerly phase5) for layer-level integration.
 |---------|-------------------|-------|
 | Sparse INT8 tiled | **39,674 TOPS** | **31,835 TOPS** |
 
-Uses `mma.sp.m16n8k32` with 2:4 sparsity. Metadata preload to smem recovered +24.5% at 4096³. See [`docs/int8_sparse_4096_regression_analysis.md`](../docs/int8_sparse_4096_regression_analysis.md).
+Uses `mma.sp.m16n8k32` with 2:4 sparsity. Metadata preload to smem recovered +24.5% at 4096³. See [`docs/int8_sparse_4096_regression_analysis.md`](../../../docs/int8_sparse_4096_regression_analysis.md).

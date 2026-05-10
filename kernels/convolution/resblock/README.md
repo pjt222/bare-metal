@@ -37,7 +37,7 @@ ResBlock 320-channel @ 64×64 (SD middle block):
 
 ## Cross-references
 
-- [Obs R](../../docs/gpu_reflections.md) — "ResBlock conv2d swap: 7× speedup from picking the right kernel"
-- [Obs GG](../../docs/gpu_reflections.md) — implicit GEMM v2 specifically, with ResBlock as outlier-of-interest
+- [Obs R](../../../docs/gpu_reflections.md) — "ResBlock conv2d swap: 7× speedup from picking the right kernel"
+- [Obs GG](../../../docs/gpu_reflections.md) — implicit GEMM v2 specifically, with ResBlock as outlier-of-interest
 - [kernels/convolution/conv2d/README.md](../conv2d/README.md) — the underlying conv kernels
-- [kernels/reductions/groupnorm/README.md](../groupnorm/README.md) — the normalization step
+- [kernels/reductions/groupnorm/README.md](../../reductions/groupnorm/README.md) — the normalization step

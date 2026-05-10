@@ -43,5 +43,5 @@ behind it.
 
 ## Cross-references
 
-- [docs/fragment_shfl_reductions.md](../../docs/fragment_shfl_reductions.md) — butterfly-reduce SASS pattern catalog
-- [Obs R](../../docs/gpu_reflections.md) — ResBlock end-to-end where this kernel is one of three components
+- [docs/fragment_shfl_reductions.md](../../../docs/fragment_shfl_reductions.md) — butterfly-reduce SASS pattern catalog
+- [Obs R](../../../docs/gpu_reflections.md) — ResBlock end-to-end where this kernel is one of three components

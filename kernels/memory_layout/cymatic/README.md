@@ -1,6 +1,6 @@
 # kernels/memory_layout/cymatic — Chladni-pattern memory layout (GPU benchmark)
 
-> Empirical measurement of whether the [cymatic memory layout](../../docs/cymatic_memory_mapping.md)
+> Empirical measurement of whether the [cymatic memory layout](../../../docs/cymatic_memory_mapping.md)
 > actually outperforms row-major on real GPU hardware. Result: **yes for some
 > access patterns, no for others, geometry-dependent**. The layout is a real
 > tradeoff, not a free win.

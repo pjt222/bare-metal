@@ -53,6 +53,6 @@ nvcc -arch=sm_86 -O2 -o bench_implicit_v2 bench_implicit_v2.cu -lcuda -I../../ke
 
 ## Cross-references
 
-- [Obs 2](../../docs/gpu_reflections.md) — "Your Conv2d Reads X Nine Times From VRAM" (the original observation)
-- [Obs GG](../../docs/gpu_reflections.md) — implicit GEMM v2: 2.18× on ResBlock outlier
-- [docs/tutorial/04-software-pipelining.md](../../docs/tutorial/04-software-pipelining.md) — cp.async regime analysis
+- [Obs 2](../../../docs/gpu_reflections.md) — "Your Conv2d Reads X Nine Times From VRAM" (the original observation)
+- [Obs GG](../../../docs/gpu_reflections.md) — implicit GEMM v2: 2.18× on ResBlock outlier
+- [docs/tutorial/04-software-pipelining.md](../../../docs/tutorial/04-software-pipelining.md) — cp.async regime analysis

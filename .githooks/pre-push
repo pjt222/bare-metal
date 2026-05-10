@@ -35,6 +35,26 @@ else
     echo "  Regression check will still run on already-built executables.${NC}"
 fi
 
+# Static doc audit: every relative link in every README must resolve.
+# Cheap (~1s), catches the typical link-rot from directory reorganisations.
+echo ""
+echo "--- Checking README hyperlinks ---"
+LINK_SCRIPT="scripts/audit/check_links.R"
+if [ -f "$LINK_SCRIPT" ]; then
+    if Rscript "$LINK_SCRIPT"; then
+        echo -e "${GREEN}All README links resolve.${NC}"
+    else
+        echo ""
+        echo -e "${RED}BROKEN LINKS DETECTED${NC} (see list above)"
+        echo ""
+        echo "Fix the README cross-references, then re-push."
+        echo "To bypass (for WIP commits):  git push --no-verify"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}WARNING: $LINK_SCRIPT not found — skipping${NC}"
+fi
+
 # Run performance regression checker (R + renv)
 echo ""
 echo "--- Running $REGRESS_SCRIPT ---"

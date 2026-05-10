@@ -43,5 +43,5 @@ instead of the software `expf` polynomial.
 
 ## Cross-references
 
-- [docs/tutorial/06-the-four-laws.md](../../docs/tutorial/06-the-four-laws.md) — Law 3 ("fill the warp schedulers") on MUFU latency hiding
-- [kernels/attention/cross_attention/README.md](../cross_attention/README.md) — uses the timestep embedding as conditioning input
+- [docs/tutorial/06-the-four-laws.md](../../../docs/tutorial/06-the-four-laws.md) — Law 3 ("fill the warp schedulers") on MUFU latency hiding
+- [kernels/attention/cross_attention/README.md](../../attention/cross_attention/README.md) — uses the timestep embedding as conditioning input
