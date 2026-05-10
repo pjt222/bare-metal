@@ -43,7 +43,7 @@ make gen GRID=1024
 make
 
 # 3. Run (defaults: 200 iters/run, 5 warmup, 11 runs, median reported)
-./bench_cymatic
+./bench
 
 # Or sweep grid sizes
 make sweep
@@ -142,7 +142,7 @@ L2 and post-warmup all accesses are L2 hits regardless of layout. The
 
 - `gen_cymatic_data.R` — generates `perm.bin` + `traces.bin` from R math.
   Sources `../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
-- `bench_cymatic.cu` — CUDA gather bench with median + scaled iters.
+- `bench.cu` — CUDA gather bench with median + scaled iters.
 - `Makefile` — `make`, `make gen`, `make run`, `make sweep`, `make clean`.
 - `results/cymatic/grids/grid{256,512,1024,2048}_results.txt` — captured benchmark output.
 

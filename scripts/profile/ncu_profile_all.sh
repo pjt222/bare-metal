@@ -29,7 +29,7 @@ ROWS=(
   "hgemm_256x128|phase2/hgemm/bench|4096 4096 4096|HGEMM 256x128 (4096³)|phase2/hgemm"
 
   # --- IGEMM (phase 2) ---
-  "igemm_sparse_tiled|phase2/igemm/bench_igemm_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|phase2/igemm"
+  "igemm_sparse_tiled|phase2/igemm/bench_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|phase2/igemm"
 
   # --- Cross-Attention (phase 4) ---
   "cross_attn_v2|phase4/cross_attention/bench_v2|1024 256 8|Cross-attn v2 (1024 q, 256 kv, h=8)|phase4/cross_attention"

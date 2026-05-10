@@ -1,7 +1,7 @@
-// gather_nvcc.cu — kernel-only build of bench_cymatic.cu's gather_sum,
+// gather_nvcc.cu — kernel-only build of bench.cu's gather_sum,
 // for fair PTX/SASS comparison vs cuda-oxide port (gather_oxide.ptx).
 //
-// Source-identical to phase4/cymatic/bench_cymatic.cu lines 84-94.
+// Source-identical to phase4/cymatic/bench.cu lines 84-94.
 
 extern "C" __global__ void gather_sum(const float * __restrict__ data,
                                        const int   * __restrict__ idx,

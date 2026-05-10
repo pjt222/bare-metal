@@ -2,7 +2,7 @@
 //
 // Driver-API benchmark that loads gather_sum from an arbitrary cubin path,
 // so the same harness can run nvcc-built and oxide-built kernels on
-// identical data. Output is comparable to phase4/cymatic/bench_cymatic.cu
+// identical data. Output is comparable to phase4/cymatic/bench.cu
 // but isolates the kernel under test.
 //
 // Usage:

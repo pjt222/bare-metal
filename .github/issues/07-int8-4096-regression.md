@@ -28,11 +28,11 @@ cuobjdump -res-usage igemm_sparse_tiled.sm_86.cubin
 # Profile with Nsight Compute (if available)
 ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local \
     --metrics sm__sass_average_data_reuse_per_request_mem_global_op_ld \
-    ./bench_igemm_sparse 4096 4096 4096
+    ./bench_sparse 4096 4096 4096
 
 # Check for local memory (spill)
 ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum \
-    ./bench_igemm_sparse 4096 4096 4096
+    ./bench_sparse 4096 4096 4096
 ```
 
 ## Related
@@ -41,7 +41,7 @@ ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum \
 
 ## Files
 - `phase2/igemm/igemm_sparse_tiled.cu`
-- `phase2/igemm/bench_igemm_sparse.cu`
+- `phase2/igemm/bench_sparse.cu`
 - `phase2/igemm/sparse_meta_int8.h`
 
 ## Acceptance Criteria

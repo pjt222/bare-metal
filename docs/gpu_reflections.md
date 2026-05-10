@@ -1397,7 +1397,7 @@ overall — it redistributes them across access patterns, amplifying
 some and demolishing others. Use it when you can choose the access
 pattern. Avoid it when you cannot.
 
-**Files**: `phase4/cymatic/{gen_cymatic_data.R, bench_cymatic.cu,
+**Files**: `phase4/cymatic/{gen_cymatic_data.R, bench.cu,
 Makefile, results/}`, `scripts/cymatic_{mapping,analyze,visualize}.R`,
 `docs/cymatic_memory_mapping.md`, `docs/figures/cymatic/cymatic_*.png`.
 
@@ -2381,7 +2381,7 @@ joins the falsified pile.
   inner loop, wrapped in `for (int tile_id = blockIdx.x; tile_id <
   n_tiles; tile_id += gridDim.x)` with `<<<sm_count * 2, 512>>>` =
   `<<<92, 512>>>`.
-- Bench harness: `bench_persistent_hgemm.cu` (A/B, 5 warmup + 30 timed).
+- Bench harness: `bench_persistent.cu` (A/B, 5 warmup + 30 timed).
 
 ### Results
 
@@ -2448,7 +2448,7 @@ emerges (e.g., A-row reuse across N-tiles).
 ### Files
 
 - `phase2/hgemm/hgemm_16warp_persistent.cu` — naive persistent variant
-- `phase2/hgemm/bench_persistent_hgemm.cu` — A/B bench
+- `phase2/hgemm/bench_persistent.cu` — A/B bench
 
 ---
 
@@ -2854,7 +2854,7 @@ m=4), geomean 1.099× across 15 traces.
 
   1. For each `(n, m)`: regenerate `phase4/cymatic/perm.bin` +
      `traces.bin` via `gen_cymatic_data.R GRID n m`.
-  2. Run `bench_cymatic` (median-of-11 over 15 access traces, GRID=2048
+  2. Run `phase4/cymatic/bench` (median-of-11 over 15 access traces, GRID=2048
      buffer = 13 MB → DRAM regime where layout effects dominate).
   3. Parse the per-trace `<float>x` speedup from stdout, append to a
      long-form data frame.

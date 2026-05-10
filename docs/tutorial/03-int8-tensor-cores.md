@@ -280,8 +280,8 @@ nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin igemm_sparse_tile
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
 ./bench 4096 4096 4096   # dense IGEMM variants
 
-nvcc -arch=sm_86 -O2 -o bench_igemm_sparse bench_igemm_sparse.cu -lcuda -I../common
-./bench_igemm_sparse 4096   # sparse 2:4 (dense-equiv ~35500 TOPS)
+nvcc -arch=sm_86 -O2 -o bench_sparse bench_sparse.cu -lcuda -I../common
+./bench_sparse 4096   # sparse 2:4 (dense-equiv ~35500 TOPS)
 ```
 
 ## Inspecting SASS
@@ -304,7 +304,7 @@ cuobjdump -sass igemm_sparse_tiled.sm_86.cubin | grep -E 'IMMA|LDSM' | head -20
 - `phase2/igemm/igemm_8warp.cu`, `igemm_8warp_256.cu`, `igemm_8warp_256x256.cu` (block-size scaling)
 - `phase2/igemm/igemm_online_quant.cu`, `igemm_online_quant_bankfree.cu` (online quantization)
 - `phase2/igemm/igemm_sparse_tiled.cu` (2:4 sparsity)
-- `phase2/igemm/bench_igemm_sparse.cu` (sparse correctness + perf)
+- `phase2/igemm/bench_sparse.cu` (sparse correctness + perf)
 
 ## Cross-references
 

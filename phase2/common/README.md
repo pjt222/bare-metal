@@ -36,11 +36,16 @@ Most kernel directories in phases 2–5 hold multiple bench harnesses
 (per-variant comparisons, padding sweeps, persistent-kernel tests).
 Project-wide convention:
 
-| Filename pattern         | Meaning                                  |
-|--------------------------|------------------------------------------|
-| `bench.cu`               | Canonical primary benchmark (per dir)    |
-| `bench_<variant>.cu`     | Single-variant comparison driver         |
-| `bench_<kernel>_<variant>.cu` | When the dir hosts multiple kernels (e.g. `bench_persistent_hgemm.cu` in a multi-kernel dir) |
+| Filename pattern    | Meaning                                                       |
+|---------------------|---------------------------------------------------------------|
+| `bench.cu`          | Canonical primary benchmark for the dir's main kernel          |
+| `bench_<variant>.cu`| Comparison driver for a kernel variant; `<variant>` is a short tag (`persistent`, `pipelined`, `v2`, `bc128`, `regpv`, etc.) |
+
+**Don't repeat the dir name in the bench filename.** The dir is
+implicit context. `phase2/hgemm/bench_persistent.cu` is correct;
+`phase2/hgemm/bench_persistent_hgemm.cu` is redundant. Same logic
+gives `phase2/igemm/bench_sparse.cu` (not `bench_igemm_sparse.cu`)
+and `phase4/cymatic/bench.cu` (not `bench_cymatic.cu`).
 
 Untracked / gitignored:
 
@@ -49,10 +54,14 @@ Untracked / gitignored:
 | `bench`         | compiled output of `bench.cu` (gitignored) |
 | `bench_*`       | compiled outputs of variant sources (gitignored) |
 
-Deprecated names cleaned up in audit Tier 6: `bench_refactored.cu`
-(BenchDriver demo files, removed once the API was documented in this
-README), `bench_orig` / `bench_new` / `*_orig` (stale binaries and
-superseded source variants).
+Deprecated names cleaned up in audit Tier 6 / Tier 8:
+- `bench_refactored.cu` (BenchDriver demo files, removed once the API
+  was documented in this README)
+- `bench_orig` / `bench_new` / `*_orig` (stale binaries and superseded
+  source variants)
+- `bench_persistent_hgemm.cu`, `bench_igemm_sparse.cu`,
+  `bench_cymatic.cu` (renamed in Tier 8 to drop redundant dir-name
+  prefixes).
 
 ## Cross-references
 

@@ -4,7 +4,7 @@
 #
 # For each (n, m) in the grid:
 #   1. Run phase4/cymatic/gen_cymatic_data.R GRID n m   -> rewrites perm.bin + traces.bin
-#   2. Run phase4/cymatic/bench_cymatic                  -> table of per-trace speedups
+#   2. Run phase4/cymatic/bench                  -> table of per-trace speedups
 #   3. Parse and stash row per trace
 # Output: docs/figures/cymatic/cymatic_optimize_<grid>.csv (long form) and a heatmap
 # image per trace into docs/figures/cymatic/cymatic_optimize_<grid>_<trace>.png.
@@ -40,7 +40,7 @@ cat(sprintf("[opt] grid=%d  n in {%s}  m in {%s}  total configs=%d\n",
 repo_root  <- normalizePath(".")
 cym_dir    <- file.path(repo_root, "phase4", "cymatic")
 gen_script <- file.path(cym_dir, "gen_cymatic_data.R")
-bench_bin  <- file.path(cym_dir, "bench_cymatic")
+bench_bin  <- file.path(cym_dir, "bench")
 fig_dir    <- file.path(repo_root, "docs", "figures")
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -50,7 +50,7 @@ stopifnot(file.exists(gen_script), file.exists(bench_bin))
 # Helpers
 # --------------------------------------------------------------------------
 
-# Parse the per-trace table out of bench_cymatic stdout. Each data row looks
+# Parse the per-trace table out of bench stdout. Each data row looks
 # roughly like:
 #   "radial_mid_pi6             1603          0.000         48.2     7.9%   ...   1.00x"
 # We grab the leading non-whitespace token (trace name) and the trailing
@@ -82,7 +82,7 @@ run_one <- function(n, m) {
         cat("  [warn] gen failed for n=", n, " m=", m, "\n", sep="")
         return(NULL)
     }
-    out <- system2("./bench_cymatic", stdout = TRUE, stderr = TRUE)
+    out <- system2("./bench", stdout = TRUE, stderr = TRUE)
     df  <- parse_bench_out(out)
     if (is.null(df)) {
         cat("  [warn] bench parse failed for n=", n, " m=", m, "\n", sep="")

@@ -18,7 +18,7 @@ results/
 │   └── smoke.csv            ── pre-flight smoke run
 │
 └── cymatic/                 ── phase4/cymatic benchmark captures
-    └── grids/               ── per-grid bench_cymatic output
+    └── grids/               ── per-grid bench output
         ├── grid256_results.txt
         ├── grid512_results.txt
         ├── grid1024_results.txt

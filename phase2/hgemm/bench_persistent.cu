@@ -1,12 +1,12 @@
 /*
- * bench_persistent_hgemm.cu — A/B test of hgemm_16warp vs hgemm_16warp_persistent
+ * bench_persistent.cu — A/B test of hgemm_16warp vs hgemm_16warp_persistent
  * across multiple problem sizes. Tests #86's claim that persistent dispatch
  * gives ~1.15x across GEMM kernels.
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_16warp.sm_86.cubin            hgemm_16warp.cu
  *   nvcc --cubin -arch=sm_86 -O2 -o hgemm_16warp_persistent.sm_86.cubin hgemm_16warp_persistent.cu
- *   nvcc -arch=sm_86 -O2 -std=c++17 -o bench_persistent_hgemm bench_persistent_hgemm.cu -lcuda -I../common
+ *   nvcc -arch=sm_86 -O2 -std=c++17 -o bench_persistent bench_persistent.cu -lcuda -I../common
  */
 
 #include <cstdio>

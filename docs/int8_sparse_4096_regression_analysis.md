@@ -88,7 +88,7 @@ cuobjdump -sass igemm_pipelined_cpasync.sm_86.cubin | grep -c 'LDS'
 ```bash
 nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin igemm_sparse_tiled.cu
 cuobjdump -res-usage igemm_sparse_tiled.sm_86.cubin
-ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum ./bench_igemm_sparse 4096 4096 4096
+ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum ./bench_sparse 4096 4096 4096
 ```
 
 ### 4. Grid Size / SM Saturation
@@ -118,17 +118,17 @@ cuobjdump -res-usage igemm_sparse_tiled.sm_86.cubin
 
 # 3. Nsight Compute: local memory (spill)
 ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum \
-    ./bench_igemm_sparse 4096 4096 4096
+    ./bench_sparse 4096 4096 4096
 
 # 4. Nsight Compute: global load efficiency
 ncu --metrics sm__sass_average_data_reuse_per_request_mem_global_op_ld.pct \
     --metrics l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum \
-    ./bench_igemm_sparse 4096 4096 4096
+    ./bench_sparse 4096 4096 4096
 
 # 5. Nsight Compute: instruction mix
 ncu --metrics sm__inst_executed_pipe_tensor_op_hmma.sum \
     --metrics sm__inst_executed_pipe_fp64.avg.pct_of_peak_sustained_elapsed \
-    ./bench_igemm_sparse 4096 4096 4096
+    ./bench_sparse 4096 4096 4096
 ```
 
 ---

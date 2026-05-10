@@ -1,11 +1,11 @@
 /*
- * bench_igemm_sparse.cu — Sparse INT8 GEMM benchmark (BenchDriver refactor)
+ * bench_sparse.cu — Sparse INT8 GEMM benchmark (BenchDriver refactor)
  *
  * Tests igemm_sparse_tiled: 16-warp 128×128, mma.sp.m16n8k32.s32.s8.s8.s32
  *
  * Build:
  *   nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin igemm_sparse_tiled.cu
- *   nvcc -arch=sm_86 -O2 -o bench_igemm_sparse bench_igemm_sparse.cu -lcuda -I../common
+ *   nvcc -arch=sm_86 -O2 -o bench_sparse bench_sparse.cu -lcuda -I../common
  */
 
 #include <cstdio>

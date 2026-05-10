@@ -407,7 +407,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 - `scripts/cymatic/cymatic_analyze.R` — static locality metric (note: predicts
   circular-sweep loss; real bench shows tie/win — metric flaw documented)
 - `phase4/cymatic/gen_cymatic_data.R` — emits `perm.bin` + 15 traces
-- `phase4/cymatic/bench_cymatic.cu` — gather-sum kernel, median + auto-iters
+- `phase4/cymatic/bench.cu` — gather-sum kernel, median + auto-iters
 - `phase4/cymatic/Makefile` + `README.md` + `results/{256,512,1024,2048}.txt`
 - `docs/cymatic_memory_mapping.md` — theory + bench results
 - `docs/figures/cymatic/cymatic_*.png` — visualizations (mode 4,3 and 6,4)

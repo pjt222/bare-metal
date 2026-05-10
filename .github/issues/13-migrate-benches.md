@@ -19,7 +19,7 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `phase2/layernorm/bench.cu`
 - [ ] `phase2/activations/bench.cu`
 - [ ] `phase2/igemm/bench.cu`
-- [ ] `phase2/igemm/bench_igemm_sparse.cu`
+- [ ] `phase2/igemm/bench_sparse.cu`
 - [ ] `phase2/hgemm_sparse/bench.cu`
 
 ### Phase 3

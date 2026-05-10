@@ -23,11 +23,27 @@ if (dir.exists(.WSL_CUDA_LIB) &&
                                 else .WSL_CUDA_LIB)
 }
 
+# Walk up from the script's directory until a repo marker is found
+# (.git or renv.lock). Resilient to subdir relocation (audit Tier 5
+# moved this script into scripts/bench/, so a fixed dirname() count no
+# longer hits the repo root).
 REPO_ROOT <- {
   args_full <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", args_full, value = TRUE)
-  if (length(fa)) normalizePath(dirname(dirname(sub("^--file=", "", fa[1]))))
-  else            normalizePath(getwd())
+  start <- if (length(fa)) normalizePath(dirname(sub("^--file=", "", fa[1])))
+           else            normalizePath(getwd())
+  cur <- start
+  repeat {
+    if (file.exists(file.path(cur, ".git")) ||
+        file.exists(file.path(cur, "renv.lock"))) break
+    parent <- dirname(cur)
+    if (parent == cur) {
+      cur <- start  # never found marker; fall back
+      break
+    }
+    cur <- parent
+  }
+  cur
 }
 BASELINES_PATH    <- file.path(REPO_ROOT, "docs", "baselines.json")
 DEFAULT_TOLERANCE <- 0.10

@@ -1,4 +1,4 @@
-// bench_cymatic.cu
+// bench.cu
 //
 // Measures effective gather bandwidth for two memory layouts of the same
 // data: row-major-inside vs cymatic-permuted.
@@ -20,7 +20,7 @@
 // (warp coalescing, L1/L2 hit rate).
 //
 // Build: see Makefile.
-// Run:   ./bench_cymatic [iters_per_run=200] [warmup=5] [runs=5]
+// Run:   ./bench [iters_per_run=200] [warmup=5] [runs=5]
 
 #include <cuda_runtime.h>
 #include <stdio.h>

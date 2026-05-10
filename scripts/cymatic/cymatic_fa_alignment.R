@@ -3,7 +3,7 @@
 #
 # Sweep cymatic (n, m) modes against Flash Attention block-level access
 # traces. Uses phase4/cymatic/gen_fa_traces.R for trace generation, then
-# the same bench_cymatic harness. Mirrors cymatic_optimize.R but with FA
+# the same bench harness. Mirrors cymatic_optimize.R but with FA
 # traces instead of the synthetic radial/circular set.
 
 suppressMessages({
@@ -32,7 +32,7 @@ cat(sprintf("[fa_align] grid=%d  n in {%s}  m in {%s}  total=%d\n",
 repo_root <- normalizePath(".")
 cym_dir   <- file.path(repo_root, "phase4", "cymatic")
 gen_fa    <- file.path(cym_dir, "gen_fa_traces.R")
-bench_bin <- file.path(cym_dir, "bench_cymatic")
+bench_bin <- file.path(cym_dir, "bench")
 fig_dir   <- file.path(repo_root, "docs", "figures")
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 stopifnot(file.exists(gen_fa), file.exists(bench_bin))
@@ -55,7 +55,7 @@ run_one <- function(n, m) {
     setwd(cym_dir); on.exit(setwd(repo_root), add = TRUE)
     system2("Rscript", c("gen_fa_traces.R", grid_n, n, m),
             stdout = TRUE, stderr = TRUE)
-    out <- system2("./bench_cymatic", stdout = TRUE, stderr = TRUE)
+    out <- system2("./bench", stdout = TRUE, stderr = TRUE)
     df  <- parse_bench_out(out)
     if (!is.null(df)) { df$n <- n; df$m <- m }
     df
