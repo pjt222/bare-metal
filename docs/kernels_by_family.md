@@ -130,7 +130,7 @@ Toy kernels chosen for tooling demonstration, not for performance.
 
 | Path | What it teaches |
 |---|---|
-| `phase1/vector_add.cu` | The whole SASS hand-edit workflow: nvcc → cubin → cuobjdump → cuasmR FADD→FMUL → re-run |
+| `kernels/tutorial/vector_add.cu` | The whole SASS hand-edit workflow: nvcc → cubin → cuobjdump → cuasmR FADD→FMUL → re-run |
 
 ---
 

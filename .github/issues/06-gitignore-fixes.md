@@ -73,7 +73,7 @@ test_mma_sp
 test_inplace_race
 verify_wmma_ab_layout
 verify_wmma_layout
-phase1/host
+kernels/tutorial/host
 
 # CuAssembler working artifacts
 *.cuasm.orig

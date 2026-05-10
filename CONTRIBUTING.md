@@ -69,11 +69,11 @@ The edit pattern is byte-level: read instr_hex / ctrl_hex, modify, write
 back. Example FADD -> FMUL on Phase 1:
 ```r
 library(cuasmR)
-obj <- cuasm_read("phase1/vector_add.sm_86.cubin")
+obj <- cuasm_read("kernels/tutorial/vector_add.sm_86.cubin")
 obj <- cuasm_set(obj, "vector_add", slot = 13,
                  instr_hex = "0x0000000304097220",   # FMUL opcode
                  ctrl_hex  = "0x004fca0000400000")
-cuasm_write(obj, "phase1/vector_add.fmul.cubin")
+cuasm_write(obj, "kernels/tutorial/vector_add.fmul.cubin")
 ```
 
 New opcode encodings come from disassembling a sibling `.cu`. The cuasmR

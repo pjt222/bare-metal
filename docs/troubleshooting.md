@@ -344,7 +344,7 @@ there's a real correctness problem. High `max_rel` alone with small `max_abs` is
 
 ### `make` not available on Windows
 
-The `Makefile` in `phase1/` uses Unix `make`. On Windows, use WSL:
+The `Makefile` in `kernels/tutorial/` uses Unix `make`. On Windows, use WSL:
 ```bash
 wsl -e bash -c 'export PATH=/usr/local/cuda/bin:$PATH && cd /mnt/d/dev/p/bare-metal/phase1 && make all'
 ```

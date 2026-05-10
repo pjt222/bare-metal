@@ -3102,7 +3102,7 @@ Rust functions to PTX through a Pliron MIR / LLVM IR pipeline.
 Question: can we slot it in as a front-end alternative to `nvcc` while
 keeping the cuasmR SASS hand-edit research intact?
 
-Spike kernel: vecadd, matched against `phase1/vector_add.cu` baseline.
+Spike kernel: vecadd, matched against `kernels/tutorial/vector_add.cu` baseline.
 Live install + run on RTX 3070 Ti, sm_86, CUDA 13.2. Full writeup in
 `experiments/rust-experiments/README.md`.
 

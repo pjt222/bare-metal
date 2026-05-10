@@ -108,7 +108,7 @@ CUDA C++ (.cu) -> nvcc -> PTX -> ptxas -> SASS (.cubin) -> cuasmR (R) -> patched
 
 Each phase directory contains kernel `.cu` files, `bench_*.cu` benchmarks, a `Makefile`, and a `README.md` with algorithm walkthrough and results.
 
-- **phase1/** — Vector add "Hello World" (FADD→FMUL hand-edit proof of concept)
+- **kernels/tutorial/** — Vector add "Hello World" (FADD→FMUL hand-edit proof of concept)
 - **phase2/** — ML primitives: `sgemm/`, `hgemm/`, `softmax/`, `layernorm/`, `activations/`
 - **phase3/** — Flash Attention variants: scalar → 4-warp → Br=16 HMMA (19x speedup)
 - **phase4/** — Diffusion UNet: `timestep_emb/`, `groupnorm/`, `conv2d/`, `resblock/`, `cross_attention/`

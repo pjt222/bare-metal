@@ -9,11 +9,11 @@
 #   all       .cu     -> compile + disasm (sets up hand-edit workflow)
 #
 # Usage:
-#   Rscript scripts/build.R compile   phase1/vector_add.cu
-#   Rscript scripts/build.R disasm    phase1/vector_add.sm_86.cubin
-#   Rscript scripts/build.R assemble  phase1/vector_add_modified.cuasm
-#   Rscript scripts/build.R roundtrip phase1/vector_add.cu
-#   Rscript scripts/build.R all       phase1/vector_add.cu
+#   Rscript scripts/build.R compile   kernels/tutorial/vector_add.cu
+#   Rscript scripts/build.R disasm    kernels/tutorial/vector_add.sm_86.cubin
+#   Rscript scripts/build.R assemble  kernels/tutorial/vector_add_modified.cuasm
+#   Rscript scripts/build.R roundtrip kernels/tutorial/vector_add.cu
+#   Rscript scripts/build.R all       kernels/tutorial/vector_add.cu
 #
 # disasm/assemble use the cuasmR R package (R/cuasmR/, install via
 #   Rscript -e 'install.packages("R/cuasmR", repos=NULL, type="source")'

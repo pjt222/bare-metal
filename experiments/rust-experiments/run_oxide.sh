@@ -49,14 +49,14 @@ PTX="$OXIDE/crates/rustc-codegen-cuda/examples/vecadd/vecadd.ptx"
 [ -f "$PTX" ] || { echo "vecadd.ptx not found at $PTX"; exit 1; }
 cp "$PTX" "$SCRIPT_DIR/vecadd_oxide.ptx"
 
-# 4) PTX → SASS via ptxas (matches phase1/2 pipeline)
+# 4) PTX → SASS via ptxas (matches kernels/tutorial/2 pipeline)
 ptxas -arch=sm_86 -O2 "$SCRIPT_DIR/vecadd_oxide.ptx" \
     -o "$SCRIPT_DIR/vecadd_oxide.sm_86.cubin"
 
 # 5) disassemble both for diff
 cuobjdump -sass "$SCRIPT_DIR/vecadd_oxide.sm_86.cubin" \
     > "$SCRIPT_DIR/vecadd_oxide.sm_86.sass"
-cuobjdump -sass "$REPO_ROOT/phase1/vector_add.sm_86.cubin" \
+cuobjdump -sass "$REPO_ROOT/kernels/tutorial/vector_add.sm_86.cubin" \
     > "$SCRIPT_DIR/vecadd_nvcc.sm_86.sass"
 
 # 6) cuasmR roundtrip — must run from REPO_ROOT for renv .Rprofile to load

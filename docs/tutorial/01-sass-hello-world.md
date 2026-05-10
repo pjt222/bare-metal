@@ -134,8 +134,8 @@ pointer = 8 bytes, with alignment padding.
 ## Step 2 — Disassemble for editing
 
 ```bash
-Rscript scripts/build.R disasm phase1/vector_add.sm_86.cubin
-# produces phase1/vector_add.sm_86.cuasm
+Rscript scripts/build.R disasm kernels/tutorial/vector_add.sm_86.cubin
+# produces kernels/tutorial/vector_add.sm_86.cuasm
 ```
 
 The `.cuasm` file is similar to the `cuobjdump` output but includes
@@ -178,8 +178,8 @@ Save as `vector_add.sm_86.modified.cuasm`. That is the entire edit.
 ## Step 4 — Reassemble
 
 ```bash
-Rscript scripts/build.R assemble phase1/vector_add.sm_86.modified.cuasm
-# produces phase1/vector_add.sm_86.modified.reassembled.cubin
+Rscript scripts/build.R assemble kernels/tutorial/vector_add.sm_86.modified.cuasm
+# produces kernels/tutorial/vector_add.sm_86.modified.reassembled.cubin
 ```
 
 CuAssembler regenerates the cubin's SASS section. The encoded
@@ -189,10 +189,10 @@ the instruction word), but the surrounding metadata is unchanged.
 ## Step 5 — Run both
 
 ```bash
-nvcc -arch=sm_86 -o host.exe phase1/host.cu -lcuda
+nvcc -arch=sm_86 -o host.exe kernels/tutorial/host.cu -lcuda
 
-./host.exe phase1/vector_add.sm_86.cubin                       # original — adds
-./host.exe phase1/vector_add.sm_86.modified.reassembled.cubin  # modified — multiplies
+./host.exe kernels/tutorial/vector_add.sm_86.cubin                       # original — adds
+./host.exe kernels/tutorial/vector_add.sm_86.modified.reassembled.cubin  # modified — multiplies
 ```
 
 Expected output:
@@ -245,7 +245,7 @@ repo) that targets specific CUDA versions. If the `roundtrip` step
 fails:
 
 ```bash
-Rscript scripts/build.R roundtrip phase1/vector_add.cu
+Rscript scripts/build.R roundtrip kernels/tutorial/vector_add.cu
 # error: assembled cubin differs from original
 ```
 
@@ -293,31 +293,31 @@ cd /mnt/d/dev/p/bare-metal
 Rscript scripts/verify_setup.R
 
 # Compile
-nvcc --cubin -arch=sm_86 -O1 -o phase1/vector_add.sm_86.cubin phase1/vector_add.cu
+nvcc --cubin -arch=sm_86 -O1 -o kernels/tutorial/vector_add.sm_86.cubin kernels/tutorial/vector_add.cu
 
 # Roundtrip check (must pass before hand-editing)
-Rscript scripts/build.R roundtrip phase1/vector_add.cu
+Rscript scripts/build.R roundtrip kernels/tutorial/vector_add.cu
 
 # Disassemble for editing
-Rscript scripts/build.R disasm phase1/vector_add.sm_86.cubin
+Rscript scripts/build.R disasm kernels/tutorial/vector_add.sm_86.cubin
 
 # Edit the .cuasm: FADD → FMUL on the line after the LDG of input_b
 # (use any text editor)
 
 # Reassemble
-Rscript scripts/build.R assemble phase1/vector_add.sm_86.modified.cuasm
+Rscript scripts/build.R assemble kernels/tutorial/vector_add.sm_86.modified.cuasm
 
 # Compare
-nvcc -arch=sm_86 -o phase1/host.exe phase1/host.cu -lcuda
-./phase1/host.exe phase1/vector_add.sm_86.cubin                        # adds
-./phase1/host.exe phase1/vector_add.sm_86.modified.reassembled.cubin   # multiplies
+nvcc -arch=sm_86 -o kernels/tutorial/host.exe kernels/tutorial/host.cu -lcuda
+./kernels/tutorial/host.exe kernels/tutorial/vector_add.sm_86.cubin                        # adds
+./kernels/tutorial/host.exe kernels/tutorial/vector_add.sm_86.modified.reassembled.cubin   # multiplies
 ```
 
 ## Source files
 
-- `phase1/vector_add.cu` (the 5-line kernel)
-- `phase1/host.cu` (CPU driver, allocates buffers, launches kernel, checks output)
-- `phase1/README.md` (the deeper SASS-level walkthrough this chapter is based on)
+- `kernels/tutorial/vector_add.cu` (the 5-line kernel)
+- `kernels/tutorial/host.cu` (CPU driver, allocates buffers, launches kernel, checks output)
+- `kernels/tutorial/README.md` (the deeper SASS-level walkthrough this chapter is based on)
 - `tools/CuAssembler/` (third-party SASS assembler)
 - `scripts/build.R` (compile / disasm / assemble / roundtrip wrapper)
 

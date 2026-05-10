@@ -71,7 +71,7 @@ Both are byte-level: write a new 64-bit hex string into `instr_hex` or `ctrl_hex
 library(cuasmR)
 
 # 1. Read original cubin
-obj <- cuasm_read("phase1/vector_add.sm_86.cubin")
+obj <- cuasm_read("kernels/tutorial/vector_add.sm_86.cubin")
 
 # 2. Find the FADD slot
 fadd <- subset(cuasm_insns(obj, "vector_add"), grepl("^FADD", text))
@@ -88,10 +88,10 @@ print(fadd)
 obj <- cuasm_set(obj, kernel = "vector_add", slot = 13,
                  instr_hex = "0x0000000304097220",
                  ctrl_hex  = "0x004fca0000400000")
-cuasm_write(obj, "phase1/vector_add.fmul.cubin")
+cuasm_write(obj, "kernels/tutorial/vector_add.fmul.cubin")
 
 # 5. Verify by re-disassembling
-obj2 <- cuasm_read("phase1/vector_add.fmul.cubin")
+obj2 <- cuasm_read("kernels/tutorial/vector_add.fmul.cubin")
 subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 #  kernel  slot address              text         instr_hex            ctrl_hex
 #  vector_add 13   00d0  FMUL R9, R4, R3 0x...4097220   0x004fca0000400000
@@ -109,7 +109,7 @@ subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 
 | target                                                | kernels | insns | layout | roundtrip |
 |---|---:|---:|---|:---:|
-| `phase1/vector_add.sm_86.cubin`                       | 1 |   32  | cuda13 | ✓ |
+| `kernels/tutorial/vector_add.sm_86.cubin`                       | 1 |   32  | cuda13 | ✓ |
 | `phase2/hgemm/hgemm_16warp.sm_86.cubin`               | 1 |  544  | cuda12 | ✓ |
 | `phase2/hgemm/hgemm_16warp_splitk.sm_86.cubin`        | 1 | 1504  | cuda13 | ✓ |
 | `phase3/.../flash_attn_br16_v2_pipeline_pad2.cubin`   | 1 | 1256  | cuda13 | ✓ |
@@ -125,7 +125,7 @@ Rscript -e 'library(testthat); library(cuasmR); test_dir("R/cuasmR/tests/testtha
 ```
 
 Three checks:
-1. Byte-identical roundtrip on `phase1/vector_add`.
+1. Byte-identical roundtrip on `kernels/tutorial/vector_add`.
 2. `e_flags` decoder accepts both legacy and new layouts.
 3. `cuasm_set` patches at most 8 bytes (one 64-bit word) per call.
 
@@ -134,9 +134,9 @@ Three checks:
 `scripts/build.R` uses cuasmR for the `disasm` and `roundtrip` subcommands:
 
 ```bash
-Rscript scripts/build.R compile   phase1/vector_add.cu
-Rscript scripts/build.R disasm    phase1/vector_add.sm_86.cubin
-Rscript scripts/build.R roundtrip phase1/vector_add.cu
+Rscript scripts/build.R compile   kernels/tutorial/vector_add.cu
+Rscript scripts/build.R disasm    kernels/tutorial/vector_add.sm_86.cubin
+Rscript scripts/build.R roundtrip kernels/tutorial/vector_add.cu
 ```
 
 The `assemble` subcommand is a stub — point users at the `cuasm_read → cuasm_set → cuasm_write` R script pattern shown above. Text-to-bytes assembly is intentionally out of scope.

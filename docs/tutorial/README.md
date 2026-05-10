@@ -48,7 +48,7 @@ The chapters can be read in two ways:
 
 Each tutorial cross-references actual files in this repository:
 
-- `phase1/vector_add/` — the SASS hello world
+- `kernels/tutorial/vector_add/` — the SASS hello world
 - `phase2/{sgemm,hgemm,igemm,...}/` — GEMM variants
 - `phase3/flash_attention/` — Flash Attention implementations
 - `phase4/{conv2d,resblock,groupnorm,...}/` — diffusion primitives

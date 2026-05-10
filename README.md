@@ -347,7 +347,7 @@ First-time setup: `Rscript -e 'renv::restore()'`.
 ## Project structure
 
 ```
-phase1/             — Vector add: first SASS hand-edit
+kernels/tutorial/             — Vector add: first SASS hand-edit
 phase2/             — ML primitives
   sgemm/            — naive → tiled → register-blocked
   hgemm/            — basic WMMA → 16-warp 128×128 (31,910 GFLOPS)

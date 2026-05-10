@@ -1,17 +1,17 @@
-# Phase 1 Makefile — vector_add SASS hello world
+# kernels/tutorial Makefile — vector_add SASS hello world
 #
 # Usage:
 #   make cubin        — compile kernel to .cubin
 #   make disasm       — disassemble to .cuasm + .sass
 #   make host         — compile the host driver
-#   make roundtrip    — verify CuAssembler roundtrip is stable
+#   make roundtrip    — verify cuasmR roundtrip is stable
 #   make all          — cubin + disasm + host
 #   make clean        — remove generated files
 
-SM_ARCH  := sm_86
-NVCC     := nvcc
+SM_ARCH    := sm_86
+NVCC       := nvcc
 NVCC_FLAGS := --cubin -arch=$(SM_ARCH) -O1
-PYTHON   := python
+RSCRIPT    := Rscript
 
 KERNEL_SRC  := vector_add.cu
 CUBIN       := vector_add.$(SM_ARCH).cubin
@@ -31,7 +31,7 @@ $(CUBIN): $(KERNEL_SRC)
 	@echo "Cubin: $@"
 
 disasm: $(CUBIN)
-	$(PYTHON) ../scripts/build.py disasm $(CUBIN)
+	$(RSCRIPT) ../../scripts/build.R disasm $(CUBIN)
 
 host: $(HOST_EXE)
 
@@ -40,7 +40,7 @@ $(HOST_EXE): $(HOST_SRC)
 	@echo "Host: $@"
 
 roundtrip: $(CUBIN)
-	$(PYTHON) ../scripts/build.py roundtrip $(KERNEL_SRC)
+	$(RSCRIPT) ../../scripts/build.R roundtrip $(KERNEL_SRC)
 
 clean:
-	del /Q $(CUBIN) $(CUASM) $(SASS) $(HOST_EXE) *.reassembled.cubin *.modified.cubin 2>nul || true
+	rm -f $(CUBIN) $(CUASM) $(SASS) $(HOST_EXE) *.reassembled.cubin *.modified.cubin

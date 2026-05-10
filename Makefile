@@ -32,7 +32,7 @@ KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
 
 # Phase-specific bench executables
-PHASE1_BENCH  :=
+PHASE1_BENCH  :=  # tutorial — no benches, just vector_add hello-world
 PHASE2_BENCH  := $(shell find phase2 -name 'bench.cu' | sed 's/\.cu//')
 PHASE3_BENCH  := $(shell find phase3 -name 'bench*.cu' | sed 's/\.cu//')
 PHASE4_BENCH  := $(shell find phase4 -name 'bench*.cu' | sed 's/\.cu//')
@@ -42,7 +42,8 @@ PHASE5_BENCH  := $(shell find phase5 -name 'bench*.cu' | sed 's/\.cu//')
 # Default target
 # ------------------------------------------------------------------
 .PHONY: all cubins benches phase1 phase2 phase3 phase4 phase5 test clean disasm help \
-        setup verify bench reproduce
+        setup verify bench reproduce \
+        tutorial gemm reductions attention convolution elementwise memory_layout composition
 
 all: cubins benches
 
@@ -75,7 +76,7 @@ phase5/%/bench: phase5/%/bench.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Iphase2/common
 
-phase1/host: phase1/host.cu
+kernels/tutorial/host: kernels/tutorial/host.cu
 	@echo "[HOST]  $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
 
@@ -87,7 +88,7 @@ phase3/flash_attention/bench_%: phase3/flash_attention/bench_%.cu
 # ------------------------------------------------------------------
 # Phase targets
 # ------------------------------------------------------------------
-phase1: phase1/vector_add.$(SM_ARCH).cubin phase1/host
+phase1 tutorial: kernels/tutorial/vector_add.$(SM_ARCH).cubin kernels/tutorial/host
 
 phase2: $(shell find phase2 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM_ARCH).cubin/') $(PHASE2_BENCH)
 
@@ -161,7 +162,7 @@ clean:
 	@find . -path ./tools -prune -o -name '*.sass' -exec rm -f {} +
 	@find . -path ./tools -prune -o -name '*.reassembled.cubin' -exec rm -f {} +
 	@for exe in $(BENCH_EXES); do rm -f $$exe 2>/dev/null || true; done
-	@rm -f phase1/host 2>/dev/null || true
+	@rm -f kernels/tutorial/host 2>/dev/null || true
 	@echo "Done."
 
 # ------------------------------------------------------------------

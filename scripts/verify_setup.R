@@ -166,7 +166,7 @@ main <- function() {
   cat(strrep("=", 60), "\n")
   if (passed == total) {
     cat(sprintf("%s All %d checks passed -- ready for bare-metal GPU work!\n\n", PASS, total))
-    cat("  Next step: read phase1/README.md and run the vector_add hello world\n")
+    cat("  Next step: read kernels/tutorial/README.md and run the vector_add hello world\n")
   } else {
     cat(sprintf("%s %d/%d checks failed -- fix issues above before proceeding\n\n",
                 FAIL, total - passed, total))

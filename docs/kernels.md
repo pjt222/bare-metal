@@ -208,7 +208,7 @@ Phase directories (kernel families):
 
 | Phase   | Path                              | Family                                         |
 |---------|-----------------------------------|------------------------------------------------|
-| 1       | `phase1/`                         | Vector add (SASS hello world, FADD→FMUL)       |
+| 1       | `kernels/tutorial/`                         | Vector add (SASS hello world, FADD→FMUL)       |
 | 2       | `phase2/sgemm/`                   | Naive → tiled → register-blocked SGEMM         |
 | 2       | `phase2/hgemm/`                   | WMMA → 16-warp 128×128 HGEMM                   |
 | 2       | `phase2/hgemm_sparse/`            | 2:4 sparse mma.sp                              |

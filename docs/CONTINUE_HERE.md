@@ -516,7 +516,7 @@ cubin), apply pattern, benchmark.
 Each outline in `docs/tutorial/` is detailed enough to write the full
 chapter. Suggested order: 05 (FA, richest material now) → 02 (GEMM,
 foundational) → 04 (pipelining) → 03 (INT8) → 01 (SASS, partly covered in
-phase1/README.md).
+kernels/tutorial/README.md).
 
 ### D. Cross-attention regime dispatch in production (low effort)
 

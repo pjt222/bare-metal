@@ -14,7 +14,7 @@
  * Build:
  *   nvcc -o host host.cu -lcuda -arch=sm_86
  *
- * Usage (after building phase1/vector_add.cubin):
+ * Usage (after building kernels/tutorial/vector_add.cubin):
  *   host.exe vector_add.sm_86.cubin          <- run original
  *   host.exe vector_add.sm_86.modified.cubin <- run hand-modified SASS
  *
@@ -83,7 +83,8 @@ int main(int argc, char **argv) {
     printf("Compute: sm_%d%d\n\n", compute_major, compute_minor);
 
     CUcontext cu_context;
-    CHECK_CU(cuCtxCreate(&cu_context, 0, cu_device));
+    // CUDA 13.2: cuCtxCreate gained a CUctxCreateParams pointer (NULL = defaults).
+    CHECK_CU(cuCtxCreate(&cu_context, NULL, 0, cu_device));
 
     // --- Load the cubin directly ---
     CUmodule cu_module;
