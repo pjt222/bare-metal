@@ -12,11 +12,11 @@
 # Usage:
 #   Rscript gen_cymatic_data.R [grid_n=1024] [n=6] [m=4] [n2=0] [m2=0] [alpha2=0]
 #
-# Run from phase4/cymatic/. Sources ../../scripts/cymatic_mapping.R and
-# ../../scripts/cymatic_analyze.R for the field math and trace generators.
+# Run from phase4/cymatic/. Sources ../../scripts/cymatic/cymatic_mapping.R and
+# ../../scripts/cymatic/cymatic_analyze.R for the field math and trace generators.
 
-source("../../scripts/cymatic_mapping.R")
-source("../../scripts/cymatic_analyze.R")
+source("../../scripts/cymatic/cymatic_mapping.R")
+source("../../scripts/cymatic/cymatic_analyze.R")
 
 args <- commandArgs(trailingOnly = TRUE)
 grid_n <- if (length(args) >= 1) as.integer(args[1]) else 1024L

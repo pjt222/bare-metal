@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # kernel_dashboard.R — Combined analysis dashboard for a kernel configuration
 # Runs occupancy, roofline, pipeline balance, and smem layout analysis in one shot.
-# Usage: Rscript scripts/kernel_dashboard.R <M> <N> <K> <BM> <BN> <BK> <warps> <mma_per_tile> [kernel_type]
+# Usage: Rscript scripts/model/kernel_dashboard.R <M> <N> <K> <BM> <BN> <BK> <warps> <mma_per_tile> [kernel_type]
 
 cat("╔════════════════════════════════════════════════════════════════╗\n")
 cat("║         GA104 Kernel Configuration Dashboard                   ║\n")
@@ -17,7 +17,7 @@ if (length(args) >= 8) {
 } else {
   # Default: current sparse INT8 config
   cat("Using defaults (sparse INT8 GEMM 4096³, BM=128 BN=128 BK=64 warps=16):\n")
-  cat("Usage: Rscript scripts/kernel_dashboard.R <M> <N> <K> <BM> <BN> <BK> <warps> <mma_per_tile> [kernel_type]\n\n")
+  cat("Usage: Rscript scripts/model/kernel_dashboard.R <M> <N> <K> <BM> <BN> <BK> <warps> <mma_per_tile> [kernel_type]\n\n")
   M <- 4096; N <- 4096; K <- 4096
   BM <- 128; BN <- 128; BK <- 64; warps <- 16; mma_per_tile <- 4
   kernel <- "sparse_gemm"

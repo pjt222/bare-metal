@@ -4,8 +4,8 @@
 # Requires: GPU performance counters enabled (see ncu_profile.R header).
 # Output:   results/ncu/all.csv + per-row markdown to stdout.
 #
-# Usage:    bash scripts/ncu_profile_all.sh
-#           bash scripts/ncu_profile_all.sh --tag fa_only   # subset
+# Usage:    bash scripts/profile/ncu_profile_all.sh
+#           bash scripts/profile/ncu_profile_all.sh --tag fa_only   # subset
 
 set -euo pipefail
 export PATH=/usr/local/cuda/bin:$PATH
@@ -51,7 +51,7 @@ for row in "${ROWS[@]}"; do
   fi
   echo "=== $label ==="
   pushd "$ROOT/$wd" >/dev/null
-  if ! Rscript "$ROOT/scripts/ncu_profile.R" \
+  if ! Rscript "$ROOT/scripts/profile/ncu_profile.R" \
         --kernel "$kernel" \
         --bench "$bench_abs" \
         --args "$args" \

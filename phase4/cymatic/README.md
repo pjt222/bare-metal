@@ -10,7 +10,7 @@
 Two memory layouts of the same logical data:
 
 - **Row-major**: cells inside the disc indexed in raster order (i ascending, j ascending).
-- **Cymatic**: cells permuted to the layout produced by `scripts/cymatic_mapping.R`,
+- **Cymatic**: cells permuted to the layout produced by `scripts/cymatic/cymatic_mapping.R`,
   ordered by (centroid_r, centroid_θ) over Chladni-mode antinode regions.
 
 Both layouts hold the same 32-bit float values; only the physical positions
@@ -91,7 +91,7 @@ For a generic workload, it's a wash.
 
 ## Why circular sweeps win (the R analysis was wrong)
 
-The R locality analysis (`scripts/cymatic_analyze.R`) predicted that
+The R locality analysis (`scripts/cymatic/cymatic_analyze.R`) predicted that
 circular sweeps at fixed r should hurt cymatic locality because
 "adjacent θ → different angular sectors → address jumps". The benchmark
 contradicts this prediction: circular sweeps are tied or favor cymatic.
@@ -141,7 +141,7 @@ L2 and post-warmup all accesses are L2 hits regardless of layout. The
 ## Files
 
 - `gen_cymatic_data.R` — generates `perm.bin` + `traces.bin` from R math.
-  Sources `../../scripts/cymatic_mapping.R` and `cymatic_analyze.R`.
+  Sources `../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
 - `bench_cymatic.cu` — CUDA gather bench with median + scaled iters.
 - `Makefile` — `make`, `make gen`, `make run`, `make sweep`, `make clean`.
 - `results/grid{256,512,1024,2048}_results.txt` — captured benchmark output.
@@ -188,6 +188,6 @@ proves the layout is conditional, not universal.
 ## Cross-references
 
 - `docs/cymatic_memory_mapping.md` — full theory and R-side analysis
-- `scripts/cymatic_mapping.R` — region computation
-- `scripts/cymatic_analyze.R` — static locality metric (note: predicts
+- `scripts/cymatic/cymatic_mapping.R` — region computation
+- `scripts/cymatic/cymatic_analyze.R` — static locality metric (note: predicts
   some patterns wrong vs measured GPU bench, see "circular sweeps" above)

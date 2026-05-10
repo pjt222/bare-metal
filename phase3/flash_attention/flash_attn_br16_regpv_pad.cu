@@ -24,7 +24,7 @@
  *     smem_work [Br_BLOCK=64 × STRIDE_W=68]  FP32 = 17408 B
  *     total: 35840 B (35.0 KB) — 2 blocks/SM (vs 3 unpadded)
  *
- *   Bank conflict status (from scripts/ldmatrix_conflicts.R):
+ *   Bank conflict status (from scripts/audit/ldmatrix_conflicts.R):
  *     K/V (stride 144 B): gcd(36,32)=4 → 8/8 distinct banks ✓
  *     W   (stride 272 B): gcd(68,32)=4 → 8/8 distinct banks ✓ (FP16 overlay 272/2=136 halfs)
  *
@@ -41,7 +41,7 @@
  *
  *   Kept as counter-example. The path forward is XOR swizzle (no smem cost)
  *   or structural register-pressure reduction to enable padding without
- *   occupancy regression. See R helper scripts/ldmatrix_conflicts.R
+ *   occupancy regression. See R helper scripts/audit/ldmatrix_conflicts.R
  *   (pad_tradeoff function) for the calibrated tradeoff model.
  *
  * Build (3 variants):

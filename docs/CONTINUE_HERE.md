@@ -31,8 +31,8 @@
 >   reveals hgemm_16warp_epi at 75.9% rate, fix gives 1.41×
 >
 > **NCU harness shipped**:
-> - `scripts/ncu_profile.R` (267 lines, single kernel + `--dry-run`)
-> - `scripts/ncu_profile_all.sh` (sweep across phase 2-4)
+> - `scripts/profile/ncu_profile.R` (267 lines, single kernel + `--dry-run`)
+> - `scripts/profile/ncu_profile_all.sh` (sweep across phase 2-4)
 > - `docs/ncu_metrics.md` (full per-kernel diagnosis tables)
 > - `results/ncu/all.csv` (raw output, 10 kernel configs × 15 metrics)
 >
@@ -115,7 +115,7 @@ Empirical result: padding lost 20-32% across all sizes on the
 `flash_attn_br16_regpv` kernel.
 
 **Predictor**: `pad_tradeoff(conflict_factor, ldsm_per_iter, hmma_per_iter,
-warps_no_pad, warps_pad)` in `scripts/ldmatrix_conflicts.R`. Calibrated
+warps_no_pad, warps_pad)` in `scripts/audit/ldmatrix_conflicts.R`. Calibrated
 against measurement: predicts 0.86× when measured was 0.81×.
 
 **Lesson**: when smem padding fails due to occupancy regression, consider
@@ -261,7 +261,7 @@ Only placeholder issue remains. Active CUDA optimization queue: empty.
 
 ### Five steps executed this session (commits ef77e0d, 37bc94a, f2100ac)
 
-1. **NCU diagnostics harness (#89)** — `scripts/ncu_profile.R`,
+1. **NCU diagnostics harness (#89)** — `scripts/profile/ncu_profile.R`,
    `ncu_profile_all.sh`, `docs/ncu_metrics.md`. 15 metrics, validated
    against `ncu --query-metrics --chip ga104`. Now in routine use.
 
@@ -400,11 +400,11 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 
 **Speculative layout study — fully tested on GPU**
 
-- `scripts/cymatic_mapping.R` — Bessel zeros, Chladni mode field, region
+- `scripts/cymatic/cymatic_mapping.R` — Bessel zeros, Chladni mode field, region
   flood fill (O(N²) preallocated queue), radial-then-angular ordering,
   linear address assignment
-- `scripts/cymatic_visualize.R` — 4-panel ggplot output
-- `scripts/cymatic_analyze.R` — static locality metric (note: predicts
+- `scripts/cymatic/cymatic_visualize.R` — 4-panel ggplot output
+- `scripts/cymatic/cymatic_analyze.R` — static locality metric (note: predicts
   circular-sweep loss; real bench shows tie/win — metric flaw documented)
 - `phase4/cymatic/gen_cymatic_data.R` — emits `perm.bin` + 15 traces
 - `phase4/cymatic/bench_cymatic.cu` — gather-sum kernel, median + auto-iters
@@ -477,9 +477,9 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 
 ### R Helper Scripts
 
-- `scripts/ldmatrix_conflicts.R` — **NEW**: bank-conflict + occupancy tradeoff calculator
+- `scripts/audit/ldmatrix_conflicts.R` — **NEW**: bank-conflict + occupancy tradeoff calculator
   - `ldmatrix_x4_conflict()`, `find_min_pad()`, `flash_attn_smem()`, `pad_tradeoff()`
-  - CLI: `Rscript scripts/ldmatrix_conflicts.R --flash-attn`
+  - CLI: `Rscript scripts/audit/ldmatrix_conflicts.R --flash-attn`
 - (8 prior scripts, see "R Helper Suite" archive section below)
 
 ---
@@ -544,15 +544,15 @@ Tests show 1.43-1.62× win above this threshold, 0.81× loss below.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/analyze_smem_layout.R` | INT8-sparse-GEMM bank conflict analyzer |
-| `scripts/find_optimal_smem_layout.R` | Optimal INT8 B-smear layout |
-| `scripts/track_prmt_reduction.R` | Cubin PRMT/LDS/MMA counter |
-| `scripts/occupancy_calc.R` | GA104 occupancy calculator |
-| `scripts/perf_model_panel.R` | Roofline + memory ceiling analysis |
-| `scripts/config_optimizer.R` | Grid-search BM/BN/BK/warp configs |
-| `scripts/pipeline_balance.R` | Compute-vs-load overlap model |
-| `scripts/kernel_dashboard.R` | Combined dashboard |
-| `scripts/ldmatrix_conflicts.R` | **NEW** generic ldmatrix.x4 + FA smem + pad-vs-occupancy tradeoff |
+| `scripts/model/analyze_smem_layout.R` | INT8-sparse-GEMM bank conflict analyzer |
+| `scripts/model/find_optimal_smem_layout.R` | Optimal INT8 B-smear layout |
+| `scripts/audit/track_prmt_reduction.R` | Cubin PRMT/LDS/MMA counter |
+| `scripts/model/occupancy_calc.R` | GA104 occupancy calculator |
+| `scripts/model/perf_model_panel.R` | Roofline + memory ceiling analysis |
+| `scripts/model/config_optimizer.R` | Grid-search BM/BN/BK/warp configs |
+| `scripts/model/pipeline_balance.R` | Compute-vs-load overlap model |
+| `scripts/model/kernel_dashboard.R` | Combined dashboard |
+| `scripts/audit/ldmatrix_conflicts.R` | **NEW** generic ldmatrix.x4 + FA smem + pad-vs-occupancy tradeoff |
 
 ## Key Findings (legacy, still valid)
 

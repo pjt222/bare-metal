@@ -11,7 +11,7 @@
 #   16-byte aligned leading dimensions (8-half multiple), which forces
 #   stride/4 to be even (multiple of 4). For WMMA, use XOR swizzle instead.
 #
-# Usage: Rscript scripts/analyze_smem_layout.R [BK] [BN] [pattern]
+# Usage: Rscript scripts/model/analyze_smem_layout.R [BK] [BN] [pattern]
 #   pattern: "col_major" | "row_major" | "swizzle" | "kgroup_n"
 
 cat("=== Shared Memory Bank Conflict Analyzer (sm_86) ===\n\n")

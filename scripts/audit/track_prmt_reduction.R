@@ -2,7 +2,7 @@
 # track_prmt_reduction.R — Track PRMT reduction progress for issue #66
 #
 # Run after building cubin:
-#   Rscript scripts/track_prmt_reduction.R phase2/igemm/igemm_sparse_tiled.sm_86.cubin
+#   Rscript scripts/audit/track_prmt_reduction.R phase2/igemm/igemm_sparse_tiled.sm_86.cubin
 
 cat("=== PRMT Reduction Tracker (Issue #66) ===\n\n")
 

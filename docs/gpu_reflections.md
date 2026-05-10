@@ -994,7 +994,7 @@ the highest occupancy among the FA variants on GA104. Hypothesis: pad
 K/V tile (+8 halfs → stride 144 B) and `smem_work` (+4 floats → stride 272 B)
 to break 8-way ldmatrix.x4 bank conflicts and gain throughput.
 
-**Bank conflict math** (encoded in `scripts/ldmatrix_conflicts.R`):
+**Bank conflict math** (encoded in `scripts/audit/ldmatrix_conflicts.R`):
 ldmatrix.x4 reads 8 row addresses; for 32 banks of 4 bytes, bank conflicts
 occur when `gcd(stride_bytes / 4, 32) > 4`. Equivalently `stride_bytes mod 32 ≠ 0`
 clears all 8 rows. Stride 128 B (FP16 [64]) and 256 B (FP32 [64]) both fail.
@@ -1333,7 +1333,7 @@ the meaningful measurement.
 
 ### Insight 3: Static R metric was wrong about circular sweeps
 
-The R locality metric (`scripts/cymatic_analyze.R`) predicted circular
+The R locality metric (`scripts/cymatic/cymatic_analyze.R`) predicted circular
 sweeps at fixed r should hurt cymatic ("adjacent θ → different angular
 sectors → address jumps"). The CUDA bench measured the opposite: circular
 sweeps tie or favor cymatic.
@@ -1413,8 +1413,8 @@ non-bottleneck for the b=8/h=8/seq=1024 shape.
 
 ### What I measured
 
-`scripts/ncu_profile_all.sh` ran 10 kernel configs with 15 metrics each
-(`launch-skip 5 --launch-count 1`, see `scripts/ncu_profile.py`):
+`scripts/profile/ncu_profile_all.sh` ran 10 kernel configs with 15 metrics each
+(`launch-skip 5 --launch-count 1`, see `scripts/profile/ncu_profile.R`):
 occupancy, Tensor Core util, L1/L2 hit rates, DRAM bandwidth, coalescing
 quality, and 8 stall-reason histograms (per-issue cycles).
 
@@ -1545,8 +1545,8 @@ NVIDIA Control Panel → Developer Settings → Manage GPU Performance Counters
 → "Allow access to all users". After reboot, counters opened to the
 WSL-side `ncu` binary.
 
-Harness: `scripts/ncu_profile.py` (single kernel) +
-`scripts/ncu_profile_all.sh` (sweep). Validation: all 15 metric names
+Harness: `scripts/profile/ncu_profile.R` (single kernel) +
+`scripts/profile/ncu_profile_all.sh` (sweep). Validation: all 15 metric names
 were checked against `ncu --query-metrics --chip ga104` before the first
 run, and the parser was tested on synthetic CSV.
 
@@ -1564,7 +1564,7 @@ Reasoning gave us "HMMA-bound"; counters say "smem-bound". Both can be
 true simultaneously, but the measured ratio is **smem stalls dominate
 HMMA stalls 13×**. Not close.
 
-**Files**: `scripts/ncu_profile.py`, `scripts/ncu_profile_all.sh`,
+**Files**: `scripts/profile/ncu_profile.R`, `scripts/profile/ncu_profile_all.sh`,
 `docs/ncu_metrics.md`, `results/ncu/all.csv`.
 
 ---
@@ -2076,7 +2076,7 @@ under one SASS instruction.
 
 ### Distribution
 
-NCU/cuobjdump scan via `scripts/sass_histogram.R` over all `.sm_86.cubin`
+NCU/cuobjdump scan via `scripts/audit/sass_histogram.R` over all `.sm_86.cubin`
 in phase1-phase4 (excluding `test_/debug` paths):
 
 | quantile | useful_pct |
@@ -2151,7 +2151,7 @@ rewrites.
 
 ### Files
 
-- `scripts/sass_histogram.R` — scanner (replaces deleted Python original)
+- `scripts/audit/sass_histogram.R` — scanner (replaces deleted Python original)
 - `docs/sass_histogram.csv` — full per-kernel data
 - `docs/sass_histogram.md`  — Markdown table sorted by useful_pct
 - `docs/figures/sass_histogram.png` — top-40 stacked bar visualization
@@ -2164,7 +2164,7 @@ sum of (HMMA + IMMA + FFMA + FMUL + FADD) over total. The figure groups
 the 25 categories into 9 visual families. Re-run with:
 
 ```
-Rscript scripts/sass_histogram.R --quiet
+Rscript scripts/audit/sass_histogram.R --quiet
 ```
 
 ---
@@ -2259,9 +2259,9 @@ in some regimes, just less than previously thought.
 
 ### Files
 
-- `scripts/roofline_measured.R` — generates this analysis from
+- `scripts/profile/roofline_measured.R` — generates this analysis from
   `results/ncu/all.csv`
-- `scripts/ncu_profile.R` — extended in this commit with
+- `scripts/profile/ncu_profile.R` — extended in this commit with
   `dram_{read,write}_bytes`, `l2_bytes`, `duration_ns`, `hmma_count`,
   `tensor_count`, `alu_count`
 - `docs/figures/roofline_measured.png` — the figure
@@ -2270,8 +2270,8 @@ in some regimes, just less than previously thought.
 ### Re-run
 
 ```
-bash scripts/ncu_profile_all.sh    # refresh results/ncu/all.csv
-Rscript scripts/roofline_measured.R
+bash scripts/profile/ncu_profile_all.sh    # refresh results/ncu/all.csv
+Rscript scripts/profile/roofline_measured.R
 ```
 
 ---
@@ -2346,7 +2346,7 @@ audit:
 
 ### Tooling
 
-- `scripts/reg_audit.R` — the audit (256 lines)
+- `scripts/audit/reg_audit.R` — the audit (256 lines)
 - `docs/register_audit.csv` — full per-kernel data
 - `docs/register_audit.md` — Markdown report
 
@@ -2359,7 +2359,7 @@ the remaining 36 didn't have `__launch_bounds__` (default 1024).
 ### Re-run
 
 ```
-Rscript scripts/reg_audit.R
+Rscript scripts/audit/reg_audit.R
 ```
 
 ---
@@ -2746,7 +2746,7 @@ needs.
 
 ### What was tried
 
-`scripts/handtune_imma_s04.R` (cuasmR-based) walks each IGEMM cubin,
+`scripts/bench/handtune_imma_s04.R` (cuasmR-based) walks each IGEMM cubin,
 finds every IMMA whose stall field (bits 40:43 of the 64-bit control
 word) equals `from_stall`, rewrites to `to_stall`, and writes a
 patched cubin alongside the original.
@@ -2829,9 +2829,9 @@ register-port contention lives.
 
 ### Files
 
-- `scripts/handtune_imma_s04.R` -- cuasmR-driven patcher (S08→S04 and
+- `scripts/bench/handtune_imma_s04.R` -- cuasmR-driven patcher (S08→S04 and
   S04→S02 modes)
-- `scripts/bench_imma_s04.R`, `scripts/bench_imma_s02.R` -- A/B bench
+- `scripts/bench/bench_imma_s04.R`, `scripts/bench/bench_imma_s02.R` -- A/B bench
   driver
 - `phase2/igemm/*.imma_s04.sm_86.cubin` -- patched cubins (kept for
   reference, not used in any active bench)
@@ -2850,7 +2850,7 @@ m=4), geomean 1.099× across 15 traces.
 
 ### Methodology
 
-`scripts/cymatic_optimize.R` drives the sweep:
+`scripts/cymatic/cymatic_optimize.R` drives the sweep:
 
   1. For each `(n, m)`: regenerate `phase4/cymatic/perm.bin` +
      `traces.bin` via `gen_cymatic_data.R GRID n m`.
@@ -2861,7 +2861,7 @@ m=4), geomean 1.099× across 15 traces.
 
 54 modes × ~50 s/mode ≈ 46 min wall clock on this GPU. Output:
 `docs/figures/cymatic_optimize_2048.csv` (810 rows). Summary +
-heatmaps via `scripts/cymatic_optimize_summary.R`.
+heatmaps via `scripts/cymatic/cymatic_optimize_summary.R`.
 
 ### Per-trace best modes
 
@@ -2944,8 +2944,8 @@ measure". The framework for that picking lives in
 
 ### Files
 
-- `scripts/cymatic_optimize.R`         — sweep driver (parameterizable)
-- `scripts/cymatic_optimize_summary.R` — post-process + plots
+- `scripts/cymatic/cymatic_optimize.R`         — sweep driver (parameterizable)
+- `scripts/cymatic/cymatic_optimize_summary.R` — post-process + plots
 - `docs/figures/cymatic_optimize_2048.csv`         — long-form data
 - `docs/figures/cymatic_optimize_2048_summary.csv` — best per trace
 - `docs/figures/cymatic_optimize_2048_facet.png`   — 15-trace heatmap
@@ -2987,7 +2987,7 @@ per-element access). At seq=1024 with Br=16 Bc=64 D=64 → trace length
 = 64 × 16 × 4096 = 4,194,304 logical visits → 1,346,688 in-disc cells
 gathered after disc-mask filter.
 
-`scripts/cymatic_fa_alignment.R` runs the same 15-mode coarse sweep
+`scripts/cymatic/cymatic_fa_alignment.R` runs the same 15-mode coarse sweep
 ((n ∈ {3,5,6,7,9}) × (m ∈ {2,4,6})) used for the synthetic traces in
 Obs II.
 
@@ -3090,7 +3090,7 @@ sparse + non-cp.async workloads emerge.
 ### Files
 
 - `phase4/cymatic/gen_fa_traces.R`        — FA-flavored trace builder
-- `scripts/cymatic_fa_alignment.R`        — sweep driver (step 1)
+- `scripts/cymatic/cymatic_fa_alignment.R`        — sweep driver (step 1)
 - `docs/figures/cymatic_fa_alignment_2048.csv`        — long-form data
 - `docs/figures/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
 

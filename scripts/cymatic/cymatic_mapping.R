@@ -25,9 +25,9 @@
 #   - region table: region_id, cell_count, centroid_r, centroid_theta, area_fraction
 #
 # Usage:
-#   Rscript scripts/cymatic_mapping.R [grid_n=128] [n=4] [m=3] [n2=0] [m2=0] [alpha=0]
-# Example single mode (4, 3):  Rscript scripts/cymatic_mapping.R 128 4 3
-# Example mixed (4,3)+0.6*(2,5): Rscript scripts/cymatic_mapping.R 128 4 3 2 5 0.6
+#   Rscript scripts/cymatic/cymatic_mapping.R [grid_n=128] [n=4] [m=3] [n2=0] [m2=0] [alpha=0]
+# Example single mode (4, 3):  Rscript scripts/cymatic/cymatic_mapping.R 128 4 3
+# Example mixed (4,3)+0.6*(2,5): Rscript scripts/cymatic/cymatic_mapping.R 128 4 3 2 5 0.6
 
 # ---- Bessel zeros ----------------------------------------------------------
 

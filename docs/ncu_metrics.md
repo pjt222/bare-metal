@@ -1,7 +1,7 @@
 # Measured NCU Metrics — per-kernel cache + stall breakdown
 
 > **Status**: first-pass measurement complete (2026-05-08).
-> Source CSV: `results/ncu/all.csv`. Harness: `scripts/ncu_profile_all.sh`.
+> Source CSV: `results/ncu/all.csv`. Harness: `scripts/profile/ncu_profile_all.sh`.
 > Re-run after any kernel change.
 >
 > Headline finding: **Flash Attention is smem-traffic-bound, not
@@ -224,7 +224,7 @@ After NCU:
 
 ## Files
 
-- `scripts/ncu_profile.R` — single-kernel wrapper, supports `--dry-run`
-- `scripts/ncu_profile_all.sh` — sweep across canonical kernels
+- `scripts/profile/ncu_profile.R` — single-kernel wrapper, supports `--dry-run`
+- `scripts/profile/ncu_profile_all.sh` — sweep across canonical kernels
 - `results/ncu/all.csv` — raw measurement output
 - `results/ncu/smoke.csv` — single-kernel smoke test (FA v2 pipeline only)

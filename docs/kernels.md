@@ -144,7 +144,7 @@ Figure: [`figures/roofline_measured.png`](figures/roofline_measured.png).
 
 ## Regression baselines (6 anchors)
 
-Locked best-of-3 timings. `scripts/bench_regress.R` fails on >10%
+Locked best-of-3 timings. `scripts/bench/bench_regress.R` fails on >10%
 drop. Source: [`baselines.json`](baselines.json).
 
 | Kernel                              | Size               | ms     | GFLOPS / TOPS |
@@ -225,12 +225,12 @@ All comparison tables are regenerable from cubins + NCU runs:
 
 | Run                                      | Updates                                          |
 |------------------------------------------|--------------------------------------------------|
-| `Rscript scripts/sass_histogram.R`       | `sass_histogram.{md,csv}` + figure (103 kernels) |
+| `Rscript scripts/audit/sass_histogram.R`       | `sass_histogram.{md,csv}` + figure (103 kernels) |
 | `Rscript scripts/register_audit.R`       | `register_audit.{md,csv}` (103 kernels)          |
-| `Rscript scripts/roofline_measured.R`    | `roofline_measured.md` + figure (NCU-profiled)   |
-| `Rscript scripts/bench_regress.R`        | Pass/fail vs `baselines.json`                    |
-| `Rscript scripts/bench_flash_all.R`      | FA-variant comparison table                      |
-| `Rscript scripts/generate_readme_figures.R` | Top-level README figures                      |
+| `Rscript scripts/profile/roofline_measured.R`    | `roofline_measured.md` + figure (NCU-profiled)   |
+| `Rscript scripts/bench/bench_regress.R`        | Pass/fail vs `baselines.json`                    |
+| `Rscript scripts/bench/bench_flash_all.R`      | FA-variant comparison table                      |
+| `Rscript scripts/audit/generate_readme_figures.R` | Top-level README figures                      |
 
 This index page is hand-curated, not auto-generated. Update it when
 adding a new kernel family, observation, or detail-doc.

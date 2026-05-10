@@ -6,9 +6,9 @@
 # producing a comparison table.
 #
 # Usage:
-#   Rscript scripts/bench_flash_all.R                    # default 1024 8 8
-#   Rscript scripts/bench_flash_all.R 1024 8 8
-#   Rscript scripts/bench_flash_all.R --build 1024 8 8
+#   Rscript scripts/bench/bench_flash_all.R                    # default 1024 8 8
+#   Rscript scripts/bench/bench_flash_all.R 1024 8 8
+#   Rscript scripts/bench/bench_flash_all.R --build 1024 8 8
 
 # (uses base R only — no library() loads needed)
 

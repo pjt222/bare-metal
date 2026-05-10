@@ -2,7 +2,7 @@
 # ncu_profile.R - Wrap `ncu` for one kernel + bench, emit CSV + markdown row.
 #
 # Usage:
-#   Rscript scripts/ncu_profile.R \
+#   Rscript scripts/profile/ncu_profile.R \
 #       --kernel flash_attn_br16_v2_pipeline \
 #       --bench phase3/flash_attention/bench_v2_variants \
 #       --args "1024 8 8" \
@@ -123,7 +123,7 @@ parse_args <- function(argv) {
     else if (a == "--out")           { defaults$out          <- take_val();        i <- i + 2 }
     else if (a == "--dry-run")       { defaults$dry_run      <- TRUE;              i <- i + 1 }
     else if (a %in% c("-h", "--help")) {
-      cat("Usage: Rscript scripts/ncu_profile.R --kernel KNAME --bench PATH",
+      cat("Usage: Rscript scripts/profile/ncu_profile.R --kernel KNAME --bench PATH",
           "                                     --label LABEL [--args 'ARGS']",
           "                                     [--launch-skip N] [--launch-count M]",
           "                                     [--out PATH] [--dry-run]",

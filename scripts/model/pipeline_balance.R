@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # pipeline_balance.R — Estimate pipeline balance: load-vs-compute overlap for GEMM kernels
 # Models cp.async effectiveness, determines if kernel is load-bound or compute-bound.
-# Usage: Rscript scripts/pipeline_balance.R <BM> <BN> <BK> <warps> <mma_per_tile>
+# Usage: Rscript scripts/model/pipeline_balance.R <BM> <BN> <BK> <warps> <mma_per_tile>
 #   mma_per_tile: number of mma ops per k-step per warp (e.g. 4 for 2x2 tiles)
 
 cat("=== Pipeline Balance Model (sm_86) ===\n\n")

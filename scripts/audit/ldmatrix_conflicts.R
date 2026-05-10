@@ -2,13 +2,13 @@
 # ldmatrix_conflicts.R — Generic ldmatrix.x4 bank conflict calculator + Flash Attention smem helper
 #
 # Source from other scripts:
-#   source("scripts/ldmatrix_conflicts.R")
+#   source("scripts/audit/ldmatrix_conflicts.R")
 #
 # CLI usage:
-#   Rscript scripts/ldmatrix_conflicts.R <row_elems> <elem_bytes> [num_rows]
-#   Rscript scripts/ldmatrix_conflicts.R 64 2 8        # FP16 [*][64], 8-row ldmatrix
-#   Rscript scripts/ldmatrix_conflicts.R 64 4 8        # FP32 [*][64] (overlay analysis)
-#   Rscript scripts/ldmatrix_conflicts.R --flash-attn  # Flash Attention preset analysis
+#   Rscript scripts/audit/ldmatrix_conflicts.R <row_elems> <elem_bytes> [num_rows]
+#   Rscript scripts/audit/ldmatrix_conflicts.R 64 2 8        # FP16 [*][64], 8-row ldmatrix
+#   Rscript scripts/audit/ldmatrix_conflicts.R 64 4 8        # FP32 [*][64] (overlay analysis)
+#   Rscript scripts/audit/ldmatrix_conflicts.R --flash-attn  # Flash Attention preset analysis
 #
 # === Background ===
 # ldmatrix.sync.aligned.m8n8.x4.shared.b16 issues 8 row addresses (one per
@@ -235,8 +235,8 @@ if (!interactive() && sys.nframe() == 0L) {
 
   if (length(args) < 2) {
     cat("Usage:\n")
-    cat("  Rscript scripts/ldmatrix_conflicts.R <row_elems> <elem_bytes> [num_rows]\n")
-    cat("  Rscript scripts/ldmatrix_conflicts.R --flash-attn\n")
+    cat("  Rscript scripts/audit/ldmatrix_conflicts.R <row_elems> <elem_bytes> [num_rows]\n")
+    cat("  Rscript scripts/audit/ldmatrix_conflicts.R --flash-attn\n")
     quit("no", status = 1)
   }
 

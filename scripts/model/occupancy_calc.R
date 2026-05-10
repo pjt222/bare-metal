@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # occupancy_calc.R — GA104 sm_86 occupancy calculator
 # Given block params, compute theoretical occupancy and identify bottlenecks.
-# Usage: Rscript scripts/occupancy_calc.R <threads_per_block> <regs_per_thread> <smem_per_block_kb>
-#        or interactive: Rscript scripts/occupancy_calc.R
+# Usage: Rscript scripts/model/occupancy_calc.R <threads_per_block> <regs_per_thread> <smem_per_block_kb>
+#        or interactive: Rscript scripts/model/occupancy_calc.R
 
 cat("=== GA104 (sm_86) Occupancy Calculator ===\n\n")
 

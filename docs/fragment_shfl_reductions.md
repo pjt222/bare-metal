@@ -236,4 +236,4 @@ Three concurrent effects:
 - `docs/gpu_reflections.md` Observation O (negative padding result) and P
   (positive nosmem result)
 - `tests/flash_attention/verify_wmma_layout.cu` (fragment-layout probe)
-- `scripts/ldmatrix_conflicts.R` (smem budget + occupancy calculator)
+- `scripts/audit/ldmatrix_conflicts.R` (smem budget + occupancy calculator)

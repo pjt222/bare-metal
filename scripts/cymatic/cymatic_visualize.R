@@ -6,7 +6,7 @@
 # address heatmap (rainbow gradient over disc).
 #
 # Usage:
-#   Rscript scripts/cymatic_visualize.R cymatic_mapping.rds [out_prefix]
+#   Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds [out_prefix]
 
 suppressPackageStartupMessages({
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
@@ -16,7 +16,7 @@ suppressPackageStartupMessages({
 })
 
 # Source mapping helpers; assume cwd is project root or scripts/.
-for (p in c("scripts/cymatic_mapping.R", "cymatic_mapping.R",
+for (p in c("scripts/cymatic/cymatic_mapping.R", "cymatic_mapping.R",
             "./cymatic_mapping.R")) {
   if (file.exists(p)) { source(p); break }
 }
@@ -123,7 +123,7 @@ if (.is_main_viz()) {
   rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
   out_prefix <- if (length(args) >= 2) args[2] else "cymatic"
   if (!file.exists(rds_path)) {
-    stop(sprintf("missing %s — run scripts/cymatic_mapping.R first", rds_path))
+    stop(sprintf("missing %s — run scripts/cymatic/cymatic_mapping.R first", rds_path))
   }
   mapping <- readRDS(rds_path)
   plot_quad(mapping, out_prefix)

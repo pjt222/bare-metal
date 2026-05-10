@@ -74,19 +74,19 @@ sweeps): those cross many regions, hurting locality vs row-major.
 
 Three R scripts in `scripts/`:
 
-### `scripts/cymatic_mapping.R`
+### `scripts/cymatic/cymatic_mapping.R`
 
 Computes the field, identifies regions, assigns linear addresses.
 
 ```bash
 # single mode (4, 3): 18 regions, 525× size ratio
-Rscript scripts/cymatic_mapping.R 128 4 3
+Rscript scripts/cymatic/cymatic_mapping.R 128 4 3
 
 # mixed mode (4,3) + 0.6·(2,5): 8 regions, 13× size ratio
-Rscript scripts/cymatic_mapping.R 128 4 3 2 5 0.6
+Rscript scripts/cymatic/cymatic_mapping.R 128 4 3 2 5 0.6
 
 # rich mode (6, 4): 35 regions, 1051× size ratio (figure below)
-Rscript scripts/cymatic_mapping.R 128 6 4
+Rscript scripts/cymatic/cymatic_mapping.R 128 6 4
 ```
 
 Outputs:
@@ -105,21 +105,21 @@ Algorithm:
 5. Within each region, assign linear addresses in Cartesian raster
    order.
 
-### `scripts/cymatic_visualize.R`
+### `scripts/cymatic/cymatic_visualize.R`
 
 Generates four panels from a saved mapping:
 
 ```bash
-Rscript scripts/cymatic_visualize.R cymatic_mapping.rds docs/figures/cymatic
+Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds docs/figures/cymatic
 # writes cymatic_field.png, cymatic_regions.png, cymatic_addresses.png, cymatic_sizes.png
 ```
 
-### `scripts/cymatic_analyze.R`
+### `scripts/cymatic/cymatic_analyze.R`
 
 Compares cymatic vs row-major on several access patterns:
 
 ```bash
-Rscript scripts/cymatic_analyze.R cymatic_mapping.rds 32
+Rscript scripts/cymatic/cymatic_analyze.R cymatic_mapping.rds 32
 ```
 
 Patterns: radial sweep at θ=0 and θ=π/4, circular sweeps at r=0.6 and
@@ -211,7 +211,7 @@ differences when the buffer is L2-resident. At 256² (0.2 MB) and 512²
 
 ### Correction to static analysis
 
-The R locality metric in `scripts/cymatic_analyze.R` predicted that
+The R locality metric in `scripts/cymatic/cymatic_analyze.R` predicted that
 circular sweeps at fixed r should hurt cymatic locality ("adjacent
 θ → different angular sectors → address jumps"). The CUDA bench
 contradicts this: circular sweeps tie or favor cymatic.
@@ -279,9 +279,9 @@ Implementation costs:
 
 ## Cross-references
 
-- `scripts/cymatic_mapping.R` — region computation
-- `scripts/cymatic_visualize.R` — figures
-- `scripts/cymatic_analyze.R` — locality metrics
+- `scripts/cymatic/cymatic_mapping.R` — region computation
+- `scripts/cymatic/cymatic_visualize.R` — figures
+- `scripts/cymatic/cymatic_analyze.R` — locality metrics
 - `docs/figures/cymatic_*.png` — example outputs
 
 ## Possible next steps
@@ -321,20 +321,20 @@ Full results: `docs/figures/cymatic_optimize_2048.csv`.
 
 ### Picking a mode for a known workload
 
-`scripts/cymatic_optimize.R <grid> <n_range> <m_range>` runs the sweep
+`scripts/cymatic/cymatic_optimize.R <grid> <n_range> <m_range>` runs the sweep
 and writes per-trace heatmaps to `docs/figures/`. Run once for each
 distinct access pattern you care about; the script prints the top 5
 modes per trace.
 
 ```bash
 # Full sweep (54 modes × ~50 s/mode = ~46 min)
-Rscript scripts/cymatic_optimize.R 2048 "2:10" "1:6"
+Rscript scripts/cymatic/cymatic_optimize.R 2048 "2:10" "1:6"
 
 # Coarse sweep (15 modes ~ 13 min)
-Rscript scripts/cymatic_optimize.R 2048 "c(3,5,6,7,9)" "c(2,4,6)"
+Rscript scripts/cymatic/cymatic_optimize.R 2048 "c(3,5,6,7,9)" "c(2,4,6)"
 
 # Re-run summary on existing CSV
-Rscript scripts/cymatic_optimize_summary.R
+Rscript scripts/cymatic/cymatic_optimize_summary.R
 ```
 
 ### What the per-trace optimum tells you

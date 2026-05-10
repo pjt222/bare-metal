@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # config_optimizer.R — Grid-search optimal kernel config for GA104 sm_86
 # Given M,N,K and kernel family, search BM/BN/BK/warp configs for best occupancy + roofline.
-# Usage: Rscript scripts/config_optimizer.R <M> <N> <K> [kernel_type]
+# Usage: Rscript scripts/model/config_optimizer.R <M> <N> <K> [kernel_type]
 #   kernel_type: dense_gemm | sparse_gemm | flash_attn | conv2d
 
 cat("=== GA104 Kernel Config Optimizer ===\n\n")
@@ -136,7 +136,7 @@ if (length(args) >= 3) {
   M <- 4096; N <- 4096; K <- 4096
   kernel <- "dense_gemm"
   cat("Using defaults: M=4096 N=4096 K=4096 kernel=dense_gemm\n")
-  cat("Usage: Rscript scripts/config_optimizer.R <M> <N> <K> [kernel_type]\n\n")
+  cat("Usage: Rscript scripts/model/config_optimizer.R <M> <N> <K> [kernel_type]\n\n")
 }
 
 cat(sprintf("Searching configs for %s @ %.0fx%.0fx%.0f\n", kernel, M, N, K))

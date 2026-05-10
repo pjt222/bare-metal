@@ -19,9 +19,9 @@
 # Compares cymatic mapping to row-major (i*N + j) on the same trace.
 #
 # Usage:
-#   Rscript scripts/cymatic_analyze.R cymatic_mapping.rds [cache_line_cells=32]
+#   Rscript scripts/cymatic/cymatic_analyze.R cymatic_mapping.rds [cache_line_cells=32]
 
-if (!exists("cymatic_mapping")) source("scripts/cymatic_mapping.R")
+if (!exists("cymatic_mapping")) source("scripts/cymatic/cymatic_mapping.R")
 
 # ---- Trace generators ------------------------------------------------------
 
@@ -155,7 +155,7 @@ if (.is_main_analyze()) {
   rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
   line_cells <- if (length(args) >= 2) as.integer(args[2]) else 32L
   if (!file.exists(rds_path)) {
-    stop(sprintf("missing %s — run scripts/cymatic_mapping.R first", rds_path))
+    stop(sprintf("missing %s — run scripts/cymatic/cymatic_mapping.R first", rds_path))
   }
   mapping <- readRDS(rds_path)
 

@@ -15,8 +15,8 @@
 # We map (q_tile_idx, k_tile_idx) -> grid cell (i, j). The grid must be
 # at least max(Nq, Nk) on each axis. Run from phase4/cymatic/.
 
-source("../../scripts/cymatic_mapping.R")
-source("../../scripts/cymatic_analyze.R")
+source("../../scripts/cymatic/cymatic_mapping.R")
+source("../../scripts/cymatic/cymatic_analyze.R")
 
 args   <- commandArgs(trailingOnly = TRUE)
 grid_n <- if (length(args) >= 1) as.integer(args[1]) else 1024L

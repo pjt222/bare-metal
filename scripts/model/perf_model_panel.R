@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # perf_model_panel.R — Roofline + compute/memory roof panel for GA104
-# Usage: Rscript scripts/perf_model_panel.R <M> <N> <K> [kernel_name]
+# Usage: Rscript scripts/model/perf_model_panel.R <M> <N> <K> [kernel_name]
 #        or interactive
 
 cat("=== GA104 (RTX 3070 Ti) Performance Model Panel ===\n\n")
@@ -34,7 +34,7 @@ if (length(args) >= 3) {
   M <- 4096; N <- 4096; K <- 4096
   kernel <- "dense_gemm"
   cat("Using defaults: M=4096 N=4096 K=4096 kernel=dense_gemm\n")
-  cat("Usage: Rscript scripts/perf_model_panel.R <M> <N> <K> [kernel]\n")
+  cat("Usage: Rscript scripts/model/perf_model_panel.R <M> <N> <K> [kernel]\n")
 }
 
 cat(sprintf("\n--- %s: %.0f×%.0f×%.0f ---\n", kernel, M, N, K))

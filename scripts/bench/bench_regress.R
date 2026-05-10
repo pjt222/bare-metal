@@ -6,10 +6,10 @@
 # Mirrors bench_regress.py.
 #
 # Usage:
-#   Rscript scripts/bench_regress.R                                          # all
-#   Rscript scripts/bench_regress.R --kernel phase2/hgemm/hgemm_16warp.cu
-#   Rscript scripts/bench_regress.R --tolerance 0.15
-#   Rscript scripts/bench_regress.R --list
+#   Rscript scripts/bench/bench_regress.R                                          # all
+#   Rscript scripts/bench/bench_regress.R --kernel phase2/hgemm/hgemm_16warp.cu
+#   Rscript scripts/bench/bench_regress.R --tolerance 0.15
+#   Rscript scripts/bench/bench_regress.R --list
 
 library(jsonlite)
 
