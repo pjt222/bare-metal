@@ -110,7 +110,7 @@ Algorithm:
 Generates four panels from a saved mapping:
 
 ```bash
-Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds docs/figures/cymatic
+Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds docs/figures/cymatic/cymatic
 # writes cymatic_field.png, cymatic_regions.png, cymatic_addresses.png, cymatic_sizes.png
 ```
 
@@ -133,7 +133,7 @@ r=0.3, polar tile, two radial-bias random samples. Reports:
 
 35 regions, sizes 2 to 2103 cells. Region size ratio max/min = **1051×**.
 
-![regions](figures/cymatic_64_regions.png)
+![regions](figures/cymatic/cymatic_64_regions.png)
 
 Locality (cache_line = 32 cells):
 
@@ -164,7 +164,7 @@ and TLB pressure.
 
 Demonstrates the small-and-large side-by-side property:
 
-![regions](figures/cymatic_regions.png)
+![regions](figures/cymatic/cymatic_regions.png)
 
 Only 8 regions but with 13× size ratio (smallest = 184 cells, largest =
 2384 cells). The two large outer arcs (red) and the small central
@@ -173,7 +173,7 @@ region (yellow) coexist within the same partition.
 Address layout shows clean radial increase from center (low addresses,
 purple) to rim (high addresses, yellow):
 
-![addresses](figures/cymatic_addresses.png)
+![addresses](figures/cymatic/cymatic_addresses.png)
 
 ## Empirical GPU benchmark results
 
@@ -282,7 +282,7 @@ Implementation costs:
 - `scripts/cymatic/cymatic_mapping.R` — region computation
 - `scripts/cymatic/cymatic_visualize.R` — figures
 - `scripts/cymatic/cymatic_analyze.R` — locality metrics
-- `docs/figures/cymatic_*.png` — example outputs
+- `docs/figures/cymatic/cymatic_*.png` — example outputs
 
 ## Possible next steps
 
@@ -317,7 +317,7 @@ better mode than (6, 4) on **all 15 traces**. Headline numbers:
   - Best universal mode (one pick for all traces): **(n=5, m=4)**,
     geomean 1.099× across 15 traces. Default (6, 4) geomean: 0.92×.
 
-Full results: `docs/figures/cymatic_optimize_2048.csv`.
+Full results: `docs/figures/cymatic/cymatic_optimize_2048.csv`.
 
 ### Picking a mode for a known workload
 

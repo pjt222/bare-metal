@@ -273,10 +273,10 @@ parse_bench <- function(path, grid_n) {
 }
 
 cym_files <- list(
-  list(path = "phase4/cymatic/results/grid256_results.txt",  grid =  256),
-  list(path = "phase4/cymatic/results/grid512_results.txt",  grid =  512),
-  list(path = "phase4/cymatic/results/grid1024_results.txt", grid = 1024),
-  list(path = "phase4/cymatic/results/grid2048_results.txt", grid = 2048)
+  list(path = "results/cymatic/grids/grid256_results.txt",  grid =  256),
+  list(path = "results/cymatic/grids/grid512_results.txt",  grid =  512),
+  list(path = "results/cymatic/grids/grid1024_results.txt", grid = 1024),
+  list(path = "results/cymatic/grids/grid2048_results.txt", grid = 2048)
 )
 cym_df <- do.call(rbind, lapply(cym_files, function(x) parse_bench(x$path, x$grid)))
 

@@ -410,7 +410,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 - `phase4/cymatic/bench_cymatic.cu` — gather-sum kernel, median + auto-iters
 - `phase4/cymatic/Makefile` + `README.md` + `results/{256,512,1024,2048}.txt`
 - `docs/cymatic_memory_mapping.md` — theory + bench results
-- `docs/figures/cymatic_*.png` — visualizations (mode 4,3 and 6,4)
+- `docs/figures/cymatic/cymatic_*.png` — visualizations (mode 4,3 and 6,4)
 
 **Headline findings (RTX 3070 Ti, GRID=2048² DRAM):**
 - `radial_mid_pi6` (sector midline): **1.53×** cymatic wins

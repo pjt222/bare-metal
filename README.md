@@ -154,7 +154,7 @@ to close the gap" in [docs/comparison_to_sota.md](docs/comparison_to_sota.md).
 
 ## Cymatic memory layout — speculative geometry-aligned addressing
 
-![Cymatic speedup grid](docs/figures/cymatic_speedup_grid.png)
+![Cymatic speedup grid](docs/figures/cymatic/cymatic_speedup_grid.png)
 
 A Chladni-pattern memory layout maps a 1D address space to antinode
 regions of a circular standing-wave mode `u_{n,m}(r,θ) = J_n(k_{n,m}·r)·cos(n·θ)`.
@@ -356,9 +356,14 @@ experiments/             — Front-end alternatives sandbox
 docs/
   tutorial/         — 6-chapter tutorial series
   figures/          — regenerable plots (R + ggplot2)
+    cymatic/        — 28 Chladni-mode + locality figures
   gpu_reflections.md — postmortem catalog
+  CONTINUE_HERE.md  — session-state ledger
   ampere_sass_reference.md, control_codes.md, memory_hierarchy.md
-scripts/            -- R analysis + build harnesses
+results/            — captured benchmark + profiling output
+  ncu/              — NCU 15-metric sweeps
+  cymatic/grids/    — phase4/cymatic sweep captures
+scripts/            -- R analysis + build harnesses (5 subdirs by purpose)
 R/cuasmR/           -- local R package: SASS hand-edit toolchain
 ```
 

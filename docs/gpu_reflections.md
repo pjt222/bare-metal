@@ -1399,7 +1399,7 @@ pattern. Avoid it when you cannot.
 
 **Files**: `phase4/cymatic/{gen_cymatic_data.R, bench_cymatic.cu,
 Makefile, results/}`, `scripts/cymatic_{mapping,analyze,visualize}.R`,
-`docs/cymatic_memory_mapping.md`, `docs/figures/cymatic_*.png`.
+`docs/cymatic_memory_mapping.md`, `docs/figures/cymatic/cymatic_*.png`.
 
 ---
 
@@ -2860,7 +2860,7 @@ m=4), geomean 1.099× across 15 traces.
      long-form data frame.
 
 54 modes × ~50 s/mode ≈ 46 min wall clock on this GPU. Output:
-`docs/figures/cymatic_optimize_2048.csv` (810 rows). Summary +
+`docs/figures/cymatic/cymatic_optimize_2048.csv` (810 rows). Summary +
 heatmaps via `scripts/cymatic/cymatic_optimize_summary.R`.
 
 ### Per-trace best modes
@@ -2946,11 +2946,11 @@ measure". The framework for that picking lives in
 
 - `scripts/cymatic/cymatic_optimize.R`         — sweep driver (parameterizable)
 - `scripts/cymatic/cymatic_optimize_summary.R` — post-process + plots
-- `docs/figures/cymatic_optimize_2048.csv`         — long-form data
-- `docs/figures/cymatic_optimize_2048_summary.csv` — best per trace
-- `docs/figures/cymatic_optimize_2048_facet.png`   — 15-trace heatmap
-- `docs/figures/cymatic_optimize_2048_geomean.png` — geomean heatmap
-- `docs/figures/cymatic_optimize_2048_<trace>.png` × 7 — focus plots
+- `docs/figures/cymatic/cymatic_optimize_2048.csv`         — long-form data
+- `docs/figures/cymatic/cymatic_optimize_2048_summary.csv` — best per trace
+- `docs/figures/cymatic/cymatic_optimize_2048_facet.png`   — 15-trace heatmap
+- `docs/figures/cymatic/cymatic_optimize_2048_geomean.png` — geomean heatmap
+- `docs/figures/cymatic/cymatic_optimize_2048_<trace>.png` × 7 — focus plots
 
 ### Closing #93
 
@@ -3091,8 +3091,8 @@ sparse + non-cp.async workloads emerge.
 
 - `phase4/cymatic/gen_fa_traces.R`        — FA-flavored trace builder
 - `scripts/cymatic/cymatic_fa_alignment.R`        — sweep driver (step 1)
-- `docs/figures/cymatic_fa_alignment_2048.csv`        — long-form data
-- `docs/figures/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
+- `docs/figures/cymatic/cymatic_fa_alignment_2048.csv`        — long-form data
+- `docs/figures/cymatic/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
 
 ## Observation KK — cuda-oxide Rust→PTX spike: pipeline portable, 2× SASS bloat
 

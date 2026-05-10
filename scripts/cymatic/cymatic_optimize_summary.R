@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # cymatic_optimize_summary.R -- post-process the (n, m) sweep results.
-# Reads docs/figures/cymatic_optimize_2048.csv, produces:
+# Reads docs/figures/cymatic/cymatic_optimize_2048.csv, produces:
 #   - summary CSV (best mode per trace, gain vs default)
 #   - facet plot of all 15 traces' speedup heatmaps
 #   - geomean-per-mode bar chart
@@ -9,7 +9,7 @@ suppressMessages({
     library(ggplot2); library(dplyr); library(tidyr)
 })
 
-csv_path <- "docs/figures/cymatic_optimize_2048.csv"
+csv_path <- "docs/figures/cymatic/cymatic_optimize_2048.csv"
 data <- read.csv(csv_path, stringsAsFactors = FALSE)
 default_n <- 6L; default_m <- 4L
 
@@ -32,7 +32,7 @@ best <- data |>
            range_ratio     = best_speed / worst_speed) |>
     arrange(desc(gain_vs_default))
 
-write.csv(best, "docs/figures/cymatic_optimize_2048_summary.csv",
+write.csv(best, "docs/figures/cymatic/cymatic_optimize_2048_summary.csv",
           row.names = FALSE)
 cat(sprintf("[opt] wrote summary CSV (%d traces)\n", nrow(best)))
 
@@ -51,7 +51,7 @@ p_facet <- ggplot(data, aes(x = factor(n), y = factor(m), fill = speedup)) +
     theme_minimal(base_size = 9) +
     theme(panel.grid = element_blank(),
           strip.text = element_text(face = "bold", size = 9))
-ggsave("docs/figures/cymatic_optimize_2048_facet.png", p_facet,
+ggsave("docs/figures/cymatic/cymatic_optimize_2048_facet.png", p_facet,
        width = 14, height = 9, dpi = 130)
 cat("[opt] wrote facet PNG\n")
 
@@ -77,7 +77,7 @@ p_geo <- ggplot(mode_geo, aes(x = factor(n), y = factor(m), fill = geomean)) +
          x = "n", y = "m") +
     theme_minimal(base_size = 11) +
     theme(panel.grid = element_blank())
-ggsave("docs/figures/cymatic_optimize_2048_geomean.png", p_geo,
+ggsave("docs/figures/cymatic/cymatic_optimize_2048_geomean.png", p_geo,
        width = 7, height = 5, dpi = 130)
 cat("[opt] wrote geomean PNG\n")
 

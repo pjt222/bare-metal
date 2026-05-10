@@ -21,13 +21,15 @@ gen:
 run: bench_cymatic perm.bin traces.bin
 	./bench_cymatic
 
-# Sweep grid sizes (L1 / L2 / DRAM regimes). Captures per-grid results.
+# Sweep grid sizes (L1 / L2 / DRAM regimes). Captures per-grid results
+# into the centralised results/ tree (audit Tier 7).
+RESULTS_DIR ?= ../../results/cymatic/grids
 sweep: bench_cymatic
-	@mkdir -p results
+	@mkdir -p $(RESULTS_DIR)
 	@for g in 256 512 1024 2048 ; do \
 		echo "=== GRID=$$g ==="; \
 		Rscript gen_cymatic_data.R $$g $(N) $(M) > /dev/null 2>&1; \
-		./bench_cymatic 200 5 11 | tee results/grid$${g}_results.txt; \
+		./bench_cymatic 200 5 11 | tee $(RESULTS_DIR)/grid$${g}_results.txt; \
 		echo ""; \
 	done
 

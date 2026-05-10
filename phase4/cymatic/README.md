@@ -52,8 +52,8 @@ make sweep
 Output: per-trace table with row_ms, row_GB/s, row_eff%, cym_ms, cym_GB/s,
 cym_eff%, speedup (= row_ms / cym_ms; > 1 ⇒ cymatic wins).
 
-The `results/` directory holds captured runs at GRID = 256, 512, 1024, 2048
-(`grid<N>_results.txt`).
+Captured runs land in the centralised `results/cymatic/grids/` tree at
+the repo root (`grid<N>_results.txt` for N = 256, 512, 1024, 2048).
 
 ## Key result: cymatic locality is angle-dependent
 
@@ -144,7 +144,7 @@ L2 and post-warmup all accesses are L2 hits regardless of layout. The
   Sources `../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
 - `bench_cymatic.cu` — CUDA gather bench with median + scaled iters.
 - `Makefile` — `make`, `make gen`, `make run`, `make sweep`, `make clean`.
-- `results/grid{256,512,1024,2048}_results.txt` — captured benchmark output.
+- `results/cymatic/grids/grid{256,512,1024,2048}_results.txt` — captured benchmark output.
 
 ## Honest assessment
 

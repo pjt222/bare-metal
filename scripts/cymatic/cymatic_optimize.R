@@ -6,8 +6,8 @@
 #   1. Run phase4/cymatic/gen_cymatic_data.R GRID n m   -> rewrites perm.bin + traces.bin
 #   2. Run phase4/cymatic/bench_cymatic                  -> table of per-trace speedups
 #   3. Parse and stash row per trace
-# Output: docs/figures/cymatic_optimize_<grid>.csv (long form) and a heatmap
-# image per trace into docs/figures/cymatic_optimize_<grid>_<trace>.png.
+# Output: docs/figures/cymatic/cymatic_optimize_<grid>.csv (long form) and a heatmap
+# image per trace into docs/figures/cymatic/cymatic_optimize_<grid>_<trace>.png.
 
 suppressMessages({
     library(ggplot2)

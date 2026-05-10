@@ -121,7 +121,14 @@ plot_quad <- function(mapping, out_prefix) {
 if (.is_main_viz()) {
   args <- commandArgs(trailingOnly = TRUE)
   rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
-  out_prefix <- if (length(args) >= 2) args[2] else "cymatic"
+  # Default writes into docs/figures/cymatic/cymatic_*.png to match the
+  # post-Tier-7 layout. Override with second positional arg to change.
+  default_prefix <- if (dir.exists("docs/figures/cymatic")) {
+    "docs/figures/cymatic/cymatic"
+  } else {
+    "cymatic"
+  }
+  out_prefix <- if (length(args) >= 2) args[2] else default_prefix
   if (!file.exists(rds_path)) {
     stop(sprintf("missing %s — run scripts/cymatic/cymatic_mapping.R first", rds_path))
   }
