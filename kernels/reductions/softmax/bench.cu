@@ -7,7 +7,7 @@
 #include <cuda.h>
 #include <cstdio>
 #include <cmath>
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_softmax(const float *input, float *output,
                         int num_rows, int row_width) {

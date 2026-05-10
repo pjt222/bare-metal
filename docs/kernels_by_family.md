@@ -37,9 +37,9 @@ reduced statistic. Showcase for `SHFL.BFLY` butterflies and the
 
 | Path | Reduction scope | Lead SASS |
 |---|---|---|
-| `phase2/softmax/`               | warp (then row across SMs)         | `SHFL.BFLY` + `MUFU.EX2` |
-| `phase2/layernorm/`             | block                              | `SHFL.BFLY` + `MUFU.RSQ` |
-| `phase4/groupnorm/`             | group of channels                  | `SHFL.BFLY` + `MUFU.RSQ` + `MUFU.RCP` |
+| `kernels/reductions/softmax/`               | warp (then row across SMs)         | `SHFL.BFLY` + `MUFU.EX2` |
+| `kernels/reductions/layernorm/`             | block                              | `SHFL.BFLY` + `MUFU.RSQ` |
+| `kernels/reductions/groupnorm/`             | group of channels                  | `SHFL.BFLY` + `MUFU.RSQ` + `MUFU.RCP` |
 
 See [`fragment_shfl_reductions.md`](fragment_shfl_reductions.md) for
 the butterfly-tree pattern catalog.

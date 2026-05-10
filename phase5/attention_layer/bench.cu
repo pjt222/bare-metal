@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
     // Load modules manually (multiple fns per module needed)
     CUmodule mod_ln, mod_hg, mod_fl, mod_fu, mod_ut;
     auto ld = [&](const char* p) { CUmodule m; if (cuModuleLoad(&m,p)!=CUDA_SUCCESS){fprintf(stderr,"Cannot load %s\n",p);exit(1);} return m; };
-    mod_ln = ld("../../phase2/layernorm/layernorm.sm_86.cubin");
+    mod_ln = ld("../../kernels/reductions/layernorm/layernorm.sm_86.cubin");
     mod_hg = ld("../../kernels/gemm/hgemm/hgemm.sm_86.cubin");
     mod_fl = ld("../../phase3/flash_attention/flash_br16.sm_86.cubin");
     mod_fu = ld("../../phase3/flash_attention/flash_fused.sm_86.cubin");

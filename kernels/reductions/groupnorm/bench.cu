@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_groupnorm_nhwc(
     const float *X, const float *gamma, const float *beta,

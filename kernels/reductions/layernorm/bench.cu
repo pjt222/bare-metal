@@ -7,7 +7,7 @@
 #include <cuda.h>
 #include <cstdio>
 #include <cmath>
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_layernorm(const float *input, const float *gamma,
                           const float *beta, float *output,
