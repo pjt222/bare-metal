@@ -1,11 +1,14 @@
 # bare-metal GPU — Top-level Makefile
 #
 # Usage:
+#   make reproduce    — setup + verify + build + bench (full one-stop)
+#   make setup        — renv::restore() + install local cuasmR R package
+#   make verify       — environment check (CUDA, GPU, cuasmR)
 #   make all          — build all kernel cubins + benchmark executables
+#   make bench        — run benches vs docs/baselines.json
 #   make cubins       — compile all .cu files to .cubin
 #   make benches      — compile all bench*.cu files to executables
-#   make phase1       — build phase 1 only
-#   make phase2       — build phase 2 only
+#   make phaseN       — build phase N only (N=1..5)
 #   make test         — run all benchmark executables (smoke test)
 #   make clean        — remove all generated artifacts
 #   make disasm       — disassemble all cubins to .sass
@@ -15,7 +18,7 @@ NVCC        := nvcc
 NVCC_FLAGS  := -arch=$(SM_ARCH) -O2
 CUBIN_FLAGS := --cubin -arch=$(SM_ARCH) -O2
 
-PYTHON      := python3
+RSCRIPT     := Rscript
 
 # ------------------------------------------------------------------
 # Find all source files
@@ -38,7 +41,8 @@ PHASE5_BENCH  := $(shell find phase5 -name 'bench*.cu' | sed 's/\.cu//')
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches phase1 phase2 phase3 phase4 phase5 test clean disasm help
+.PHONY: all cubins benches phase1 phase2 phase3 phase4 phase5 test clean disasm help \
+        setup verify bench reproduce
 
 all: cubins benches
 
@@ -113,10 +117,39 @@ disasm: cubins
 	@echo "=== Disassembling cubins ==="
 	@for cubin in $(KERNEL_CUBINS); do \
 		if [ -f "$$cubin" ]; then \
-			$(PYTHON) scripts/build.py disasm $$cubin >/dev/null 2>&1 || true; \
+			$(RSCRIPT) scripts/build.R disasm $$cubin >/dev/null 2>&1 || true; \
 		fi; \
 	done
 	@echo "=== Disassembly complete ==="
+
+# ------------------------------------------------------------------
+# Reproducibility entry points (Tier 11)
+#
+# Single chain from a fresh clone to a passing regression check.
+# 'make reproduce' executes setup -> verify -> all -> bench in order;
+# any failure short-circuits the chain.
+# ------------------------------------------------------------------
+setup:
+	@echo "=== Restoring R deps via renv ==="
+	@$(RSCRIPT) -e 'if (!requireNamespace("renv", quietly=TRUE)) install.packages("renv", repos="https://cloud.r-project.org"); renv::restore()'
+	@echo "=== Installing local cuasmR R package ==="
+	@$(RSCRIPT) scripts/install_cuasmR.R
+
+verify:
+	@$(RSCRIPT) scripts/verify_setup.R
+
+bench:
+	@$(RSCRIPT) scripts/bench/bench_regress.R
+
+reproduce: setup verify all bench
+	@echo ""
+	@echo "================================================================"
+	@echo "✓ Full reproduction complete."
+	@echo "  setup    — R deps installed via renv"
+	@echo "  verify   — toolchain + GPU detected"
+	@echo "  all      — every cubin + bench compiled"
+	@echo "  bench    — results compared to docs/baselines.json"
+	@echo "================================================================"
 
 # ------------------------------------------------------------------
 # Cleanup
@@ -137,7 +170,13 @@ clean:
 help:
 	@echo "bare-metal GPU build system"
 	@echo ""
-	@echo "Targets:"
+	@echo "Reproducibility (Tier 11):"
+	@echo "  make reproduce — one-stop: setup + verify + build + bench"
+	@echo "  make setup     — renv::restore() + install cuasmR"
+	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
+	@echo "  make bench     — run benches vs docs/baselines.json"
+	@echo ""
+	@echo "Build:"
 	@echo "  make all       — build all cubins + benches"
 	@echo "  make cubins    — compile all .cu files to .cubin"
 	@echo "  make benches   — compile all bench*.cu to executables"

@@ -251,8 +251,20 @@ cuobjdump -sass kernel.sm_86.cubin | grep -E 'HMMA|LDSM|STS' | head
 Rscript scripts/build.R roundtrip kernel.cu
 ```
 
-See [SETUP.md](SETUP.md) for environment install. Run
-`Rscript scripts/verify_setup.R` to confirm everything is working.
+See [SETUP.md](SETUP.md) for environment install. After CUDA + R
+are installed system-wide, the project itself reproduces in two
+commands:
+
+```bash
+git clone https://github.com/pjt222/bare-metal.git && cd bare-metal
+make reproduce          # setup + verify + build + bench-vs-baselines
+```
+
+`make reproduce` chains `setup` (renv restore + cuasmR install),
+`verify` (env check), `all` (compile every cubin + bench), and
+`bench` (run benches and compare against `docs/baselines.json`).
+A clean run ends with `RESULT: PASSED -- all benchmarks within
+tolerance`. The pre-push hook calls the same regression check.
 
 ---
 
