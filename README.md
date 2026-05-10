@@ -280,6 +280,15 @@ See [setup.md](setup.md) for environment install. Run
   `scripts/sass_histogram.R`; figure at `docs/figures/sass_histogram.png`
 - [docs/ncu_metrics.md](docs/ncu_metrics.md) — NCU profiling harness reference
   (15 metrics, per-kernel diagnosis tables)
+- [docs/register_audit.md](docs/register_audit.md) — per-kernel register usage table (data: `docs/register_audit.csv`)
+- [docs/roofline_measured.md](docs/roofline_measured.md) — NCU-measured roofline per kernel
+- [docs/cuasm_r.md](docs/cuasm_r.md) — local R package for SASS hand-edits (replaces upstream CuAssembler)
+
+### Postmortems & analyses
+
+- [docs/troubleshooting.md](docs/troubleshooting.md) — lessons learned from real sessions; updated as new pitfalls are encountered
+- [docs/int8_sparse_4096_regression_analysis.md](docs/int8_sparse_4096_regression_analysis.md) — INT8 sparse 4096³ regression hypotheses (companion to Obs HH)
+- [docs/polyhedral_spring_networks.md](docs/polyhedral_spring_networks.md) — literature scoping for polyhedral / spring-network GPU acceleration (Issue #32 deliverable)
 
 ### R analysis scripts — `scripts/*.R`
 
