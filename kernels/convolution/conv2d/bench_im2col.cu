@@ -17,8 +17,8 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench.h"
-#include "../../kernels/_common/check.h"
+#include "../../_common/bench.h"
+#include "../../_common/check.h"
 #include <unistd.h>
 
 // Helper: find cubin in CWD or in the binary's directory

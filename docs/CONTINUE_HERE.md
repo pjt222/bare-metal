@@ -185,7 +185,7 @@ publishing numbers.
 
 ### 7. ResBlock case: count DRAM passes before optimizing FLOPS
 
-`phase4/resblock/bench.cu` was running `conv2d_nhwc` (direct FFMA, reads
+`kernels/convolution/resblock/bench.cu` was running `conv2d_nhwc` (direct FFMA, reads
 input X 9× per output element). Achieved 289 GFLOPS at SD UNet config.
 The codebase already had `implicit_gemm_conv` (Tensor Cores, im2col on the
 fly, reads X exactly once) achieving 4800-6800 GFLOPS standalone.
@@ -464,7 +464,7 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 - `cross_attn_v2.cu` — **nosmem variant** (use at typical sizes)
 - `bench_v2.cu` — sweep harness with regime crossover analysis
 
-### ResBlock (`phase4/resblock/`)
+### ResBlock (`kernels/convolution/resblock/`)
 
 - `bench.cu` — original (uses slow conv2d_nhwc, kept as baseline)
 - `bench_implicit.cu` — **canonical** (uses implicit_gemm_conv, 7.01× speedup)

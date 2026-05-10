@@ -219,5 +219,5 @@ git push --no-verify
 
 Build is best-effort (`make -k all`) so other kernels keep
 compiling. Inspect the failed file's directory for kernel-specific
-notes; many `phase4/conv2d/debug*.cu` files are intentionally
+notes; many `kernels/convolution/conv2d/debug*.cu` files are intentionally
 unbuildable scratchpads (gitignored).

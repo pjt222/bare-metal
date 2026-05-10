@@ -34,13 +34,13 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `kernels/attention/flash_attention/bench_wmma.cu`
 
 ### Phase 4
-- [ ] `phase4/conv2d/bench.cu`
-- [ ] `phase4/conv2d/bench_im2col.cu`
-- [ ] `phase4/conv2d/bench_implicit_gemm.cu`
+- [ ] `kernels/convolution/conv2d/bench.cu`
+- [ ] `kernels/convolution/conv2d/bench_im2col.cu`
+- [ ] `kernels/convolution/conv2d/bench_implicit_gemm.cu`
 - [ ] `kernels/attention/cross_attention/bench.cu`
 - [ ] `kernels/attention/cross_attention/bench_pipelined.cu`
 - [ ] `kernels/reductions/groupnorm/bench.cu`
-- [ ] `phase4/resblock/bench.cu`
+- [ ] `kernels/convolution/resblock/bench.cu`
 - [ ] `phase4/timestep_emb/bench.cu`
 
 ### Phase 5

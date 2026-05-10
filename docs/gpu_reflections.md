@@ -1157,7 +1157,7 @@ wins. Re-evaluate negative results when the kernel's resource profile changes.
 
 ## Observation R — ResBlock conv2d swap: 7× speedup from picking the right kernel
 
-**Setup**: `phase4/resblock/bench.cu` chains GN+SiLU → Conv2d(3×3) → GN+SiLU →
+**Setup**: `kernels/convolution/resblock/bench.cu` chains GN+SiLU → Conv2d(3×3) → GN+SiLU →
 Conv2d(3×3) → residual_add. Used `conv2d_nhwc` from `conv2d.sm_86.cubin`. At
 SD UNet config (N=1, C=320, H=W=32, G=32) the chain runs **13.07 ms** at
 289 GFLOPS effective.
@@ -1171,7 +1171,7 @@ the fly) achieves 4800-6800 GFLOPS — **20-30× faster** as a standalone kernel
 ResBlock was using the wrong conv. This is not a "kernel optimization"
 problem; it's a "kernel selection" problem.
 
-**Fix** (`phase4/resblock/bench_implicit.cu`):
+**Fix** (`kernels/convolution/resblock/bench_implicit.cu`):
 - Reshape FP32 weights `[Cout, kH, kW, Cin]` → FP16 `[K_dim, Cout]` on host
   (one-time, helper from `bench_implicit_gemm.cu`)
 - Load `implicit_gemm_conv` from `conv2d_implicit_gemm.sm_86.cubin`
@@ -2631,7 +2631,7 @@ more warps, double-buffered cp.async.
 
 ### What v1 looked like
 
-`phase4/conv2d/conv2d_implicit_gemm.cu`:
+`kernels/convolution/conv2d/conv2d_implicit_gemm.cu`:
 - 4 warps, 64×64×16 tile
 - No cp.async, single-buffered (every K-tile blocks on `__syncthreads`
   before HMMA can start)
@@ -2644,7 +2644,7 @@ exposed; FP32-in → scalar smem stores rather than vectorized.
 
 ### v2 design
 
-`phase4/conv2d/conv2d_implicit_gemm_v2.cu`:
+`kernels/convolution/conv2d/conv2d_implicit_gemm_v2.cu`:
 - 16 warps, 128×128×32 tile (matches `hgemm_16warp.cu`)
 - 4×4 warp grid, 2×2 register-fragment tiles per warp
 - Double-buffered cp.async on weights B (FP16, vectorized 16 B copy)
@@ -2718,10 +2718,10 @@ A-load). Both are addressable in v3.
 
 ### Files
 
-- `phase4/conv2d/conv2d_implicit_gemm_v2.cu` — kernel (16-warp,
+- `kernels/convolution/conv2d/conv2d_implicit_gemm_v2.cu` — kernel (16-warp,
   cp.async, FP16 input)
-- `phase4/conv2d/bench_implicit_v2.cu` — standalone conv A/B
-- `phase4/resblock/bench_implicit_v2.cu` — full ResBlock pipeline A/B
+- `kernels/convolution/conv2d/bench_implicit_v2.cu` — standalone conv A/B
+- `kernels/convolution/resblock/bench_implicit_v2.cu` — full ResBlock pipeline A/B
 
 ---
 

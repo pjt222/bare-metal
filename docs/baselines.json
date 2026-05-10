@@ -51,8 +51,8 @@
                    "config_note": "seq_len=1024, batch=8, heads=8",
                    "note": "median of 5 valid samples, 2026-05-10. +17% throughput vs 2026-05-05 baseline (was 2.810 / 6112) — real improvement from regpv tuning between recordings."}
     },
-    "phase4/conv2d/conv2d_implicit_gemm.cu": {
-      "exe": "phase4/conv2d/bench_implicit_gemm",
+    "kernels/convolution/conv2d/conv2d_implicit_gemm.cu": {
+      "exe": "kernels/convolution/conv2d/bench_implicit_gemm",
       "1_64_64_320_320": {"ms": 1.056, "gflops": 7150,
                           "section": "SD 64",
                           "match": "Implicit (single kern)",

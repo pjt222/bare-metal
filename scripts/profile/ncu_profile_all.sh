@@ -35,7 +35,7 @@ ROWS=(
   "cross_attn_v2|kernels/attention/cross_attention/bench_v2|1024 256 8|Cross-attn v2 (1024 q, 256 kv, h=8)|phase4/cross_attention"
 
   # --- ResBlock (phase 4) ---
-  "implicit_gemm_conv|phase4/resblock/bench_implicit|1 320 32 32|ResBlock implicit GEMM (SD UNet 320ch)|phase4/resblock"
+  "implicit_gemm_conv|kernels/convolution/resblock/bench_implicit|1 320 32 32|ResBlock implicit GEMM (SD UNet 320ch)|phase4/resblock"
 )
 
 # Wipe old CSV so columns/rows match the current run.

@@ -91,6 +91,23 @@ kernels/attention/flash_attention/bench_%: kernels/attention/flash_attention/ben
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
+# Conv2d / resblock have multiple bench variants too
+kernels/convolution/conv2d/bench_%: kernels/convolution/conv2d/bench_%.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+
+kernels/convolution/resblock/bench_%: kernels/convolution/resblock/bench_%.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+
+kernels/gemm/hgemm/bench_%: kernels/gemm/hgemm/bench_%.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+
+kernels/gemm/igemm/bench_%: kernels/gemm/igemm/bench_%.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+
 # ------------------------------------------------------------------
 # Phase targets
 # ------------------------------------------------------------------

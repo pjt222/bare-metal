@@ -24,7 +24,7 @@ into a register tile.
 | `kernels/gemm/hgemm/`                 | tiled FP16 WMMA → 16-warp persistent  | **31.9 TFLOPS** at 2048³ | `HMMA.16816.F32` |
 | `kernels/gemm/hgemm_sparse/`          | 2:4 structured sparse FP16            | 31.9 TFLOPS dense-equiv at 2048³ | `HMMA.16816.SP` |
 | `kernels/gemm/igemm/`                 | INT8 IMMA + cp.async pipelining       | 27.6 TOPS (8warp_256) at 2048³ | `IMMA.16816.S8.S8` |
-| `phase4/conv2d/conv2d_implicit_gemm.cu` | reshapes conv into GEMM with on-the-fly index gen | 7.2 GFLOPS at SD 64×64×320 | `HMMA.16816.F32` |
+| `kernels/convolution/conv2d/conv2d_implicit_gemm.cu` | reshapes conv into GEMM with on-the-fly index gen | 7.2 GFLOPS at SD 64×64×320 | `HMMA.16816.F32` |
 
 Postmortems: [Obs N (sparse), HH (CUDA-13.2 IMMA), GG (implicit GEMM v2), II/JJ (cymatic on K/V).](gpu_reflections.md)
 
@@ -69,11 +69,11 @@ Same multiply-accumulate, different operand-layout strategy.
 
 | Path | Strategy | DRAM reads / output | Peak |
 |---|---|---|---:|
-| `phase4/conv2d/conv2d.cu`                 | direct, scalar FFMA      | 9× (re-read input)             | ~0.4 TFLOPS |
-| `phase4/conv2d/conv2d_im2col.cu`          | explicit col-buffer + WMMA | 1×, but col buf in L2/DRAM    | ~3 TFLOPS |
-| `phase4/conv2d/conv2d_implicit_gemm.cu`   | implicit GEMM v1         | 1×, no col buffer              | ~5 TFLOPS |
-| `phase4/conv2d/conv2d_implicit_gemm_v2.cu`| implicit GEMM v2 (Obs GG) | 1×, no col buffer             | **6.7 TFLOPS** at 320 channels |
-| `phase4/resblock/resblock_fused.cu`       | conv+norm+conv fused     | 1× × 3 stages                  | block runtime depends on conv backend (Obs R: 7× swap) |
+| `kernels/convolution/conv2d/conv2d.cu`                 | direct, scalar FFMA      | 9× (re-read input)             | ~0.4 TFLOPS |
+| `kernels/convolution/conv2d/conv2d_im2col.cu`          | explicit col-buffer + WMMA | 1×, but col buf in L2/DRAM    | ~3 TFLOPS |
+| `kernels/convolution/conv2d/conv2d_implicit_gemm.cu`   | implicit GEMM v1         | 1×, no col buffer              | ~5 TFLOPS |
+| `kernels/convolution/conv2d/conv2d_implicit_gemm_v2.cu`| implicit GEMM v2 (Obs GG) | 1×, no col buffer             | **6.7 TFLOPS** at 320 channels |
+| `kernels/convolution/resblock/resblock_fused.cu`       | conv+norm+conv fused     | 1× × 3 stages                  | block runtime depends on conv backend (Obs R: 7× swap) |
 
 Tutorial: [`tutorial/04-software-pipelining.md`](tutorial/04-software-pipelining.md).
 

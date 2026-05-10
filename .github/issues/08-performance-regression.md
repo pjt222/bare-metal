@@ -67,7 +67,7 @@ Start with top 5 kernels (highest GEMM/attention throughput):
 2. `kernels/gemm/hgemm_sparse/hgemm_sparse_tiled.cu`
 3. `kernels/gemm/igemm/igemm_pipelined_cpasync.cu`
 4. `kernels/attention/flash_attention/flash_attn_br16_regpv.cu`
-5. `phase4/conv2d/conv2d_implicit_gemm.cu`
+5. `kernels/convolution/conv2d/conv2d_implicit_gemm.cu`
 
 ## Acceptance Criteria
 - [ ] `docs/baselines.json` exists with at least 5 kernel configs

@@ -1,11 +1,22 @@
 /*
- * bench_implicit.cu — ResNet Block benchmark using implicit_gemm_conv
+ * bench_implicit_v2.cu — ResNet Block benchmark using implicit_gemm_conv_v2.
  *
- * Variant of bench.cu: replaces conv2d_nhwc (236 GFLOPS) with
- * implicit_gemm_conv (4800-6800 GFLOPS, Tensor Cores). Issue #83.
+ * Variant of bench_implicit.cu: replaces v1 (4-warp 64x64x16, FP32 input)
+ * with v2 (16-warp 128x128x32, FP16 input, cp.async).
+ *
+ * Pipeline:
+ *   1. groupnorm_silu_fused (FP32 -> FP32)
+ *   2. cast_f32_to_f16     (extra DRAM round-trip; cost of API mismatch)
+ *   3. implicit_gemm_conv_v2 (FP16 -> FP32)
+ *   4. groupnorm_silu_fused (FP32 -> FP32)
+ *   5. cast_f32_to_f16
+ *   6. implicit_gemm_conv_v2 (FP16 -> FP32)
+ *   7. residual_add
+ *
+ * Future: fuse cast into groupnorm_silu_fused_fp16 to drop steps 2 and 5.
  *
  * Build:
- *   nvcc -arch=sm_86 -O2 -o bench_implicit bench_implicit.cu \
+ *   nvcc -arch=sm_86 -O2 -o bench_implicit_v2 bench_implicit_v2.cu \
  *        -lcuda -I../../kernels/_common
  */
 
@@ -16,7 +27,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static float cpu_silu(float x) { return x / (1.0f + expf(-x)); }
 
@@ -91,18 +102,15 @@ static void reshape_weights_to_col(
     }
 }
 
-// Implicit GEMM smem layout from conv2d_implicit_gemm.cu:
-//   BLOCK_M=64, BLOCK_N=64, BLOCK_K=16
-//   smem_A: 64*24 halfs = 3072 B
-//   smem_B: 16*72 halfs = 2304 B
-//   coord tables: (3*64 + 3*16) floats * 4 = 960 B
-//   total: ~6.3 KB
-#define BLOCK_M_IGEMM 64
-#define BLOCK_N_IGEMM 64
-#define BLOCK_K_IGEMM 16
-#define SMEM_A_STRIDE_IGEMM (BLOCK_K_IGEMM + 8)
-#define SMEM_B_STRIDE_IGEMM (BLOCK_N_IGEMM + 8)
-#define SMEM_BYTES_IGEMM (((BLOCK_M_IGEMM * SMEM_A_STRIDE_IGEMM + BLOCK_K_IGEMM * SMEM_B_STRIDE_IGEMM) * 2) + (3 * BLOCK_M_IGEMM + 3 * BLOCK_K_IGEMM) * 4)
+// v2 layout (BM=128, BN=128, BK=32) uses static smem -- no dynamic alloc.
+#define BLOCK_M_IGEMM 128
+#define BLOCK_N_IGEMM 128
+
+// Inline cast kernel (FP32 -> FP16). Launches as 1D grid.
+__global__ void cast_f32_to_f16(const float *src, __half *dst, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) dst[i] = __float2half(src[i]);
+}
 
 int main(int argc, char **argv) {
     int N = (argc > 1) ? atoi(argv[1]) : 1;
@@ -158,6 +166,7 @@ int main(int argc, char **argv) {
     auto d_t1  = driver.device_alloc<float>(elems);
     auto d_t2  = driver.device_alloc<float>(elems);
     auto d_Y   = driver.device_alloc<float>(elems);
+    auto d_t1h = driver.device_alloc<__half>(elems);   // FP16 staging for v2 conv input
 
     driver.copy_h2d(d_X, h_X, elems * sizeof(float));
     driver.copy_h2d(d_g, h_g, C * sizeof(float));
@@ -165,54 +174,60 @@ int main(int argc, char **argv) {
     driver.copy_h2d(d_W1f, h_W1f, (size_t)K_dim * C * sizeof(__half));
     driver.copy_h2d(d_W2f, h_W2f, (size_t)K_dim * C * sizeof(__half));
 
-    CUmodule mod_rb, mod_conv_ig;
+    CUmodule mod_rb, mod_conv_v2;
     CHECK_CU(cuModuleLoad(&mod_rb, "resblock.sm_86.cubin"));
-    CHECK_CU(cuModuleLoad(&mod_conv_ig, "../conv2d/conv2d_implicit_gemm.sm_86.cubin"));
-    CUfunction fn_gn_silu, fn_residual, fn_conv_ig;
+    CHECK_CU(cuModuleLoad(&mod_conv_v2, "../conv2d/conv2d_implicit_gemm_v2.sm_86.cubin"));
+    CUfunction fn_gn_silu, fn_residual, fn_conv_v2;
     CHECK_CU(cuModuleGetFunction(&fn_gn_silu, mod_rb, "groupnorm_silu_fused"));
     CHECK_CU(cuModuleGetFunction(&fn_residual, mod_rb, "residual_add"));
-    CHECK_CU(cuModuleGetFunction(&fn_conv_ig, mod_conv_ig, "implicit_gemm_conv"));
+    CHECK_CU(cuModuleGetFunction(&fn_conv_v2, mod_conv_v2, "implicit_gemm_conv_v2"));
 
-    // Set max dynamic smem for implicit_gemm
-    CHECK_CU(cuFuncSetAttribute(fn_conv_ig,
-        CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, SMEM_BYTES_IGEMM));
-
-    int gn_grid  = N * G;
-    int res_grid = ((int)elems + 255) / 256;
-    int M_dim    = N * H * W;
-    int grid_m   = (M_dim + BLOCK_M_IGEMM - 1) / BLOCK_M_IGEMM;
-    int grid_n   = (C     + BLOCK_N_IGEMM - 1) / BLOCK_N_IGEMM;
+    int gn_grid   = N * G;
+    int res_grid  = ((int)elems + 255) / 256;
+    int M_dim     = N * H * W;
+    int grid_m_v2 = (M_dim + BLOCK_M_IGEMM - 1) / BLOCK_M_IGEMM;
+    int grid_n_v2 = (C     + BLOCK_N_IGEMM - 1) / BLOCK_N_IGEMM;
     int kH = 3, kW = 3, pad = 1;
     int out_H = H, out_W = W;
+    int cast_blocks = ((int)elems + 255) / 256;
 
     auto run_block = [&]() {
-        // GN+SiLU 1: X → t1
+        // GN+SiLU 1: X → t1 (FP32)
         void *a1[] = { &d_X.ptr, &d_g.ptr, &d_b.ptr, &d_t1.ptr, &N, &C, &H, &W, &G, &eps };
         CHECK_CU(cuLaunchKernel(fn_gn_silu, gn_grid, 1, 1, 32, 1, 1, 0, nullptr, a1, nullptr));
 
-        // Conv2d 1 (implicit_gemm): t1 → t2
-        void *c1[] = { &d_t1.ptr, &d_W1f.ptr, &d_t2.ptr,
-                       &N, &H, &W, &C,            // N, H_in, W_in, Cin
-                       &kH, &kW, &pad,
-                       &out_H, &out_W,
-                       &M_dim, &K_dim, &C };       // M, K_dim, Cout
-        CHECK_CU(cuLaunchKernel(fn_conv_ig, grid_m, grid_n, 1, 128, 1, 1,
-                                SMEM_BYTES_IGEMM, nullptr, c1, nullptr));
+        // Cast t1 (FP32) -> t1h (FP16)
+        int n_elems = (int)elems;
+        cast_f32_to_f16<<<cast_blocks, 256>>>(
+            (const float*)d_t1.ptr, (__half*)d_t1h.ptr, n_elems);
 
-        // GN+SiLU 2: t2 → t1
-        void *a2[] = { &d_t2.ptr, &d_g.ptr, &d_b.ptr, &d_t1.ptr, &N, &C, &H, &W, &G, &eps };
-        CHECK_CU(cuLaunchKernel(fn_gn_silu, gn_grid, 1, 1, 32, 1, 1, 0, nullptr, a2, nullptr));
-
-        // Conv2d 2 (implicit_gemm): t1 → t2
-        void *c2[] = { &d_t1.ptr, &d_W2f.ptr, &d_t2.ptr,
+        // Conv2d 1 (implicit_gemm_v2): t1h -> t2
+        void *c1[] = { &d_t1h.ptr, &d_W1f.ptr, &d_t2.ptr,
                        &N, &H, &W, &C,
                        &kH, &kW, &pad,
                        &out_H, &out_W,
                        &M_dim, &K_dim, &C };
-        CHECK_CU(cuLaunchKernel(fn_conv_ig, grid_m, grid_n, 1, 128, 1, 1,
-                                SMEM_BYTES_IGEMM, nullptr, c2, nullptr));
+        CHECK_CU(cuLaunchKernel(fn_conv_v2, grid_m_v2, grid_n_v2, 1, 512, 1, 1,
+                                0, nullptr, c1, nullptr));
 
-        // Residual add: t2 + X → Y
+        // GN+SiLU 2: t2 -> t1 (FP32)
+        void *a2[] = { &d_t2.ptr, &d_g.ptr, &d_b.ptr, &d_t1.ptr, &N, &C, &H, &W, &G, &eps };
+        CHECK_CU(cuLaunchKernel(fn_gn_silu, gn_grid, 1, 1, 32, 1, 1, 0, nullptr, a2, nullptr));
+
+        // Cast t1 (FP32) -> t1h (FP16)
+        cast_f32_to_f16<<<cast_blocks, 256>>>(
+            (const float*)d_t1.ptr, (__half*)d_t1h.ptr, n_elems);
+
+        // Conv2d 2 (implicit_gemm_v2): t1h -> t2
+        void *c2[] = { &d_t1h.ptr, &d_W2f.ptr, &d_t2.ptr,
+                       &N, &H, &W, &C,
+                       &kH, &kW, &pad,
+                       &out_H, &out_W,
+                       &M_dim, &K_dim, &C };
+        CHECK_CU(cuLaunchKernel(fn_conv_v2, grid_m_v2, grid_n_v2, 1, 512, 1, 1,
+                                0, nullptr, c2, nullptr));
+
+        // Residual add: t2 + X -> Y
         int total = (int)elems;
         void *r[] = { &d_t2.ptr, &d_X.ptr, &d_Y.ptr, &total };
         CHECK_CU(cuLaunchKernel(fn_residual, res_grid, 1, 1, 256, 1, 1, 0, nullptr, r, nullptr));
@@ -259,7 +274,7 @@ int main(int argc, char **argv) {
     double total_flops = 2.0 * 2.0 * N * H * W * C * C * 9;
     double gflops = total_flops / 1e9 / (avg_ms / 1000.0);
     printf("  %-45s %7.3f ms  %7.1f GFLOPS\n",
-           "Full ResNet Block (5 kernels, implicit_gemm)", avg_ms, gflops);
+           "Full ResNet Block (5 kernels, implicit_gemm_v2)", avg_ms, gflops);
 
     return 0;
 }

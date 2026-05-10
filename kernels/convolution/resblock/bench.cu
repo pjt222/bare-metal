@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static float cpu_silu(float x) { return x / (1.0f + expf(-x)); }
 

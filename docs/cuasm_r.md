@@ -113,8 +113,8 @@ subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 | `kernels/gemm/hgemm/hgemm_16warp.sm_86.cubin`               | 1 |  544  | cuda12 | ✓ |
 | `kernels/gemm/hgemm/hgemm_16warp_splitk.sm_86.cubin`        | 1 | 1504  | cuda13 | ✓ |
 | `phase3/.../flash_attn_br16_v2_pipeline_pad2.cubin`   | 1 | 1256  | cuda13 | ✓ |
-| `phase4/conv2d/conv2d_implicit_gemm_v2.sm_86.cubin`   | 1 | 1024  | cuda13 | ✓ |
-| `phase4/resblock/resblock.sm_86.cubin`                | 2 | 1232  | cuda12 | ✓ |
+| `kernels/convolution/conv2d/conv2d_implicit_gemm_v2.sm_86.cubin`   | 1 | 1024  | cuda13 | ✓ |
+| `kernels/convolution/resblock/resblock.sm_86.cubin`                | 2 | 1232  | cuda12 | ✓ |
 
 Mix of CUDA 12.x and 13.x cubins, single- and multi-kernel cubins.
 
