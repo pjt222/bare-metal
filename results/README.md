@@ -17,7 +17,7 @@ results/
 │   ├── hgemm_imad.csv       ── HGEMM IMAD-stall analysis
 │   └── smoke.csv            ── pre-flight smoke run
 │
-└── cymatic/                 ── phase4/cymatic benchmark captures
+└── cymatic/                 ── kernels/memory_layout/cymatic benchmark captures
     └── grids/               ── per-grid bench output
         ├── grid256_results.txt
         ├── grid512_results.txt
@@ -40,10 +40,10 @@ results/
 |---|---|
 | `results/ncu/all.csv`        | `scripts/profile/ncu_profile_all.sh` |
 | `results/ncu/<single>.csv`   | `scripts/profile/ncu_profile.R --out results/ncu/<name>.csv` |
-| `results/cymatic/grids/`     | `make -C phase4/cymatic sweep` (Makefile target) |
+| `results/cymatic/grids/`     | `make -C kernels/memory_layout/cymatic sweep` (Makefile target) |
 
 ## Cross-references
 
 - [`docs/ncu_metrics.md`](../docs/ncu_metrics.md) — column definitions for the NCU tables
 - [`docs/roofline_measured.md`](../docs/roofline_measured.md) — interpretation of `ncu/all.csv`
-- [`phase4/cymatic/README.md`](../phase4/cymatic/README.md) — what the grids/ files measure
+- [`kernels/memory_layout/cymatic/README.md`](../kernels/memory_layout/cymatic/README.md) — what the grids/ files measure

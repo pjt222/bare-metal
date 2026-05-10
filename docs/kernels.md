@@ -217,7 +217,7 @@ Phase directories (kernel families):
 | 3       | `kernels/attention/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
 | 4       | `kernels/convolution/conv2d/`                  | Direct 9× → implicit GEMM (22× win)            |
 | 4       | `phase4/{groupnorm,resblock,cross_attention,timestep_emb}/` | UNet primitives        |
-| 4       | `phase4/cymatic/`                 | Chladni-pattern memory layout study            |
+| 4       | `kernels/memory_layout/cymatic/`                 | Chladni-pattern memory layout study            |
 | 5       | `phase5/attention_layer/`         | Multi-head attention layer composition         |
 | Exp     | `experiments/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
 | Exp     | `experiments/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |

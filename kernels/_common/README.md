@@ -45,7 +45,7 @@ Project-wide convention:
 implicit context. `kernels/gemm/hgemm/bench_persistent.cu` is correct;
 `kernels/gemm/hgemm/bench_persistent_hgemm.cu` is redundant. Same logic
 gives `kernels/gemm/igemm/bench_sparse.cu` (not `bench_igemm_sparse.cu`)
-and `phase4/cymatic/bench.cu` (not `bench_cymatic.cu`).
+and `kernels/memory_layout/cymatic/bench.cu` (not `bench_cymatic.cu`).
 
 Untracked / gitignored:
 

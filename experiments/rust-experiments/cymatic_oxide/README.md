@@ -1,7 +1,7 @@
 # cymatic_oxide — gather_sum kernel: nvcc vs cuda-oxide
 
 Second cuda-oxide spike, this time on a **non-trivial gather kernel** (the
-phase4/cymatic memory-traffic benchmark) rather than vecadd. Results
+kernels/memory_layout/cymatic memory-traffic benchmark) rather than vecadd. Results
 invert the vecadd story in one dimension and confirm it in another.
 
 ## TL;DR
@@ -94,7 +94,7 @@ the real unroll effect.
 
 | File                          | Origin                                  |
 |-------------------------------|-----------------------------------------|
-| `src/main.rs`                 | Rust port of phase4/cymatic gather_sum |
+| `src/main.rs`                 | Rust port of kernels/memory_layout/cymatic gather_sum |
 | `Cargo.toml`                  | Path-deps to cuda-oxide crates          |
 | `gather_oxide.ptx`            | `cargo oxide run cymatic_gather`        |
 | `gather_oxide.sm_86.cubin`    | `ptxas -arch=sm_86 -O2`                 |
@@ -105,7 +105,7 @@ the real unroll effect.
 | `gather_nvcc.sm_86.sass`      | `cuobjdump -sass`                       |
 | `bench_gather_driver.cu`      | Driver-API harness (loads either cubin) |
 | `bench_gather_driver`         | Built binary                            |
-| `perm.bin`, `traces.bin`      | Symlinked / copied from phase4/cymatic  |
+| `perm.bin`, `traces.bin`      | Symlinked / copied from kernels/memory_layout/cymatic  |
 
 ## How to reproduce
 
@@ -130,7 +130,7 @@ ptxas -arch=sm_86 -O2 gather_oxide.ptx       -o gather_oxide.sm_86.cubin
 nvcc -arch=sm_86 -O2 -std=c++17 -o bench_gather_driver \
      bench_gather_driver.cu -lcuda
 
-# 4. Run on the same data files (phase4/cymatic/{perm,traces}.bin)
+# 4. Run on the same data files (kernels/memory_layout/cymatic/{perm,traces}.bin)
 ./bench_gather_driver gather_nvcc.sm_86.cubin  nvcc  perm.bin traces.bin
 ./bench_gather_driver gather_oxide.sm_86.cubin oxide perm.bin traces.bin
 ```

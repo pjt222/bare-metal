@@ -1278,7 +1278,7 @@ the padding regressions in Observation O).
 ## Observation T — Cymatic memory layout: angle-dependent gather locality on real DRAM
 
 **Date**: 2026-05-07
-**Phase**: memory layout study (`phase4/cymatic/`)
+**Phase**: memory layout study (`kernels/memory_layout/cymatic/`)
 **Headline**: layout aligned with Chladni-mode antinodes gives **+1.53× gather throughput at sector midlines**, **−1.89× at sector boundaries** on RTX 3070 Ti, GRID=2048² (13 MB DRAM-resident buffer).
 
 ### Setup
@@ -1397,7 +1397,7 @@ overall — it redistributes them across access patterns, amplifying
 some and demolishing others. Use it when you can choose the access
 pattern. Avoid it when you cannot.
 
-**Files**: `phase4/cymatic/{gen_cymatic_data.R, bench.cu,
+**Files**: `kernels/memory_layout/cymatic/{gen_cymatic_data.R, bench.cu,
 Makefile, results/}`, `scripts/cymatic_{mapping,analyze,visualize}.R`,
 `docs/cymatic_memory_mapping.md`, `docs/figures/cymatic/cymatic_*.png`.
 
@@ -2852,9 +2852,9 @@ m=4), geomean 1.099× across 15 traces.
 
 `scripts/cymatic/cymatic_optimize.R` drives the sweep:
 
-  1. For each `(n, m)`: regenerate `phase4/cymatic/perm.bin` +
+  1. For each `(n, m)`: regenerate `kernels/memory_layout/cymatic/perm.bin` +
      `traces.bin` via `gen_cymatic_data.R GRID n m`.
-  2. Run `phase4/cymatic/bench` (median-of-11 over 15 access traces, GRID=2048
+  2. Run `kernels/memory_layout/cymatic/bench` (median-of-11 over 15 access traces, GRID=2048
      buffer = 13 MB → DRAM regime where layout effects dominate).
   3. Parse the per-trace `<float>x` speedup from stdout, append to a
      long-form data frame.
@@ -2972,7 +2972,7 @@ loads, and the resulting overhead exceeds the layout's 12% benefit.
 
 ### Trace setup
 
-`phase4/cymatic/gen_fa_traces.R` injects three FA-flavored access
+`kernels/memory_layout/cymatic/gen_fa_traces.R` injects three FA-flavored access
 traces alongside the existing `rowmajor_full` control:
 
 | trace family | order | semantics |
@@ -3089,7 +3089,7 @@ sparse + non-cp.async workloads emerge.
 
 ### Files
 
-- `phase4/cymatic/gen_fa_traces.R`        — FA-flavored trace builder
+- `kernels/memory_layout/cymatic/gen_fa_traces.R`        — FA-flavored trace builder
 - `scripts/cymatic/cymatic_fa_alignment.R`        — sweep driver (step 1)
 - `docs/figures/cymatic/cymatic_fa_alignment_2048.csv`        — long-form data
 - `docs/figures/cymatic/cymatic_fa_alignment_2048_*.png` × 7  — heatmaps
@@ -3202,7 +3202,7 @@ the project's compute-bound thesis.
 **Hardware**: GA104, sm_86, RTX 3070 Ti
 **Date**: 2026-05-10
 
-Second cuda-oxide spike, this time on the phase4/cymatic gather_sum
+Second cuda-oxide spike, this time on the kernels/memory_layout/cymatic gather_sum
 kernel — a serialised `data[idx[k]]` chain rather than vecadd's flat
 LDG. Same toolchain (Rust nightly + LLVM 21 + cuda-oxide) on the same
 machine that ran Obs KK.

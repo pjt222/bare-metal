@@ -2,10 +2,10 @@
 
 > Exploratory layout study. R scripts under `scripts/cymatic_*.R` compute
 > the mappings and report static locality metrics. CUDA benchmarks under
-> `phase4/cymatic/` measure actual GPU performance. **Conclusion: the
+> `kernels/memory_layout/cymatic/` measure actual GPU performance. **Conclusion: the
 > layout is a real, conditional speedup — wins 1.5× when access patterns
 > align with mode geometry, loses 1.9× when they graze nodal lines.**
-> See `phase4/cymatic/README.md` for full empirical results.
+> See `kernels/memory_layout/cymatic/README.md` for full empirical results.
 
 ## The idea
 
@@ -177,7 +177,7 @@ purple) to rim (high addresses, yellow):
 
 ## Empirical GPU benchmark results
 
-Full bench setup at `phase4/cymatic/`. Two memory layouts of the same
+Full bench setup at `kernels/memory_layout/cymatic/`. Two memory layouts of the same
 logical data: row-major-inside vs cymatic-permuted. Same gather kernel,
 same access trace, different physical layout. Bandwidth difference is
 pure layout effect (warp coalescing, L1/L2 hit rate).
@@ -289,7 +289,7 @@ Implementation costs:
 1. **Mode optimization search**: given a workload's known access trace,
    search over `(n₁, m₁, n₂, m₂, α)` to maximize measured GPU
    bandwidth. Search space is small (small integers + 1-2 reals),
-   metric is the reproducible bench in `phase4/cymatic/`. Cheap.
+   metric is the reproducible bench in `kernels/memory_layout/cymatic/`. Cheap.
 2. **Hierarchical cymatic**: outer mode for coarse partition, inner
    mode within each region for fine layout. Might capture multi-scale
    patterns.
@@ -365,7 +365,7 @@ Attention integration, mode selection has to be part of the design:
 
   1. Trace the dominant `(query_idx, key_idx)` access pattern.
   2. Map to cells via the same `i = query_idx, j = key_idx` convention
-     used in `phase4/cymatic/gen_cymatic_data.R`.
+     used in `kernels/memory_layout/cymatic/gen_cymatic_data.R`.
   3. Sweep modes against this trace via `cymatic_optimize.R`.
   4. Use the winning `(n, m)` in the actual K/V buffer permutation.
 

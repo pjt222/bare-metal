@@ -105,7 +105,7 @@ geometry, not compute throughput.
 
 | Path | Pattern | Headline |
 |---|---|---|
-| `phase4/cymatic/` | Chladni-mode (n,m) gather indices over 2D disc | **1.53×** at sector midlines, **0.53×** at sector boundaries (Obs T) |
+| `kernels/memory_layout/cymatic/` | Chladni-mode (n,m) gather indices over 2D disc | **1.53×** at sector midlines, **0.53×** at sector boundaries (Obs T) |
 
 The cymatic kernel is a regular phase-4 kernel — same build, same
 correctness check, same SASS-hand-edit eligibility. It's only

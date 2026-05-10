@@ -53,7 +53,7 @@
 > ~80 KB / ~20,000 words across 01 SASS, 02 GEMM, 03 INT8, 04 Pipelining,
 > 05 Flash Attention, 06 Four Laws.
 >
-> **Cymatic memory layout** (`phase4/cymatic/`, `scripts/cymatic_*.R`,
+> **Cymatic memory layout** (`kernels/memory_layout/cymatic/`, `scripts/cymatic_*.R`,
 > `docs/cymatic_memory_mapping.md`): Chladni-pattern memory layout for
 > circular access geometry. R generator + CUDA gather bench measured at
 > GRID=2048² (DRAM regime). Conditional speedup: **+1.53× at sector
@@ -406,9 +406,9 @@ multiplicative. Realistic outcome: 50-70% of the ideal compound gain.
 - `scripts/cymatic/cymatic_visualize.R` — 4-panel ggplot output
 - `scripts/cymatic/cymatic_analyze.R` — static locality metric (note: predicts
   circular-sweep loss; real bench shows tie/win — metric flaw documented)
-- `phase4/cymatic/gen_cymatic_data.R` — emits `perm.bin` + 15 traces
-- `phase4/cymatic/bench.cu` — gather-sum kernel, median + auto-iters
-- `phase4/cymatic/Makefile` + `README.md` + `results/{256,512,1024,2048}.txt`
+- `kernels/memory_layout/cymatic/gen_cymatic_data.R` — emits `perm.bin` + 15 traces
+- `kernels/memory_layout/cymatic/bench.cu` — gather-sum kernel, median + auto-iters
+- `kernels/memory_layout/cymatic/Makefile` + `README.md` + `results/{256,512,1024,2048}.txt`
 - `docs/cymatic_memory_mapping.md` — theory + bench results
 - `docs/figures/cymatic/cymatic_*.png` — visualizations (mode 4,3 and 6,4)
 

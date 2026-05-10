@@ -13,7 +13,7 @@
 # one (q_tile, k_tile) pair. Trace = sequence of those pairs.
 #
 # We map (q_tile_idx, k_tile_idx) -> grid cell (i, j). The grid must be
-# at least max(Nq, Nk) on each axis. Run from phase4/cymatic/.
+# at least max(Nq, Nk) on each axis. Run from kernels/memory_layout/cymatic/.
 
 source("../../scripts/cymatic/cymatic_mapping.R")
 source("../../scripts/cymatic/cymatic_analyze.R")

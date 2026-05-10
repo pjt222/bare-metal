@@ -12,7 +12,7 @@
 # Usage:
 #   Rscript gen_cymatic_data.R [grid_n=1024] [n=6] [m=4] [n2=0] [m2=0] [alpha2=0]
 #
-# Run from phase4/cymatic/. Sources ../../scripts/cymatic/cymatic_mapping.R and
+# Run from kernels/memory_layout/cymatic/. Sources ../../scripts/cymatic/cymatic_mapping.R and
 # ../../scripts/cymatic/cymatic_analyze.R for the field math and trace generators.
 
 source("../../scripts/cymatic/cymatic_mapping.R")

@@ -180,7 +180,7 @@ across access patterns. Useful when the workload's geometry is fixed
 and known (polar warps, FFT butterflies, attention with rotation
 bias). Avoid when access pattern is generic.
 
-Full bench: [phase4/cymatic/](phase4/cymatic/), theory:
+Full bench: [kernels/memory_layout/cymatic/](kernels/memory_layout/cymatic/), theory:
 [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md),
 postmortem: [docs/gpu_reflections.md Observation T](docs/gpu_reflections.md).
 
@@ -325,7 +325,7 @@ First-time setup: `Rscript -e 'renv::restore()'`.
 ### Memory layout studies
 
 - [docs/cymatic_memory_mapping.md](docs/cymatic_memory_mapping.md) +
-  [phase4/cymatic/](phase4/cymatic/) — Chladni-pattern memory layout
+  [kernels/memory_layout/cymatic/](kernels/memory_layout/cymatic/) — Chladni-pattern memory layout
   with measured GPU benchmarks. Conditional 1.53× win on
   mode-aligned access, 1.89× loss on nodal-line access. Treated
   as a regular phase4 kernel (audit Tier 12); not gated by the
@@ -377,7 +377,7 @@ docs/
   ampere_sass_reference.md, control_codes.md, memory_hierarchy.md
 results/            — captured benchmark + profiling output
   ncu/              — NCU 15-metric sweeps
-  cymatic/grids/    — phase4/cymatic sweep captures
+  cymatic/grids/    — kernels/memory_layout/cymatic sweep captures
 scripts/            -- R analysis + build harnesses (5 subdirs by purpose)
 R/cuasmR/           -- local R package: SASS hand-edit toolchain
 ```

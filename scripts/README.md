@@ -75,4 +75,4 @@ scripts/
   internally; ad-hoc invocations may need it set in the calling shell.
 - All file outputs (CSVs, RDS, PNG) land under `docs/figures/`,
   `results/`, or alongside their generating data
-  (e.g. `phase4/cymatic/` for cymatic outputs).
+  (e.g. `kernels/memory_layout/cymatic/` for cymatic outputs).

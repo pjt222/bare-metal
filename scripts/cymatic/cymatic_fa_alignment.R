@@ -2,7 +2,7 @@
 # cymatic_fa_alignment.R -- (Issue #94 step 1)
 #
 # Sweep cymatic (n, m) modes against Flash Attention block-level access
-# traces. Uses phase4/cymatic/gen_fa_traces.R for trace generation, then
+# traces. Uses kernels/memory_layout/cymatic/gen_fa_traces.R for trace generation, then
 # the same bench harness. Mirrors cymatic_optimize.R but with FA
 # traces instead of the synthetic radial/circular set.
 

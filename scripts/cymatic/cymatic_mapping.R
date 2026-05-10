@@ -299,10 +299,10 @@ if (.is_main()) {
 
   mapping <- cymatic_mapping(grid_n = grid_n, modes = modes)
 
-  # Write to phase4/cymatic/ (audit Tier 4: stop polluting repo root).
-  out_dir <- "phase4/cymatic"
+  # Write to kernels/memory_layout/cymatic/ (audit Tier 4: stop polluting repo root).
+  out_dir <- "kernels/memory_layout/cymatic"
   if (!dir.exists(out_dir)) {
-    # Fall back to CWD if invoked from inside phase4/cymatic/ already.
+    # Fall back to CWD if invoked from inside kernels/memory_layout/cymatic/ already.
     out_dir <- "."
   }
   csv_path <- file.path(out_dir, "cymatic_mapping.csv")

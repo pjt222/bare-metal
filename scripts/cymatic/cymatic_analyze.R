@@ -166,7 +166,7 @@ if (.is_main_analyze()) {
   res <- analyze(mapping, line_cells)
   print(res, row.names = FALSE)
 
-  out_dir <- "phase4/cymatic"
+  out_dir <- "kernels/memory_layout/cymatic"
   if (!dir.exists(out_dir)) out_dir <- "."
   out_path <- file.path(out_dir, "cymatic_locality.csv")
   write.csv(res, out_path, row.names = FALSE)
