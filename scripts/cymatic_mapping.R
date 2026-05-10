@@ -298,7 +298,16 @@ if (.is_main()) {
   }
 
   mapping <- cymatic_mapping(grid_n = grid_n, modes = modes)
-  write_mapping_table(mapping, "cymatic_mapping.csv")
-  saveRDS(mapping, "cymatic_mapping.rds")
-  cat("[cymatic] also saved cymatic_mapping.rds\n")
+
+  # Write to phase4/cymatic/ (audit Tier 4: stop polluting repo root).
+  out_dir <- "phase4/cymatic"
+  if (!dir.exists(out_dir)) {
+    # Fall back to CWD if invoked from inside phase4/cymatic/ already.
+    out_dir <- "."
+  }
+  csv_path <- file.path(out_dir, "cymatic_mapping.csv")
+  rds_path <- file.path(out_dir, "cymatic_mapping.rds")
+  write_mapping_table(mapping, csv_path)
+  saveRDS(mapping, rds_path)
+  cat(sprintf("[cymatic] wrote %s\n[cymatic] wrote %s\n", csv_path, rds_path))
 }

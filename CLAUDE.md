@@ -160,7 +160,7 @@ Tolerance conventions by precision:
 
 ## Current State and Next Steps
 
-All 5 phases complete. See `CONTINUE_HERE.md` for session state, benchmark results table, and prioritized next steps (split-Q Flash Attention, INT8 IMMA, persistent kernel grid). See `docs/gpu_reflections.md` for optimization postmortems.
+All 5 phases complete. See `docs/CONTINUE_HERE.md` for session state, benchmark results table, and prioritized next steps (split-Q Flash Attention, INT8 IMMA, persistent kernel grid). See `docs/gpu_reflections.md` for optimization postmortems.
 
 ## Team Activation (REQUIRED when user requests a team)
 

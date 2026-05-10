@@ -222,8 +222,10 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 | 3     | Flash Attention: scalar → 4-warp → Br=16 HMMA | ✅     | **1.60× cumulative** post-session, 11,453 GFLOPS    |
 | 4     | Diffusion UNet: timestep, GroupNorm, conv2d, ResNet, cross-attn | ✅ | Full SASS primitive inventory + cymatic study |
 | 5     | Sparse 2:4 GEMM, INT8 quant, optimized epilogues | ✅  | 41,721 sparse-equiv GFLOPS                            |
-| 6     | Front-end alternatives: cuda-oxide Rust→PTX spike | ✅  | Pipeline portable, 2× SASS bloat, nvcc stays default  |
-| 6     | cuda-oxide on gather_sum (cymatic kernel)         | ✅  | oxide 0.67× SASS but 0.65–0.80× runtime; nvcc unroll heuristic dominates (Obs LL) |
+| Exp   | Front-end alternatives: cuda-oxide Rust→PTX spike | ✅  | Pipeline portable, 2× SASS bloat, nvcc stays default (Obs KK) |
+| Exp   | cuda-oxide on gather_sum (cymatic kernel)         | ✅  | oxide 0.67× SASS but 0.65–0.80× runtime; nvcc unroll heuristic dominates (Obs LL) |
+
+*Exp = `experiments/` (front-end / tooling research, not a numbered kernel phase)*
 
 ---
 
@@ -249,7 +251,7 @@ cuobjdump -sass kernel.sm_86.cubin | grep -E 'HMMA|LDSM|STS' | head
 Rscript scripts/build.R roundtrip kernel.cu
 ```
 
-See [setup.md](setup.md) for environment install. Run
+See [SETUP.md](SETUP.md) for environment install. Run
 `Rscript scripts/verify_setup.R` to confirm everything is working.
 
 ---
@@ -354,7 +356,7 @@ phase4/             — Diffusion UNet primitives
   resblock/         — full UNet block, 7.01× via implicit GEMM
   cross_attention/  — HMMA + SHFL + MUFU; regime-dependent v2
   cymatic/          — speculative Chladni-pattern memory layout study
-phase6/             — Front-end alternatives sandbox
+experiments/             — Front-end alternatives sandbox
   rust-experiments/ — cuda-oxide Rust→PTX spike vs nvcc baseline
     cymatic_oxide/    — cuda-oxide gather_sum vs nvcc gather_sum (Obs LL)
 docs/

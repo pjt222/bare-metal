@@ -62,8 +62,8 @@ cuobjdump -sass "$REPO_ROOT/phase1/vector_add.sm_86.cubin" \
 # 6) cuasmR roundtrip — must run from REPO_ROOT for renv .Rprofile to load
 ( cd "$REPO_ROOT" && Rscript -e '
     library(cuasmR)
-    obj <- cuasm_read("phase6/rust-experiments/vecadd_oxide.sm_86.cubin")
-    cuasm_write(obj, "phase6/rust-experiments/vecadd_oxide.roundtrip.cubin")
+    obj <- cuasm_read("experiments/rust-experiments/vecadd_oxide.sm_86.cubin")
+    cuasm_write(obj, "experiments/rust-experiments/vecadd_oxide.roundtrip.cubin")
     cat("kernels:", paste(obj$kernels$kernel, collapse=", "), "\n")
     cat("instructions:", nrow(obj$insns), "\n")
   ' )
@@ -80,7 +80,7 @@ fi
 # 8) FADD → FMUL hand-edit on Rust-origin cubin
 ( cd "$REPO_ROOT" && Rscript -e '
     library(cuasmR)
-    obj <- cuasm_read("phase6/rust-experiments/vecadd_oxide.sm_86.cubin")
+    obj <- cuasm_read("experiments/rust-experiments/vecadd_oxide.sm_86.cubin")
     fadd <- subset(obj$insns, grepl("FADD", text))
     if (nrow(fadd) != 1) stop("expected exactly 1 FADD")
     # delta from phase1: opcode last digit 1->0, ctrl bit 0x400000 set
@@ -89,7 +89,7 @@ fi
                   bitwOr(strtoi(substr(fadd$ctrl_hex[1], 3, 18), 16L), 0x400000L))
     obj <- cuasm_set(obj, kernel = fadd$kernel[1], slot = fadd$slot[1],
                      instr_hex = new_instr, ctrl_hex = new_ctrl)
-    cuasm_write(obj, "phase6/rust-experiments/vecadd_oxide.fmul.cubin")
+    cuasm_write(obj, "experiments/rust-experiments/vecadd_oxide.fmul.cubin")
     cat("patched FADD slot", fadd$slot[1], "->", new_instr, "/", new_ctrl, "\n")
   ' )
 

@@ -231,11 +231,11 @@ GG) directly transfers.
 
 A phase-6 spring-network effort would deliver:
 
-  1. **Vertex-centric Verlet kernel** (`phase6/spring/verlet.cu`):
+  1. **Vertex-centric Verlet kernel** (`experiments/spring/verlet.cu`):
      fully-unrolled per-polyhedron-type force gather. Target: 10× a
      baseline cuSPARSE-based naive implementation at |V|=1000.
   2. **Implicit-Euler CG solver** with hand-rolled SpMV
-     (`phase6/spring/cg_solver.cu`): templated on polyhedron type.
+     (`experiments/spring/cg_solver.cu`): templated on polyhedron type.
      Compile-time-known sparsity pattern unlocks register-blocking
      for the SpMV inner loop.
   3. **Symmetry-reduced kernel** for icosahedral/octahedral cases:

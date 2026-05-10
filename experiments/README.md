@@ -1,13 +1,13 @@
-# Phase 6 — Front-end and tooling experiments
+# experiments/ — Front-end and tooling experiments
 
-Phase 6 is **not a kernel phase**. Phases 1–5 are SASS hand-edit
-research on specific GPU compute kernels; phase 6 is a sandbox for
+Not a kernel phase. Phases 1–5 are SASS hand-edit research on
+specific GPU compute kernels; this directory is a sandbox for
 experiments that sit *above* SASS — alternative front-ends, codegen
 backends, and developer-experience tooling.
 
-> **Naming note**: this directory will likely be renamed `experiments/`
-> in a future cleanup pass (see project-structure audit Tier 3) to
-> remove the misleading `phaseN/` prefix.
+> **History**: this directory was originally named `phase6/` and was
+> renamed to `experiments/` to remove the misleading `phaseN/` prefix
+> (project-structure audit Tier 4).
 
 ## Sub-experiments
 

@@ -166,8 +166,11 @@ if (.is_main_analyze()) {
   res <- analyze(mapping, line_cells)
   print(res, row.names = FALSE)
 
-  write.csv(res, "cymatic_locality.csv", row.names = FALSE)
-  cat("\n[cymatic] wrote cymatic_locality.csv\n")
+  out_dir <- "phase4/cymatic"
+  if (!dir.exists(out_dir)) out_dir <- "."
+  out_path <- file.path(out_dir, "cymatic_locality.csv")
+  write.csv(res, out_path, row.names = FALSE)
+  cat(sprintf("\n[cymatic] wrote %s\n", out_path))
   cat("[cymatic] interpretation: cym_vs_row_lines > 1 ⇒ cymatic wins on this pattern\n")
   cat("[cymatic]                  cym_vs_row_jump  > 1 ⇒ cymatic produces shorter strides\n")
 }

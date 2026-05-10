@@ -213,7 +213,7 @@ For Flash Attention to go from 6.6% peak to 50% peak (8× improvement)
 requires split-Q parallelism specifically. Without it, no amount of
 pipelining or tile tuning closes the gap at small seq. Split-Q is the
 single highest-EV optimization remaining in this codebase, listed in
-`CONTINUE_HERE.md` as the primary unfinished work.
+`docs/CONTINUE_HERE.md` as the primary unfinished work.
 
 ## Where this project competes well
 

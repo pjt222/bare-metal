@@ -83,10 +83,10 @@ cymatic_locality.csv
 # Keep the small comparison artifacts so the README's measured results are
 # reproducible from disk, but exclude the upstream NVlabs/cuda-oxide example
 # copy (NVIDIA Apache-2.0 — not ours, fetched fresh by run_oxide.sh).
-phase6/rust-experiments/vecadd_oxide/
-!phase6/rust-experiments/**/*.cubin
-!phase6/rust-experiments/**/*.sass
-!phase6/rust-experiments/**/*.ptx
+experiments/rust-experiments/vecadd_oxide/
+!experiments/rust-experiments/**/*.cubin
+!experiments/rust-experiments/**/*.sass
+!experiments/rust-experiments/**/*.ptx
 # Large data files inside phase6 sub-experiments (regenerable from R scripts)
-phase6/rust-experiments/**/perm.bin
-phase6/rust-experiments/**/traces.bin
+experiments/rust-experiments/**/perm.bin
+experiments/rust-experiments/**/traces.bin

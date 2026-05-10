@@ -67,7 +67,7 @@ this project.
 Three observations in [`gpu_reflections.md`](gpu_reflections.md) cover
 the cross-kernel statistics (numbers reported as of the original Obs
 run at 103 kernels; the 18 added since — mostly test cubins and the
-phase6 oxide spike — do not change the medians):
+experiments oxide spike — do not change the medians):
 
 | Observation | Finding                                                                 |
 |-------------|-------------------------------------------------------------------------|
@@ -214,8 +214,8 @@ Phase directories (kernel families):
 | 4       | `phase4/{groupnorm,resblock,cross_attention,timestep_emb}/` | UNet primitives        |
 | 4       | `phase4/cymatic/`                 | Speculative Chladni-pattern memory study       |
 | 5       | `phase5/attention_layer/`         | Multi-head attention layer composition         |
-| 6       | `phase6/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
-| 6       | `phase6/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |
+| Exp     | `experiments/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
+| Exp     | `experiments/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |
 
 ---
 

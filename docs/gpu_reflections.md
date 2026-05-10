@@ -3104,7 +3104,7 @@ keeping the cuasmR SASS hand-edit research intact?
 
 Spike kernel: vecadd, matched against `phase1/vector_add.cu` baseline.
 Live install + run on RTX 3070 Ti, sm_86, CUDA 13.2. Full writeup in
-`phase6/rust-experiments/README.md`.
+`experiments/rust-experiments/README.md`.
 
 ### Headline results
 
@@ -3174,7 +3174,7 @@ Live install + run on RTX 3070 Ti, sm_86, CUDA 13.2. Full writeup in
 
 ### Verdict
 
-**Don't replace nvcc.** Treat phase6 as a sandbox for narrow
+**Don't replace nvcc.** Treat `experiments/` as a sandbox for narrow
 experiments where Rust's front-end features earn their cost:
 
 - ptxas output diffs vs nvcc on a hand-tuned phase2/3 kernel
@@ -3189,16 +3189,16 @@ the project's compute-bound thesis.
 
 ### Files
 
-- `phase6/rust-experiments/README.md`           — full writeup, all numbers
-- `phase6/rust-experiments/run_oxide.sh`        — bootstrap + driver script
-- `phase6/rust-experiments/vecadd_nvcc.ptx`     — nvcc PTX baseline
-- `phase6/rust-experiments/vecadd_oxide.ptx`    — oxide PTX
-- `phase6/rust-experiments/vecadd_*.sm_86.sass` — disassembly side-by-side
-- `phase6/rust-experiments/vecadd_oxide.fmul.cubin` — hand-edited
+- `experiments/rust-experiments/README.md`           — full writeup, all numbers
+- `experiments/rust-experiments/run_oxide.sh`        — bootstrap + driver script
+- `experiments/rust-experiments/vecadd_nvcc.ptx`     — nvcc PTX baseline
+- `experiments/rust-experiments/vecadd_oxide.ptx`    — oxide PTX
+- `experiments/rust-experiments/vecadd_*.sm_86.sass` — disassembly side-by-side
+- `experiments/rust-experiments/vecadd_oxide.fmul.cubin` — hand-edited
 
 ## Observation LL — cuda-oxide gather_sum: fewer SASS instructions, slower runtime (vecadd inverted, unroll dominates)
 
-**Phase**: phase6/rust-experiments/cymatic_oxide
+**Phase**: experiments/rust-experiments/cymatic_oxide
 **Hardware**: GA104, sm_86, RTX 3070 Ti
 **Date**: 2026-05-10
 
@@ -3262,9 +3262,9 @@ on the hot path).
 
 ### Files
 
-- `phase6/rust-experiments/cymatic_oxide/README.md`         — full writeup
-- `phase6/rust-experiments/cymatic_oxide/src/main.rs`       — Rust kernel port
-- `phase6/rust-experiments/cymatic_oxide/gather_oxide.ptx`  — oxide PTX
-- `phase6/rust-experiments/cymatic_oxide/gather_nvcc.cu`    — nvcc-only kernel source
-- `phase6/rust-experiments/cymatic_oxide/gather_*.sm_86.sass` — disassembly side-by-side
-- `phase6/rust-experiments/cymatic_oxide/bench_gather_driver.cu` — Driver-API harness
+- `experiments/rust-experiments/cymatic_oxide/README.md`         — full writeup
+- `experiments/rust-experiments/cymatic_oxide/src/main.rs`       — Rust kernel port
+- `experiments/rust-experiments/cymatic_oxide/gather_oxide.ptx`  — oxide PTX
+- `experiments/rust-experiments/cymatic_oxide/gather_nvcc.cu`    — nvcc-only kernel source
+- `experiments/rust-experiments/cymatic_oxide/gather_*.sm_86.sass` — disassembly side-by-side
+- `experiments/rust-experiments/cymatic_oxide/bench_gather_driver.cu` — Driver-API harness

@@ -117,6 +117,6 @@ phase2/activations/activations.sm_86.cubin,gelu_kernel,12,NA,NA,0,FALSE,0,FALSE,
 phase4/resblock/resblock.sm_86.cubin,residual_add,12,NA,NA,0,FALSE,0,FALSE,380,NA,NA
 phase4/timestep_emb/timestep_emb.sm_86.cubin,timestep_emb_single,12,NA,NA,0,FALSE,0,FALSE,372,NA,NA
 phase5/attention_layer/utils.sm_86.cubin,fp32_to_fp16,12,NA,NA,0,FALSE,0,FALSE,372,NA,NA
-phase6/rust-experiments/vecadd_oxide.sm_86.cubin,vecadd,12,NA,NA,0,FALSE,0,FALSE,400,NA,NA
+experiments/rust-experiments/vecadd_oxide.sm_86.cubin,vecadd,12,NA,NA,0,FALSE,0,FALSE,400,NA,NA
 phase2/activations/activations_fast.sm_86.cubin,relu_kernel,10,NA,NA,0,FALSE,0,FALSE,372,NA,NA
 phase2/activations/activations.sm_86.cubin,relu_kernel,10,NA,NA,0,FALSE,0,FALSE,372,NA,NA

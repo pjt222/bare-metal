@@ -1,4 +1,4 @@
-# phase6 / rust-experiments — cuda-oxide vs nvcc spike
+# experiments/rust-experiments — cuda-oxide vs nvcc spike
 
 End-to-end comparison: `Rust → cuda-oxide → PTX → ptxas → SASS → cuasmR patch → run`
 vs
@@ -135,8 +135,8 @@ fixed-size arrays.
 ## Toolchain footprint
 
 Installed under `~/cuda-oxide-deps/` (NOT on D: — see disk constraint).
-Symlinked into `phase6/rust-experiments/llvm21` and
-`phase6/rust-experiments/cuda-oxide` (not committed to repo; rebuild
+Symlinked into `experiments/rust-experiments/llvm21` and
+`experiments/rust-experiments/cuda-oxide` (not committed to repo; rebuild
 locally per `run_oxide.sh`).
 
 | Component              | Source                             | Disk    |
@@ -204,7 +204,7 @@ single-language alternative for the kernel front-end.
 
 ### Recommended integration (if any)
 
-Don't wholesale-replace nvcc. Instead, treat phase6 as a permanent
+Don't wholesale-replace nvcc. Instead, treat `experiments/` as a permanent
 sandbox for **specific experiments**:
 
 1. **Compare ptxas output quality**: when hand-tuning a phase2/3 kernel,

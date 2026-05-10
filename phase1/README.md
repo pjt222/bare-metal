@@ -171,7 +171,7 @@ python ../scripts/build.py roundtrip vector_add.cu
 ```
 
 If this fails, CuAssembler has a compatibility issue with your CUDA version.
-Check `setup.md` and ensure you're using CUDA 12.x.
+Check `SETUP.md` and ensure you're using CUDA 12.x.
 
 ## What's Next
 

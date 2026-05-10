@@ -170,7 +170,7 @@ main <- function() {
   } else {
     cat(sprintf("%s %d/%d checks failed -- fix issues above before proceeding\n\n",
                 FAIL, total - passed, total))
-    cat("  See setup.md for installation instructions\n")
+    cat("  See SETUP.md for installation instructions\n")
   }
   cat(strrep("=", 60), "\n")
 

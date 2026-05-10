@@ -20,8 +20,10 @@ PYTHON      := python3
 # ------------------------------------------------------------------
 # Find all source files
 # ------------------------------------------------------------------
-KERNEL_CU   := $(shell find . -path ./tools -prune -o -name '*.cu' -print | grep -v 'bench' | grep -v 'host' | grep -v '^./tests')
-BENCH_CU    := $(shell find . -path ./tools -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention -name 'bench_*.cu' -print) $(shell find phase4 -name 'bench_*.cu' -print)
+# experiments/ has its own build conventions (Driver-API harness, Rust
+# kernels). Excluded from the default Makefile sweep.
+KERNEL_CU   := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name '*.cu' -print | grep -v 'bench' | grep -v 'host' | grep -v '^./tests')
+BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention -name 'bench_*.cu' -print) $(shell find phase4 -name 'bench_*.cu' -print)
 
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)

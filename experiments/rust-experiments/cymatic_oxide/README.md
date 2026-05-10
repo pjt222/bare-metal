@@ -122,7 +122,7 @@ cargo oxide run cymatic_gather  # exits with MISMATCH (smoke test reads
                                 # still emitted before launch.
 
 # 2. Compile both cubins
-cd /mnt/d/dev/p/bare-metal/phase6/rust-experiments/cymatic_oxide
+cd /mnt/d/dev/p/bare-metal/experiments/rust-experiments/cymatic_oxide
 nvcc -arch=sm_86 -O2 --cubin gather_nvcc.cu -o gather_nvcc.sm_86.cubin
 ptxas -arch=sm_86 -O2 gather_oxide.ptx       -o gather_oxide.sm_86.cubin
 
@@ -137,7 +137,7 @@ nvcc -arch=sm_86 -O2 -std=c++17 -o bench_gather_driver \
 
 ## Verdict
 
-Updates phase6 verdict. The 2× SASS bloat conclusion from the vecadd
+Updates the experiments/ verdict. The 2× SASS bloat conclusion from the vecadd
 spike was a kernel-shape artifact:
 
 - **vecadd**: pointer-bound, single-LDG body. Bounds-check bloat
