@@ -213,12 +213,12 @@ Phase directories (kernel families):
 | 2       | `kernels/gemm/hgemm/`                   | WMMA → 16-warp 128×128 HGEMM                   |
 | 2       | `kernels/gemm/hgemm_sparse/`            | 2:4 sparse mma.sp                              |
 | 2       | `kernels/gemm/igemm/`                   | INT8 IMMA + sparse + online quant              |
-| 2       | `phase2/{softmax,layernorm,activations}/` | Reductions + MUFU SFU                  |
+| 2       | `kernels/reductions/{softmax,layernorm}/`, `kernels/elementwise/activations/` | Reductions + MUFU SFU                  |
 | 3       | `kernels/attention/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
 | 4       | `kernels/convolution/conv2d/`                  | Direct 9× → implicit GEMM (22× win)            |
-| 4       | `phase4/{groupnorm,resblock,cross_attention,timestep_emb}/` | UNet primitives        |
+| 4       | `kernels/{reductions/groupnorm,convolution/resblock,attention/cross_attention,elementwise/timestep_emb}/` | UNet primitives        |
 | 4       | `kernels/memory_layout/cymatic/`                 | Chladni-pattern memory layout study            |
-| 5       | `phase5/attention_layer/`         | Multi-head attention layer composition         |
+| 5       | `kernels/composition/attention_layer/`         | Multi-head attention layer composition         |
 | Exp     | `experiments/rust-experiments/`        | cuda-oxide Rust→PTX spike (Obs KK)             |
 | Exp     | `experiments/rust-experiments/cymatic_oxide/` | cuda-oxide on gather_sum: SASS shorter, runtime slower (Obs LL) |
 

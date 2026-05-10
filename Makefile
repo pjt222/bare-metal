@@ -26,17 +26,19 @@ RSCRIPT     := Rscript
 # experiments/ has its own build conventions (Driver-API harness, Rust
 # kernels). Excluded from the default Makefile sweep.
 KERNEL_CU   := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name '*.cu' -print | grep -v 'bench' | grep -v 'host' | grep -v '^./tests')
-BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention kernels/attention/flash_attention -maxdepth 2 -name 'bench_*.cu' 2>/dev/null) $(shell find phase4 kernels -name 'bench_*.cu' -print 2>/dev/null)
+BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name 'bench.cu' -print) $(shell find kernels -name 'bench_*.cu' -print 2>/dev/null)
 
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
 
-# Phase-specific bench executables
-PHASE1_BENCH  :=  # tutorial — no benches, just vector_add hello-world
-PHASE2_BENCH  := $(shell find phase2 -name 'bench.cu' | sed 's/\.cu//')
-PHASE3_BENCH  := $(shell find phase3 -name 'bench*.cu' | sed 's/\.cu//')
-PHASE4_BENCH  := $(shell find phase4 -name 'bench*.cu' | sed 's/\.cu//')
-PHASE5_BENCH  := $(shell find phase5 -name 'bench*.cu' | sed 's/\.cu//')
+# Family-specific bench executables (Tier 13 reorg replaces phase{1..5}/).
+GEMM_BENCH         := $(shell find kernels/gemm          -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+REDUCTIONS_BENCH   := $(shell find kernels/reductions    -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+ELEMENTWISE_BENCH  := $(shell find kernels/elementwise   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+ATTENTION_BENCH    := $(shell find kernels/attention     -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+CONVOLUTION_BENCH  := $(shell find kernels/convolution   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+MEMORY_LAYOUT_BENCH:= $(shell find kernels/memory_layout -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+COMPOSITION_BENCH  := $(shell find kernels/composition   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 
 # ------------------------------------------------------------------
 # Default target
@@ -59,26 +61,10 @@ benches: $(BENCH_EXES)
 	@mkdir -p $(dir $@)
 	$(NVCC) $(CUBIN_FLAGS) -o $@ $<
 
-# Benchmarks need shared headers (-Ikernels/_common) and the CUDA
-# Driver API (-lcuda). One pattern per family layout (kernels/<fam>/<k>/
-# vs the legacy phase{2..5}/<k>/ for kernels not yet migrated).
+# Generic bench rule for any kernels/<family>/<kernel>/bench.cu. Per-dir
+# multi-variant rules (bench_*.cu) follow below; make's % can't bind two
+# different segments in one target so we list them family-by-family.
 kernels/%/bench: kernels/%/bench.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-phase2/%/bench: phase2/%/bench.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-phase3/%/bench: phase3/%/bench.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-phase4/%/bench: phase4/%/bench.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-phase5/%/bench: phase5/%/bench.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
@@ -111,22 +97,32 @@ kernels/gemm/igemm/bench_%: kernels/gemm/igemm/bench_%.cu
 # ------------------------------------------------------------------
 # Phase targets
 # ------------------------------------------------------------------
-phase1 tutorial: kernels/tutorial/vector_add.$(SM_ARCH).cubin kernels/tutorial/host
+# Family targets: build all cubins + benches under kernels/<family>/.
+tutorial: kernels/tutorial/vector_add.$(SM_ARCH).cubin kernels/tutorial/host
 
-phase2: $(shell find phase2 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM_ARCH).cubin/') $(PHASE2_BENCH)
+gemm:           $(shell find kernels/gemm          -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(GEMM_BENCH)
+reductions:     $(shell find kernels/reductions    -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(REDUCTIONS_BENCH)
+elementwise:    $(shell find kernels/elementwise   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(ELEMENTWISE_BENCH)
+attention:      $(shell find kernels/attention     -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(ATTENTION_BENCH)
+convolution:    $(shell find kernels/convolution   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(CONVOLUTION_BENCH)
+memory_layout:  $(shell find kernels/memory_layout -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(MEMORY_LAYOUT_BENCH)
+composition:    $(shell find kernels/composition   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(COMPOSITION_BENCH)
 
-phase3: $(shell find phase3 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM_ARCH).cubin/') $(PHASE3_BENCH)
-
-phase4: $(shell find phase4 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM_ARCH).cubin/') $(PHASE4_BENCH)
-
-phase5: $(shell find phase5 -name '*.cu' ! -name 'bench*.cu' | sed 's/\.cu/.$(SM_ARCH).cubin/') $(PHASE5_BENCH)
+# Legacy phaseN aliases — forward to family targets so old invocations
+# (e.g. tutorials, scripts) keep working post-Tier-13.
+phase1: tutorial
+phase2: gemm reductions elementwise
+phase3: attention
+phase4: attention convolution reductions elementwise memory_layout
+phase5: composition
 
 # ------------------------------------------------------------------
 # Testing
 # ------------------------------------------------------------------
-test: $(PHASE2_BENCH)
+# Smoke test: run all GEMM + reduction + elementwise benches at 512^3.
+test: $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH)
 	@echo "=== Running smoke tests ==="
-	@for exe in $(PHASE2_BENCH); do \
+	@for exe in $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH); do \
 		if [ -f "$$exe" ]; then \
 			echo "--- $$exe ---"; \
 			"$$exe" 512 512 512 || true; \
@@ -204,8 +200,19 @@ help:
 	@echo "  make all       — build all cubins + benches"
 	@echo "  make cubins    — compile all .cu files to .cubin"
 	@echo "  make benches   — compile all bench*.cu to executables"
-	@echo "  make phaseN    — build phase N only (N=1..5)"
 	@echo "  make test      — run smoke tests on compiled benches"
 	@echo "  make disasm    — disassemble all cubins to .sass"
 	@echo "  make clean     — remove all generated artifacts"
+	@echo ""
+	@echo "By family (Tier 13):"
+	@echo "  make tutorial      — vector_add hello-world"
+	@echo "  make gemm          — sgemm/hgemm/hgemm_sparse/igemm"
+	@echo "  make reductions    — softmax/layernorm/groupnorm"
+	@echo "  make elementwise   — activations/timestep_emb"
+	@echo "  make attention     — flash_attention/cross_attention"
+	@echo "  make convolution   — conv2d/resblock"
+	@echo "  make memory_layout — cymatic"
+	@echo "  make composition   — attention_layer"
+	@echo "  make phaseN        — alias → corresponding family targets"
+	@echo ""
 	@echo "  make help      — show this message"

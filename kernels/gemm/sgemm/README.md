@@ -1,4 +1,4 @@
-# Phase 2: SGEMM — Matrix Multiply in SASS
+# kernels/gemm/sgemm — FP32 matrix multiply (naive → tiled → register-blocked)
 
 ## Overview
 

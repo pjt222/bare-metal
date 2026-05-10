@@ -1,4 +1,4 @@
-# Phase 2: HGEMM — Tensor Core Matrix Multiply
+# kernels/gemm/hgemm — Tensor Core matrix multiply (FP16 → FP32 via HMMA)
 
 ## Why HGEMM
 

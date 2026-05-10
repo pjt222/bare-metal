@@ -95,7 +95,7 @@ when on-chip resources are shared.
 
 | Path | Composition | Note |
 |---|---|---|
-| `phase5/attention_layer/`     | QKV-proj (HGEMM) → FA → out-proj (HGEMM) → residual | ~35-40% of layer runtime is the two HGEMMs |
+| `kernels/composition/attention_layer/`     | QKV-proj (HGEMM) → FA → out-proj (HGEMM) → residual | ~35-40% of layer runtime is the two HGEMMs |
 
 ## G. Memory layout studies
 

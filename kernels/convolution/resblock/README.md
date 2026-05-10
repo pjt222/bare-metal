@@ -1,4 +1,4 @@
-# phase4/resblock — fused ResNet block (groupnorm → SiLU → conv → groupnorm → SiLU → conv → add)
+# kernels/convolution/resblock — fused ResNet block (groupnorm → SiLU → conv → groupnorm → SiLU → conv → add)
 
 Stable Diffusion's UNet ResBlock as a single fused kernel. End-to-end
 showcase: chains three already-built primitives (conv2d, groupnorm,
@@ -39,5 +39,5 @@ ResBlock 320-channel @ 64×64 (SD middle block):
 
 - [Obs R](../../docs/gpu_reflections.md) — "ResBlock conv2d swap: 7× speedup from picking the right kernel"
 - [Obs GG](../../docs/gpu_reflections.md) — implicit GEMM v2 specifically, with ResBlock as outlier-of-interest
-- [phase4/conv2d/README.md](../conv2d/README.md) — the underlying conv kernels
+- [kernels/convolution/conv2d/README.md](../conv2d/README.md) — the underlying conv kernels
 - [kernels/reductions/groupnorm/README.md](../groupnorm/README.md) — the normalization step

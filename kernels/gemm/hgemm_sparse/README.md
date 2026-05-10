@@ -1,4 +1,4 @@
-# phase2/hgemm_sparse — 2:4 structured sparse HGEMM (`mma.sp`)
+# kernels/gemm/hgemm_sparse — 2:4 structured sparse HGEMM (`mma.sp`)
 
 FP16 GEMM where every contiguous 4-element group of operand A has at
 most 2 non-zeros. Encoded via NVIDIA's 2:4 sparsity primitive

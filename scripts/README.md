@@ -36,7 +36,7 @@ scripts/
 │
 ├── bench/                    ── benchmark harnesses (need GPU)
 │   ├── bench_regress.R       ── runs all benches vs docs/baselines.json
-│   ├── bench_flash_all.R     ── runs every FA variant in phase3/, prints table
+│   ├── bench_flash_all.R     ── runs every FA variant in kernels/attention/flash_attention/, prints table
 │   ├── bench_imma_s02.R      ── one-off: IMMA S02 vs S04 stall comparison
 │   ├── bench_imma_s04.R      ── companion to s02
 │   └── handtune_imma_s04.R   ── byte-patch S04 → S02 via cuasmR + run

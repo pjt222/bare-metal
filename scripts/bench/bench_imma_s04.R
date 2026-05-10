@@ -20,7 +20,7 @@ if (dir.exists(WSL_CUDA_LIB) &&
 }
 Sys.setenv(PATH = paste("/usr/local/cuda/bin", Sys.getenv("PATH"), sep = ":"))
 
-igemm_dir <- "phase2/igemm"
+igemm_dir <- "kernels/gemm/igemm"
 bench_bin <- file.path(igemm_dir, "bench")
 stopifnot(file.exists(bench_bin))
 
@@ -48,7 +48,7 @@ cases <- list(
 )
 
 run_bench_grep <- function(grep_re) {
-    # bench loads cubins relative to its CWD; run inside phase2/igemm.
+    # bench loads cubins relative to its CWD; run inside kernels/gemm/igemm.
     orig_cwd <- getwd()
     setwd(igemm_dir); on.exit(setwd(orig_cwd), add = TRUE)
     out <- system2("./bench", stdout = TRUE, stderr = TRUE)

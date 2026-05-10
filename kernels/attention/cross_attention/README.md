@@ -1,4 +1,4 @@
-# phase4/cross_attention — image-conditioned attention (Q from latent, KV from text)
+# kernels/attention/cross_attention — image-conditioned attention (Q from latent, KV from text)
 
 Cross-attention block from Stable Diffusion's UNet: Q comes from the
 spatial latent feature map (HWxD_q), K and V from a text-encoder context
@@ -36,6 +36,6 @@ nvcc -arch=sm_86 -O2 -o bench_pipelined bench_pipelined.cu -lcuda -I../../kernel
 
 ## Cross-references
 
-- Phase 3 [flash_attention/README.md](../../phase3/flash_attention/README.md) for the symmetric self-attention case
+- Phase 3 [flash_attention/README.md](../flash_attention/README.md) for the symmetric self-attention case
 - [docs/tutorial/05-flash-attention.md](../../docs/tutorial/05-flash-attention.md) — softmax + tiling derivation
 - [docs/kernels.md](../../docs/kernels.md) — measured numbers

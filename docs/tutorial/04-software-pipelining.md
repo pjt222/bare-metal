@@ -292,7 +292,7 @@ reduction (FA v2). The other three rows are the regimes where it loses
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/phase2/igemm
+cd /mnt/d/dev/p/bare-metal/kernels/gemm/igemm
 
 # Build sync and async variants
 nvcc --cubin -arch=sm_86 -O2 -o igemm_pipelined.sm_86.cubin igemm_pipelined.cu
@@ -300,7 +300,7 @@ nvcc --cubin -arch=sm_86 -O2 -o igemm_pipelined_cpasync.sm_86.cubin igemm_pipeli
 
 # (use kernels/gemm/igemm/bench.cu to compare; +35% expected on cpasync)
 
-cd ../../phase3/flash_attention
+cd ../../kernels/attention/flash_attention
 
 # Build the v2 + v2_pipeline pair
 nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu

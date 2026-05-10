@@ -106,13 +106,21 @@ CUDA C++ (.cu) -> nvcc -> PTX -> ptxas -> SASS (.cubin) -> cuasmR (R) -> patched
 
 ### Phase Structure
 
-Each phase directory contains kernel `.cu` files, `bench_*.cu` benchmarks, a `Makefile`, and a `README.md` with algorithm walkthrough and results.
+Kernels are organised by content / internal structure under `kernels/`
+(audit Tier 13 reorg). Each kernel directory contains `.cu` files,
+`bench*.cu` benchmarks, and a `README.md` with algorithm walkthrough
+and measured results.
 
+- **kernels/_common/** — Shared headers (`bench.h`, `check.h`, `bench_driver.h`) included by all benchmarks
 - **kernels/tutorial/** — Vector add "Hello World" (FADD→FMUL hand-edit proof of concept)
-- **phase2/** — ML primitives: `sgemm/`, `hgemm/`, `softmax/`, `layernorm/`, `activations/`
-- **phase3/** — Flash Attention variants: scalar → 4-warp → Br=16 HMMA (19x speedup)
-- **phase4/** — Diffusion UNet: `timestep_emb/`, `groupnorm/`, `conv2d/`, `resblock/`, `cross_attention/`
-- **kernels/_common/** — Shared headers (`bench.h`, `check.h`) included by all benchmarks
+- **kernels/gemm/** — GEMM family: `sgemm/`, `hgemm/`, `hgemm_sparse/`, `igemm/` (FFMA → HMMA → IMMA → sparse)
+- **kernels/reductions/** — SHFL.BFLY + MUFU: `softmax/`, `layernorm/`, `groupnorm/`
+- **kernels/elementwise/** — Pointwise ops: `activations/`, `timestep_emb/` (MUFU.EX2/SIN/COS)
+- **kernels/attention/** — Fused softmax(QKV): `flash_attention/` (21 variants), `cross_attention/`
+- **kernels/convolution/** — Specialised GEMM: `conv2d/` (direct/im2col/implicit), `resblock/`
+- **kernels/memory_layout/** — Layout studies: `cymatic/` (Chladni-pattern gather)
+- **kernels/composition/** — Multi-kernel layers: `attention_layer/`
+- **experiments/** — Front-end / tooling experiments (cuda-oxide spike, cymatic_oxide gather)
 - **docs/** — Deep technical references (SASS instruction set, control codes, memory hierarchy, optimization postmortems)
 - **scripts/** — `build.R` (compile / disasm / roundtrip), `verify_setup.R`,
   `install_cuasmR.R`, NCU + bench harnesses

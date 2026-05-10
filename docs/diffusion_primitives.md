@@ -1,4 +1,4 @@
-# Phase 4: Diffusion Model Primitives
+# Diffusion model primitives (formerly phase4/README.md)
 
 **Goal**: Implement all compute kernels needed for a UNet-style diffusion model (Stable Diffusion architecture) directly in CUDA C → compiled to SASS for RTX 3070 Ti (sm_86, Ampere).
 
@@ -304,27 +304,27 @@ Every hardware instruction used in a diffusion UNet forward pass:
 
 ```bash
 # Timestep embeddings (requires --use_fast_math for MUFU.SIN/COS)
-cd phase4/timestep_emb
+cd kernels/elementwise/timestep_emb
 nvcc --cubin -arch=sm_86 -O2 --use_fast_math -o timestep_emb.sm_86.cubin timestep_emb.cu
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # Group Normalization
-cd phase4/groupnorm
+cd kernels/reductions/groupnorm
 nvcc --cubin -arch=sm_86 -O2 -o groupnorm.sm_86.cubin groupnorm.cu
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # Conv2d
-cd phase4/conv2d
+cd kernels/convolution/conv2d
 nvcc --cubin -arch=sm_86 -O2 -o conv2d.sm_86.cubin conv2d.cu
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # ResNet Block (depends on conv2d cubin)
-cd phase4/resblock
+cd kernels/convolution/resblock
 nvcc --cubin -arch=sm_86 -O2 -o resblock.sm_86.cubin resblock_fused.cu
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 
 # Cross-Attention
-cd phase4/cross_attention
+cd kernels/attention/cross_attention
 nvcc --cubin -arch=sm_86 -O2 -o cross_attn.sm_86.cubin cross_attn.cu
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../../kernels/_common
 ```

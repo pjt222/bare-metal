@@ -1,4 +1,4 @@
-# Phase 2: Activations — MUFU.TANH / MUFU.EX2 / MUFU.RCP
+# kernels/elementwise/activations — MUFU.TANH / MUFU.EX2 / MUFU.RCP
 
 ## Key SASS Instructions
 

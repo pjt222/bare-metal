@@ -273,7 +273,7 @@ The four laws (chapter 06) all show up here:
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/phase2/sgemm
+cd /mnt/d/dev/p/bare-metal/kernels/gemm/sgemm
 
 # Build SGEMM variants
 nvcc --cubin -arch=sm_86 -O2 -o naive.sm_86.cubin naive.cu

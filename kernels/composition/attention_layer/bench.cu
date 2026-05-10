@@ -12,7 +12,7 @@
 #include <cuda.h>
 #include <cuda_fp16.h>
 
-#include "../../kernels/_common/bench_driver.h"
+#include "../../_common/bench_driver.h"
 
 static void cpu_layer(const float *X, const float *g, const float *b,
     const float *Wq, const float *Wk, const float *Wv, const float *Wo,

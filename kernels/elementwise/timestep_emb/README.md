@@ -1,4 +1,4 @@
-# phase4/timestep_emb — sinusoidal timestep embedding
+# kernels/elementwise/timestep_emb — sinusoidal timestep embedding
 
 Maps a scalar diffusion timestep `t ∈ [0, 1000)` to a sinusoidal
 embedding vector of dimension `d_model`, using the Transformer

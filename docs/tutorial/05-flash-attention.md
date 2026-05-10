@@ -317,7 +317,7 @@ at 12 warps. Optimizations are occupancy-dependent — re-run the catalog.
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/phase3/flash_attention
+cd /mnt/d/dev/p/bare-metal/kernels/attention/flash_attention
 
 # Build all variants
 nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu

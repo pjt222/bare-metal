@@ -44,7 +44,7 @@ Total reduction: 1,739 → 297 lines (-83%).
 - [ ] `kernels/elementwise/timestep_emb/bench.cu`
 
 ### Phase 5
-- [ ] `phase5/attention_layer/bench.cu`
+- [ ] `kernels/composition/attention_layer/bench.cu`
 
 ## Approach
 1. Start with simplest (softmax, activations, timestep_emb)

@@ -48,11 +48,12 @@ The chapters can be read in two ways:
 
 Each tutorial cross-references actual files in this repository:
 
-- `kernels/tutorial/vector_add/` — the SASS hello world
-- `phase2/{sgemm,hgemm,igemm,...}/` — GEMM variants
+- `kernels/tutorial/` — the SASS hello world (vector_add)
+- `kernels/gemm/{sgemm,hgemm,hgemm_sparse,igemm}/` — GEMM variants
 - `kernels/attention/flash_attention/` — Flash Attention implementations
-- `phase4/{conv2d,resblock,groupnorm,...}/` — diffusion primitives
-- `phase5/` — optimization experiments
+- `kernels/{convolution,reductions,elementwise}/` — diffusion primitives
+- `kernels/composition/` — multi-kernel layer composition
+- `kernels/memory_layout/cymatic/` — Chladni-pattern memory layout study
 - `docs/gpu_reflections.md` — empirical observations (17+ postmortems)
 - `docs/{ampere_sass_reference,control_codes,memory_hierarchy}.md` — hardware references
 - `docs/fragment_shfl_reductions.md` — reusable Tensor Core reduction pattern

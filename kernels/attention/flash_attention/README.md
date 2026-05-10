@@ -1,4 +1,4 @@
-# Phase 3: Flash Attention — Online Softmax Without N² Memory
+# kernels/attention/flash_attention — Online softmax without N² memory
 
 ## Overview
 

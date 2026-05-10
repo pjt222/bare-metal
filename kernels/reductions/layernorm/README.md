@@ -1,4 +1,4 @@
-# Phase 2: LayerNorm — Welford Online Algorithm + MUFU.RSQ
+# kernels/reductions/layernorm — Welford online algorithm + MUFU.RSQ
 
 ## Why LayerNorm
 

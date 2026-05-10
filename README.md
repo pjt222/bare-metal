@@ -347,27 +347,34 @@ First-time setup: `Rscript -e 'renv::restore()'`.
 ## Project structure
 
 ```
-kernels/tutorial/             — Vector add: first SASS hand-edit
-phase2/             — ML primitives
-  sgemm/            — naive → tiled → register-blocked
-  hgemm/            — basic WMMA → 16-warp 128×128 (31,910 GFLOPS)
-  hgemm_sparse/     — 2:4 sparse mma.sp (41,721 dense-equiv)
-  igemm/            — INT8 IMMA progression + sparse + online quant
-  softmax/          — warp-reduction softmax
-  layernorm/        — fused stats + normalize
-  activations/      — MUFU SASS for tanh/exp/rcp
-phase3/
-  flash_attention/  — scalar → 4-warp → Br=16 HMMA → v2 smem-elim → v2_pipeline (1.60×)
-phase4/             — Diffusion UNet primitives
-  timestep_emb/     — sin/cos via MUFU
-  groupnorm/        — fused stats + SiLU
-  conv2d/           — direct 9× → implicit GEMM (22× win)
-  resblock/         — full UNet block, 7.01× via implicit GEMM
-  cross_attention/  — HMMA + SHFL + MUFU; regime-dependent v2
-  cymatic/          — Chladni-pattern memory layout study
-experiments/             — Front-end alternatives sandbox
-  rust-experiments/ — cuda-oxide Rust→PTX spike vs nvcc baseline
-    cymatic_oxide/    — cuda-oxide gather_sum vs nvcc gather_sum (Obs LL)
+kernels/             — grouped by content / internal structure (Tier 13)
+  _common/           — shared bench.h, check.h, bench_driver.h
+  tutorial/          — vector_add: first SASS hand-edit (FADD→FMUL)
+  gemm/              — General matrix multiply
+    sgemm/           — FP32 naive → tiled → register-blocked
+    hgemm/           — FP16 WMMA → 16-warp 128×128 (31,910 GFLOPS)
+    hgemm_sparse/    — 2:4 sparse mma.sp (41,721 dense-equiv)
+    igemm/           — INT8 IMMA + sparse + online quant + cp.async
+  reductions/        — SHFL.BFLY + MUFU
+    softmax/         — warp-reduce + MUFU.EX2
+    layernorm/       — block-reduce + MUFU.RSQ
+    groupnorm/       — group-reduce + MUFU.RSQ + MUFU.RCP (UNet)
+  elementwise/       — Pointwise / special-function
+    activations/     — MUFU.EX2 for tanh/sigmoid/swish
+    timestep_emb/    — MUFU.SIN + MUFU.COS via fast-math (UNet)
+  attention/         — Fused softmax(QKᵀ)V
+    flash_attention/ — scalar → Br=16 HMMA → pipeline → split-Q (21 variants)
+    cross_attention/ — image-Q + text-KV + cp.async pipelined (UNet)
+  convolution/       — Specialised GEMM
+    conv2d/          — direct 9× → im2col → implicit GEMM v2 (22× win)
+    resblock/        — fused conv-norm-conv (7.01× via implicit GEMM)
+  memory_layout/     — Layout studies
+    cymatic/         — Chladni-pattern gather (Obs T, II, JJ)
+  composition/       — Multi-kernel layers
+    attention_layer/ — QKV-proj → FA → out-proj → residual
+experiments/         — Front-end alternatives sandbox (above SASS)
+  rust-experiments/  — cuda-oxide Rust→PTX spike vs nvcc baseline
+    cymatic_oxide/   — cuda-oxide gather_sum vs nvcc gather_sum (Obs LL)
 docs/
   tutorial/         — 6-chapter tutorial series
   figures/          — regenerable plots (R + ggplot2)

@@ -1,4 +1,4 @@
-# phase4/groupnorm — group normalization
+# kernels/reductions/groupnorm — group normalization
 
 Per-group mean/variance normalization used in Stable Diffusion's UNet
 ResBlocks (32 groups by convention). Two reductions per group (sum,

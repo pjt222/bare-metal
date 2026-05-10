@@ -1,4 +1,4 @@
-# phase4/conv2d — 2D convolution: direct, im2col, implicit GEMM
+# kernels/convolution/conv2d — 2D convolution: direct, im2col, implicit GEMM
 
 Three implementations of the same operator, each progressively closer to
 DRAM-once and Tensor-Core-saturating execution. The progression

@@ -18,24 +18,24 @@ mkdir -p "$(dirname "$OUT_CSV")"
 # Working dir matters: many benches load cubins via relative paths.
 ROWS=(
   # --- Flash Attention (phase 3) ---
-  "flash_attn_br16_v2|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 baseline (seq=1024,b=8,h=8)|phase3/flash_attention"
-  "flash_attn_br16_v2_pipeline|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 pipeline (seq=1024,b=8,h=8)|phase3/flash_attention"
-  "flash_attn_v2_persistent|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 persistent (seq=1024,b=8,h=8)|phase3/flash_attention"
-  "flash_attn_br16_regpv|kernels/attention/flash_attention/bench_br16_regpv|1024 8 8|FA regpv (legacy, seq=1024,b=8,h=8)|phase3/flash_attention"
+  "flash_attn_br16_v2|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 baseline (seq=1024,b=8,h=8)|kernels/attention/flash_attention"
+  "flash_attn_br16_v2_pipeline|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 pipeline (seq=1024,b=8,h=8)|kernels/attention/flash_attention"
+  "flash_attn_v2_persistent|kernels/attention/flash_attention/bench_v2_variants|1024 8 8|FA v2 persistent (seq=1024,b=8,h=8)|kernels/attention/flash_attention"
+  "flash_attn_br16_regpv|kernels/attention/flash_attention/bench_br16_regpv|1024 8 8|FA regpv (legacy, seq=1024,b=8,h=8)|kernels/attention/flash_attention"
 
   # --- HGEMM (phase 2) ---
-  "hgemm_16warp|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp (4096³)|phase2/hgemm"
-  "hgemm_16warp_epi|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp+epi (4096³)|phase2/hgemm"
-  "hgemm_256x128|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 256x128 (4096³)|phase2/hgemm"
+  "hgemm_16warp|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp (4096³)|kernels/gemm/hgemm"
+  "hgemm_16warp_epi|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp+epi (4096³)|kernels/gemm/hgemm"
+  "hgemm_256x128|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 256x128 (4096³)|kernels/gemm/hgemm"
 
   # --- IGEMM (phase 2) ---
-  "igemm_sparse_tiled|kernels/gemm/igemm/bench_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|phase2/igemm"
+  "igemm_sparse_tiled|kernels/gemm/igemm/bench_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|kernels/gemm/igemm"
 
   # --- Cross-Attention (phase 4) ---
-  "cross_attn_v2|kernels/attention/cross_attention/bench_v2|1024 256 8|Cross-attn v2 (1024 q, 256 kv, h=8)|phase4/cross_attention"
+  "cross_attn_v2|kernels/attention/cross_attention/bench_v2|1024 256 8|Cross-attn v2 (1024 q, 256 kv, h=8)|kernels/attention/cross_attention"
 
   # --- ResBlock (phase 4) ---
-  "implicit_gemm_conv|kernels/convolution/resblock/bench_implicit|1 320 32 32|ResBlock implicit GEMM (SD UNet 320ch)|phase4/resblock"
+  "implicit_gemm_conv|kernels/convolution/resblock/bench_implicit|1 320 32 32|ResBlock implicit GEMM (SD UNet 320ch)|kernels/convolution/resblock"
 )
 
 # Wipe old CSV so columns/rows match the current run.

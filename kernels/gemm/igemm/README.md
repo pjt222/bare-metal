@@ -1,4 +1,4 @@
-# Phase 2: IGEMM — INT8 Tensor Core Matrix Multiply
+# kernels/gemm/igemm — INT8 Tensor Core matrix multiply (IMMA)
 
 ## Why INT8
 
@@ -228,7 +228,7 @@ Quantizes FP16 inputs on-the-fly inside the kernel:
 | Online-quant in-place | 8.3 ms | **16,646** | **2.12×** |
 | Bank-conflict-free | 8.05 ms | **17,070** | **2.18×** |
 
-See `phase5/online_quant/` for implementation.
+See `kernels/composition/` (formerly phase5) for layer-level integration.
 
 ### Sparse INT8 GEMM
 

@@ -9,7 +9,7 @@ The top-level `README.md` shows Phase 4 as complete but does not mention Phase 5
 ## Gaps
 
 ### Top-level README
-- ❌ No mention of Phase 5 (`phase5/attention_layer/`)
+- ❌ No mention of Phase 5 (`kernels/composition/attention_layer/`)
 - ❌ Phase 4 table only shows UNet primitives, missing Conv2d implicit GEMM results
 - ❌ No mention of sparse GEMM (Phase 2 expansion)
 - ❌ No mention of INT8 IGEMM (15,320+ TOPS)

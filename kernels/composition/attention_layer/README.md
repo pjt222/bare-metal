@@ -1,4 +1,4 @@
-# phase5/attention_layer — multi-head attention layer end-to-end
+# kernels/composition/attention_layer — multi-head attention layer end-to-end
 
 Composes QKV projection (HGEMM) → Flash Attention (phase 3 Br=16) →
 output projection (HGEMM) → residual add into a single layer-level

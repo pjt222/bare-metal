@@ -1,4 +1,4 @@
-# Phase 2: Softmax — SHFL.BFLY + MUFU.EX2 + MUFU.RCP
+# kernels/reductions/softmax — SHFL.BFLY + MUFU.EX2 + MUFU.RCP
 
 ## Why Softmax
 

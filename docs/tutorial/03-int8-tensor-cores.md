@@ -268,7 +268,7 @@ block sizes, smem padding) must be re-derived for each instruction.
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/phase2/igemm
+cd /mnt/d/dev/p/bare-metal/kernels/gemm/igemm
 
 # Build the variants
 nvcc --cubin -arch=sm_86 -O2 -o igemm.sm_86.cubin igemm.cu
