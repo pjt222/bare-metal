@@ -26,7 +26,7 @@ RSCRIPT     := Rscript
 # experiments/ has its own build conventions (Driver-API harness, Rust
 # kernels). Excluded from the default Makefile sweep.
 KERNEL_CU   := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name '*.cu' -print | grep -v 'bench' | grep -v 'host' | grep -v '^./tests')
-BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention -name 'bench_*.cu' -print) $(shell find phase4 -name 'bench_*.cu' -print)
+BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path ./renv -o -path ./.git \) -prune -o -name 'bench.cu' -print) $(shell find phase3/flash_attention kernels/attention/flash_attention -maxdepth 2 -name 'bench_*.cu' 2>/dev/null) $(shell find phase4 kernels -name 'bench_*.cu' -print 2>/dev/null)
 
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
@@ -59,7 +59,13 @@ benches: $(BENCH_EXES)
 	@mkdir -p $(dir $@)
 	$(NVCC) $(CUBIN_FLAGS) -o $@ $<
 
-# Benchmarks in phase2+ need common headers and -lcuda
+# Benchmarks need shared headers (-Ikernels/_common) and the CUDA
+# Driver API (-lcuda). One pattern per family layout (kernels/<fam>/<k>/
+# vs the legacy phase{2..5}/<k>/ for kernels not yet migrated).
+kernels/%/bench: kernels/%/bench.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+
 phase2/%/bench: phase2/%/bench.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common

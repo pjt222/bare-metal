@@ -5,8 +5,8 @@ labels: ["refactoring", "bench-driver"]
 
 ## Background
 PR #53 introduced `kernels/_common/bench_driver.h` and refactored 3 pilot files:
-- `phase2/hgemm/bench_refactored.cu` (348 → 96 lines)
-- `phase2/igemm/bench_refactored.cu` (1093 → 79 lines)
+- `kernels/gemm/hgemm/bench_refactored.cu` (348 → 96 lines)
+- `kernels/gemm/igemm/bench_refactored.cu` (1093 → 79 lines)
 - `phase3/flash_attention/bench_refactored.cu` (298 → 122 lines)
 
 Total reduction: 1,739 → 297 lines (-83%).
@@ -14,13 +14,13 @@ Total reduction: 1,739 → 297 lines (-83%).
 ## Remaining Files to Migrate
 
 ### Phase 2
-- [ ] `phase2/sgemm/bench.cu`
+- [ ] `kernels/gemm/sgemm/bench.cu`
 - [ ] `phase2/softmax/bench.cu`
 - [ ] `phase2/layernorm/bench.cu`
 - [ ] `phase2/activations/bench.cu`
-- [ ] `phase2/igemm/bench.cu`
-- [ ] `phase2/igemm/bench_sparse.cu`
-- [ ] `phase2/hgemm_sparse/bench.cu`
+- [ ] `kernels/gemm/igemm/bench.cu`
+- [ ] `kernels/gemm/igemm/bench_sparse.cu`
+- [ ] `kernels/gemm/hgemm_sparse/bench.cu`
 
 ### Phase 3
 - [ ] `phase3/flash_attention/bench.cu`

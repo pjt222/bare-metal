@@ -22,7 +22,7 @@ INT8 B fragment layout for `mma.sp.m16n8k32` is custom. Each thread needs 4 INT8
 3. **Reformat B in smem during load**: Store B in shared memory already packed per-thread. Requires transposed smem layout during `LOAD_B_TILE`, but pays off in compute loop.
 
 ## Files
-- `phase2/igemm/igemm_sparse_tiled.cu`
+- `kernels/gemm/igemm/igemm_sparse_tiled.cu`
 
 ## Acceptance Criteria
 - [ ] PRMT count reduced by ≥30% (160 → ≤112)

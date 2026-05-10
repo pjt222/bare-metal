@@ -24,12 +24,12 @@ ROWS=(
   "flash_attn_br16_regpv|phase3/flash_attention/bench_br16_regpv|1024 8 8|FA regpv (legacy, seq=1024,b=8,h=8)|phase3/flash_attention"
 
   # --- HGEMM (phase 2) ---
-  "hgemm_16warp|phase2/hgemm/bench|4096 4096 4096|HGEMM 16-warp (4096³)|phase2/hgemm"
-  "hgemm_16warp_epi|phase2/hgemm/bench|4096 4096 4096|HGEMM 16-warp+epi (4096³)|phase2/hgemm"
-  "hgemm_256x128|phase2/hgemm/bench|4096 4096 4096|HGEMM 256x128 (4096³)|phase2/hgemm"
+  "hgemm_16warp|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp (4096³)|phase2/hgemm"
+  "hgemm_16warp_epi|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 16-warp+epi (4096³)|phase2/hgemm"
+  "hgemm_256x128|kernels/gemm/hgemm/bench|4096 4096 4096|HGEMM 256x128 (4096³)|phase2/hgemm"
 
   # --- IGEMM (phase 2) ---
-  "igemm_sparse_tiled|phase2/igemm/bench_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|phase2/igemm"
+  "igemm_sparse_tiled|kernels/gemm/igemm/bench_sparse|4096 4096 4096|Sparse INT8 GEMM (4096³)|phase2/igemm"
 
   # --- Cross-Attention (phase 4) ---
   "cross_attn_v2|phase4/cross_attention/bench_v2|1024 256 8|Cross-attn v2 (1024 q, 256 kv, h=8)|phase4/cross_attention"

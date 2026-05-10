@@ -4,11 +4,11 @@ labels: ["cleanup", "git"]
 ---
 
 ## Problem
-`phase2/igemm/igemm_tiled_handtuned.sm_86.cubin` exists in working tree but is neither committed nor `.gitignore`d. Creates confusion about whether it's volatile or a preserved artifact.
+`kernels/gemm/igemm/igemm_tiled_handtuned.sm_86.cubin` exists in working tree but is neither committed nor `.gitignore`d. Creates confusion about whether it's volatile or a preserved artifact.
 
 ```bash
 $ git status
-?? phase2/igemm/igemm_tiled_handtuned.sm_86.cubin
+?? kernels/gemm/igemm/igemm_tiled_handtuned.sm_86.cubin
 ```
 
 ## Decision Needed
@@ -24,7 +24,7 @@ $ git status
 - Risk: Rebuild requires CuAssembler toolchain, may drift from original
 
 ## Recommendation
-Commit this specific binary (it's a verified artifact from CuAssembler hand-tuning session) and document rebuild path in `phase2/igemm/README.md`.
+Commit this specific binary (it's a verified artifact from CuAssembler hand-tuning session) and document rebuild path in `kernels/gemm/igemm/README.md`.
 
 ## Files
-- `phase2/igemm/igemm_tiled_handtuned.sm_86.cubin`
+- `kernels/gemm/igemm/igemm_tiled_handtuned.sm_86.cubin`

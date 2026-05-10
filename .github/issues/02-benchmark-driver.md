@@ -58,9 +58,9 @@ int main(int argc, char** argv) {
 - RAII for context/memory/events to avoid segfault-on-exit (see troubleshooting.md)
 
 ## Files to Refactor (priority order)
-1. `phase2/igemm/bench.cu` — most complex, tests multiple variants
+1. `kernels/gemm/igemm/bench.cu` — most complex, tests multiple variants
 2. `phase3/flash_attention/bench.cu` — many variants, good test case
-3. `phase2/hgemm/bench.cu` — simplest, good reference
+3. `kernels/gemm/hgemm/bench.cu` — simplest, good reference
 4. Remaining 23 bench files
 
 ## Acceptance Criteria

@@ -7,7 +7,7 @@
 #   3. Re-bench
 #   4. Restore original
 #
-# Driver: existing phase2/igemm/bench harness, parsed for the relevant
+# Driver: existing kernels/gemm/igemm/bench harness, parsed for the relevant
 # kernel's "X ms / Y GFLOPS" line.
 
 WSL_CUDA_LIB <- "/usr/lib/wsl/lib"

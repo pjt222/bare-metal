@@ -11,8 +11,8 @@ Building the project requires manually entering 20+ different commands across su
 ## Current State
 ```
 kernels/tutorial/Makefile          ← exists (Windows cmd style)
-phase2/sgemm/            ← no Makefile
-phase2/hgemm/            ← no Makefile
+kernels/gemm/sgemm/            ← no Makefile
+kernels/gemm/hgemm/            ← no Makefile
 phase3/flash_attention/  ← no Makefile (10+ bench files)
 ```
 

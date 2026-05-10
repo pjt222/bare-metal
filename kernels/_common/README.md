@@ -42,9 +42,9 @@ Project-wide convention:
 | `bench_<variant>.cu`| Comparison driver for a kernel variant; `<variant>` is a short tag (`persistent`, `pipelined`, `v2`, `bc128`, `regpv`, etc.) |
 
 **Don't repeat the dir name in the bench filename.** The dir is
-implicit context. `phase2/hgemm/bench_persistent.cu` is correct;
-`phase2/hgemm/bench_persistent_hgemm.cu` is redundant. Same logic
-gives `phase2/igemm/bench_sparse.cu` (not `bench_igemm_sparse.cu`)
+implicit context. `kernels/gemm/hgemm/bench_persistent.cu` is correct;
+`kernels/gemm/hgemm/bench_persistent_hgemm.cu` is redundant. Same logic
+gives `kernels/gemm/igemm/bench_sparse.cu` (not `bench_igemm_sparse.cu`)
 and `phase4/cymatic/bench.cu` (not `bench_cymatic.cu`).
 
 Untracked / gitignored:

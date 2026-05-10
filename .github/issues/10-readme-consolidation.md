@@ -17,8 +17,8 @@ The top-level `README.md` shows Phase 4 as complete but does not mention Phase 5
 - ❌ Missing "how to get started" section beyond phases table
 
 ### Phase READMEs
-- `phase2/hgemm/README.md`: Shows 7,853 GFLOPS as best, but `hgemm_16warp` achieves **31,910 GFLOPS**
-- `phase2/igemm/README.md`: Good but missing online-quant variants (16,646+ GFLOPS)
+- `kernels/gemm/hgemm/README.md`: Shows 7,853 GFLOPS as best, but `hgemm_16warp` achieves **31,910 GFLOPS**
+- `kernels/gemm/igemm/README.md`: Good but missing online-quant variants (16,646+ GFLOPS)
 - `phase3/flash_attention/README.md`: Probably stale vs `gpu_reflections.md` findings
 - `phase4/README.md`: May not include implicit GEMM results
 

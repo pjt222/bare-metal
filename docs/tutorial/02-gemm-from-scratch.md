@@ -35,7 +35,7 @@ takes 6.3 ms. At peak FP16 Tensor Core throughput (174 TFLOPS), it takes
 0.79 ms. The kernel either gets close to one of these bounds or it does
 not. Most naive kernels achieve 1-3% of peak.
 
-## Version 1 — Naive SGEMM (`phase2/sgemm/naive.cu`)
+## Version 1 — Naive SGEMM (`kernels/gemm/sgemm/naive.cu`)
 
 **Setup**: one thread per output element. Each thread loops over k and
 accumulates `C[m, n]` directly.
@@ -71,7 +71,7 @@ the compute time. The kernel is bandwidth-bound by 100×.
 and B is read O(M+N) times, but only needs to be read once. Reducing
 that reread factor is the entire art of GEMM optimization.
 
-## Version 2 — Tiled SGEMM (`phase2/sgemm/tiled.cu`)
+## Version 2 — Tiled SGEMM (`kernels/gemm/sgemm/tiled.cu`)
 
 **Setup**: each thread block computes a `TILE_M × TILE_N` output block
 (e.g., 32×32) cooperatively. The block iterates over k in chunks of
@@ -109,7 +109,7 @@ The lesson: simple tiling moves the bottleneck from DRAM bandwidth to
 shared memory bandwidth and instruction issue rate, but does not eliminate
 the bottleneck. The next move is to give each thread *more work per load*.
 
-## Version 3 — Register-blocked SGEMM (`phase2/sgemm/register_blocked.cu`)
+## Version 3 — Register-blocked SGEMM (`kernels/gemm/sgemm/register_blocked.cu`)
 
 **Setup**: each thread computes an `RM × RN` block of outputs (e.g., 8×8 =
 64 output elements per thread). The thread loads `RM` values of A and `RN`
@@ -147,7 +147,7 @@ always means insufficient register tiling.
 This is the practical ceiling of FP32 GEMM on Ampere with hand-written
 CUDA C++. The next 8× requires switching to FP16 Tensor Cores.
 
-## Version 4 — HGEMM (FP16 Tensor Core baseline, `phase2/hgemm/hgemm.cu`)
+## Version 4 — HGEMM (FP16 Tensor Core baseline, `kernels/gemm/hgemm/hgemm.cu`)
 
 **Setup**: same tiled structure but using the WMMA API. Each warp owns a
 16×16 output tile (one HMMA-sized fragment). Per k-step:
@@ -191,7 +191,7 @@ warps per block and 1 block per SM, that is 32×32 output per SM-cycle —
 not enough to amortize tile load cost. The next step is to give each
 warp more output fragments and run more blocks per SM.
 
-## Version 5 — 16-warp HGEMM (`phase2/hgemm/hgemm_16warp.cu`)
+## Version 5 — 16-warp HGEMM (`kernels/gemm/hgemm/hgemm_16warp.cu`)
 
 **Setup**: this is where the project's GEMM peaks. Block size grows to
 `BM=128, BN=128, BK=32`. Sixteen warps per block (512 threads), arranged
@@ -307,11 +307,11 @@ cuobjdump -sass hgemm_16warp.sm_86.cubin | grep HMMA | wc -l   # how many HMMA t
 
 ## Source files
 
-- `phase2/sgemm/naive.cu`, `tiled.cu`, `register_blocked.cu` (FP32 progression)
-- `phase2/hgemm/hgemm.cu` (basic WMMA HGEMM)
-- `phase2/hgemm/hgemm_16warp.cu` (the 31910 GFLOPS kernel)
-- `phase2/hgemm/hgemm_256x128.cu`, `hgemm_tiled.cu`, `hgemm_tiled_direct.cu` (intermediate variants)
-- `phase2/hgemm/README.md` (deeper SASS-level walkthrough)
+- `kernels/gemm/sgemm/naive.cu`, `tiled.cu`, `register_blocked.cu` (FP32 progression)
+- `kernels/gemm/hgemm/hgemm.cu` (basic WMMA HGEMM)
+- `kernels/gemm/hgemm/hgemm_16warp.cu` (the 31910 GFLOPS kernel)
+- `kernels/gemm/hgemm/hgemm_256x128.cu`, `hgemm_tiled.cu`, `hgemm_tiled_direct.cu` (intermediate variants)
+- `kernels/gemm/hgemm/README.md` (deeper SASS-level walkthrough)
 
 ## Cross-references
 

@@ -45,14 +45,14 @@ This installs into the active renv library. After editing `R/cuasmR/R/*.R`, re-r
 ```r
 library(cuasmR)
 
-obj <- cuasm_read("phase2/hgemm/hgemm_16warp.sm_86.cubin")
+obj <- cuasm_read("kernels/gemm/hgemm/hgemm_16warp.sm_86.cubin")
 
 cuasm_kernels(obj)           # data.frame of .text.<kernel> sections
 cuasm_insns(obj, "hgemm_16warp")[1:10, ]   # first 10 SASS instructions
 
 cuasm_save_cuasm(obj, "/tmp/hgemm.cuasm")  # human-readable text dump
 
-cuasm_roundtrip_check("phase2/hgemm/hgemm_16warp.sm_86.cubin")
+cuasm_roundtrip_check("kernels/gemm/hgemm/hgemm_16warp.sm_86.cubin")
 # [1] TRUE     (read -> write produces byte-identical cubin)
 ```
 
@@ -110,8 +110,8 @@ subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 | target                                                | kernels | insns | layout | roundtrip |
 |---|---:|---:|---|:---:|
 | `kernels/tutorial/vector_add.sm_86.cubin`                       | 1 |   32  | cuda13 | ✓ |
-| `phase2/hgemm/hgemm_16warp.sm_86.cubin`               | 1 |  544  | cuda12 | ✓ |
-| `phase2/hgemm/hgemm_16warp_splitk.sm_86.cubin`        | 1 | 1504  | cuda13 | ✓ |
+| `kernels/gemm/hgemm/hgemm_16warp.sm_86.cubin`               | 1 |  544  | cuda12 | ✓ |
+| `kernels/gemm/hgemm/hgemm_16warp_splitk.sm_86.cubin`        | 1 | 1504  | cuda13 | ✓ |
 | `phase3/.../flash_attn_br16_v2_pipeline_pad2.cubin`   | 1 | 1256  | cuda13 | ✓ |
 | `phase4/conv2d/conv2d_implicit_gemm_v2.sm_86.cubin`   | 1 | 1024  | cuda13 | ✓ |
 | `phase4/resblock/resblock.sm_86.cubin`                | 2 | 1232  | cuda12 | ✓ |

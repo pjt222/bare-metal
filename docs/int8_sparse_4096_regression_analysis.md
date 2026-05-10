@@ -110,7 +110,7 @@ Run these on the RTX 3070 Ti to identify the root cause:
 ```bash
 # 1. Register usage and occupancy
 nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin \
-     phase2/igemm/igemm_sparse_tiled.cu
+     kernels/gemm/igemm/igemm_sparse_tiled.cu
 cuobjdump -res-usage igemm_sparse_tiled.sm_86.cubin
 
 # 2. SASS analysis: LDS count, IMMA count

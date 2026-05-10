@@ -19,8 +19,8 @@
 #include <cmath>
 #include <cuda.h>
 
-#include "../../kernels/_common/bench.h"
-#include "../../kernels/_common/check.h"
+#include "../../_common/bench.h"
+#include "../../_common/check.h"
 
 // -----------------------------------------------------------------------
 // Symmetric per-tensor quantization: FP32 → INT8

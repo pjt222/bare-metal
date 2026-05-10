@@ -186,7 +186,7 @@ manually:
 
 ```bash
 export LD_LIBRARY_PATH="/usr/lib/wsl/lib:$LD_LIBRARY_PATH"
-./phase2/hgemm/bench 2048 2048 2048
+./kernels/gemm/hgemm/bench 2048 2048 2048
 ```
 
 **`make bench` reports SKIPPED for kernels you wanted measured**:

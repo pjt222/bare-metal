@@ -196,11 +196,11 @@ Headline-7 kernels and where their source lives:
 
 | Headline kernel              | Source path                                              |
 |------------------------------|----------------------------------------------------------|
-| Sparse HGEMM 2:4             | `phase2/hgemm_sparse/`                                   |
-| Sparse INT8 mma.sp           | `phase2/igemm/igemm_sparse_tiled.cu`                     |
-| HGEMM 16-warp                | `phase2/hgemm/hgemm_16warp.cu`                           |
-| IGEMM 128×256                | `phase2/igemm/igemm_8warp_*.cu`                          |
-| Online FP16→INT8 GEMM        | `phase2/igemm/igemm_online_quant*.cu`                    |
+| Sparse HGEMM 2:4             | `kernels/gemm/hgemm_sparse/`                                   |
+| Sparse INT8 mma.sp           | `kernels/gemm/igemm/igemm_sparse_tiled.cu`                     |
+| HGEMM 16-warp                | `kernels/gemm/hgemm/hgemm_16warp.cu`                           |
+| IGEMM 128×256                | `kernels/gemm/igemm/igemm_8warp_*.cu`                          |
+| Online FP16→INT8 GEMM        | `kernels/gemm/igemm/igemm_online_quant*.cu`                    |
 | Flash Attention v2           | `phase3/flash_attention/flash_attn_br16_v2*.cu`          |
 | Conv2d implicit GEMM         | `phase4/conv2d/conv2d_implicit_gemm.cu`                  |
 
@@ -209,10 +209,10 @@ Phase directories (kernel families):
 | Phase   | Path                              | Family                                         |
 |---------|-----------------------------------|------------------------------------------------|
 | 1       | `kernels/tutorial/`                         | Vector add (SASS hello world, FADD→FMUL)       |
-| 2       | `phase2/sgemm/`                   | Naive → tiled → register-blocked SGEMM         |
-| 2       | `phase2/hgemm/`                   | WMMA → 16-warp 128×128 HGEMM                   |
-| 2       | `phase2/hgemm_sparse/`            | 2:4 sparse mma.sp                              |
-| 2       | `phase2/igemm/`                   | INT8 IMMA + sparse + online quant              |
+| 2       | `kernels/gemm/sgemm/`                   | Naive → tiled → register-blocked SGEMM         |
+| 2       | `kernels/gemm/hgemm/`                   | WMMA → 16-warp 128×128 HGEMM                   |
+| 2       | `kernels/gemm/hgemm_sparse/`            | 2:4 sparse mma.sp                              |
+| 2       | `kernels/gemm/igemm/`                   | INT8 IMMA + sparse + online quant              |
 | 2       | `phase2/{softmax,layernorm,activations}/` | Reductions + MUFU SFU                  |
 | 3       | `phase3/flash_attention/`         | Scalar → 4-warp → Br=16 HMMA → v2 → pipeline   |
 | 4       | `phase4/conv2d/`                  | Direct 9× → implicit GEMM (22× win)            |

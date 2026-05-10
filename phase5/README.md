@@ -18,6 +18,6 @@ Detailed per-stage timing in `attention_layer/`.
 
 ## Cross-references
 
-- [phase2/hgemm/README.md](../phase2/hgemm/README.md) — projection backbone
+- [kernels/gemm/hgemm/README.md](../kernels/gemm/hgemm/README.md) — projection backbone
 - [phase3/flash_attention/README.md](../phase3/flash_attention/README.md) — attention core
 - [docs/kernels.md](../docs/kernels.md) — measured layer-wide numbers

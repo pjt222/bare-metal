@@ -11,14 +11,14 @@ Development/debug artifacts live alongside production kernels. They clutter the 
 ### Phase 2 sparse HGEMM
 | Current | Suggested | Type |
 |---------|-----------|------|
-| `phase2/hgemm_sparse/test_dense_manual.cu` | `tests/hgemm_sparse/test_dense_manual.cu` | Layout verification |
-| `phase2/hgemm_sparse/test_mma_sp.cu` | `tests/hgemm_sparse/test_mma_sp.cu` | Sparse mma.sp test |
-| `phase2/hgemm_sparse/verify_wmma_ab_layout.cu` | `tests/hgemm_sparse/verify_wmma_ab_layout.cu` | Fragment layout verify |
+| `kernels/gemm/hgemm_sparse/test_dense_manual.cu` | `tests/hgemm_sparse/test_dense_manual.cu` | Layout verification |
+| `kernels/gemm/hgemm_sparse/test_mma_sp.cu` | `tests/hgemm_sparse/test_mma_sp.cu` | Sparse mma.sp test |
+| `kernels/gemm/hgemm_sparse/verify_wmma_ab_layout.cu` | `tests/hgemm_sparse/verify_wmma_ab_layout.cu` | Fragment layout verify |
 
 ### Phase 2 IGEMM
 | Current | Suggested | Type |
 |---------|-----------|------|
-| `phase2/igemm/test_inplace_race.cu` | `tests/igemm/test_inplace_race.cu` | WAR hazard reproduction |
+| `kernels/gemm/igemm/test_inplace_race.cu` | `tests/igemm/test_inplace_race.cu` | WAR hazard reproduction |
 
 ### Phase 3 Flash Attention
 | Current | Suggested | Type |

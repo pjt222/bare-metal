@@ -10,7 +10,7 @@ workloads where the small precision loss is acceptable, INT8 is a 2×
 free win. Add 2:4 structured sparsity on top, and that becomes a 4× win
 (in dense-equivalent operations).
 
-This chapter walks through the INT8 GEMM kernels in `phase2/igemm/`, the
+This chapter walks through the INT8 GEMM kernels in `kernels/gemm/igemm/`, the
 IMMA pipeline pattern that differs from HMMA in subtle but important
 ways, and the 2:4 sparsity path that this project ships at 35,509
 dense-equivalent TOPS.
@@ -77,7 +77,7 @@ underlies why cp.async helps INT8 GEMM more than FP16 GEMM (chapter 04
 regime 2): IMMA's shorter compute phase leaves bigger exposed bubbles
 relative to the LDG stall, and cp.async fills them.
 
-## Version 1 — Naive IGEMM (`phase2/igemm/igemm.cu`)
+## Version 1 — Naive IGEMM (`kernels/gemm/igemm/igemm.cu`)
 
 **Setup**: same WMMA structure as the basic HGEMM, but with INT8 fragments
 and INT32 accumulators. The result is dequantized to FP32 in the epilogue
@@ -107,7 +107,7 @@ Same shape as the naive HGEMM relationship to peak: simple WMMA wrapping
 gets you to single-digit % of peak; the optimization is in the
 surrounding tiling, double-buffering, and pipelining.
 
-## Version 2 — Tiled IGEMM (`phase2/igemm/igemm_pipelined.cu`)
+## Version 2 — Tiled IGEMM (`kernels/gemm/igemm/igemm_pipelined.cu`)
 
 **Setup**: 64×64 block tile, 4 warps, double-buffered LDG → STS, BK=32
 (2 K-steps per smem tile). Per warp inner loop: 4 mma_sync = 8 IMMA per
@@ -121,7 +121,7 @@ gain comes from cp.async — covered in chapter 04. Briefly: at 8 warps/SM
 with 8-IMMA short compute phase, cp.async wins +35% (`igemm_pipelined_cpasync.cu`,
 ~20,400 TOPS).
 
-## Version 3 — 16-warp 128×128 IGEMM (`phase2/igemm/igemm_8warp.cu` and successors)
+## Version 3 — 16-warp 128×128 IGEMM (`kernels/gemm/igemm/igemm_8warp.cu` and successors)
 
 **Setup**: same block-size growth as the 16-warp HGEMM in chapter 02:
 BM=128, BN=128, 8-16 warps, double-buffered cp.async.
@@ -135,7 +135,7 @@ in-flight cp.async groups), persistent grids, and possibly raw SASS
 hand-edit to push S04→S02 for IMMA throughout (project achieved +1.6%
 from this on a single kernel; not yet propagated to all variants).
 
-## Online quantization (`phase2/igemm/igemm_online_quant.cu`)
+## Online quantization (`kernels/gemm/igemm/igemm_online_quant.cu`)
 
 A practical wrinkle: in real inference, A and B arrive as FP16 (from
 the previous layer's output and the model's weights respectively).
@@ -168,7 +168,7 @@ due to the extra reduction work, but eliminates the FP16→INT8 DRAM
 round-trip in pipelined inference. Net gain depends on whether the
 caller's pipeline is bandwidth- or compute-bound.
 
-## 2:4 Structured Sparsity (`phase2/igemm/igemm_sparse_tiled.cu`)
+## 2:4 Structured Sparsity (`kernels/gemm/igemm/igemm_sparse_tiled.cu`)
 
 **The premise**: in NVIDIA's 2:4 sparsity pattern, every 4 consecutive
 elements of A along K must contain *exactly* 2 non-zeros. The hardware
@@ -299,12 +299,12 @@ cuobjdump -sass igemm_sparse_tiled.sm_86.cubin | grep -E 'IMMA|LDSM' | head -20
 
 ## Source files
 
-- `phase2/igemm/igemm.cu` (naive WMMA INT8 baseline)
-- `phase2/igemm/igemm_pipelined.cu`, `igemm_pipelined_cpasync.cu` (sync vs async double-buffer)
-- `phase2/igemm/igemm_8warp.cu`, `igemm_8warp_256.cu`, `igemm_8warp_256x256.cu` (block-size scaling)
-- `phase2/igemm/igemm_online_quant.cu`, `igemm_online_quant_bankfree.cu` (online quantization)
-- `phase2/igemm/igemm_sparse_tiled.cu` (2:4 sparsity)
-- `phase2/igemm/bench_sparse.cu` (sparse correctness + perf)
+- `kernels/gemm/igemm/igemm.cu` (naive WMMA INT8 baseline)
+- `kernels/gemm/igemm/igemm_pipelined.cu`, `igemm_pipelined_cpasync.cu` (sync vs async double-buffer)
+- `kernels/gemm/igemm/igemm_8warp.cu`, `igemm_8warp_256.cu`, `igemm_8warp_256x256.cu` (block-size scaling)
+- `kernels/gemm/igemm/igemm_online_quant.cu`, `igemm_online_quant_bankfree.cu` (online quantization)
+- `kernels/gemm/igemm/igemm_sparse_tiled.cu` (2:4 sparsity)
+- `kernels/gemm/igemm/bench_sparse.cu` (sparse correctness + perf)
 
 ## Cross-references
 

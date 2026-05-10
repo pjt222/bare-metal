@@ -58,13 +58,13 @@ patch_imma <- function(in_path, out_path,
 
 # Targets: kernels with significant S08 IMMA counts identified via audit.
 targets <- c(
-    "phase2/igemm/igemm_8warp_256x256.sm_86.cubin",
-    "phase2/igemm/igemm_8warp_tribuf.sm_86.cubin",
-    "phase2/igemm/igemm_8warp.sm_86.cubin",
-    "phase2/igemm/igemm_pipelined.sm_86.cubin",
-    "phase2/igemm/igemm_pipelined_cpasync.sm_86.cubin",
-    "phase2/igemm/igemm_warp_specialized.sm_86.cubin",
-    "phase2/igemm/igemm_tiled.sm_86.cubin"
+    "kernels/gemm/igemm/igemm_8warp_256x256.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_8warp_tribuf.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_8warp.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_pipelined.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_pipelined_cpasync.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_warp_specialized.sm_86.cubin",
+    "kernels/gemm/igemm/igemm_tiled.sm_86.cubin"
 )
 
 cat("== handtune_imma_s04: S08 -> S04 on IMMA stalls ==\n")

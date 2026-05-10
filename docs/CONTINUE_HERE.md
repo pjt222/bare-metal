@@ -238,7 +238,7 @@ this session).
 | # | title | resolution |
 |---|---|---|
 | 4  | Fuse GroupNorm into Conv2d epilogue | Not planned — GN was 0.1% of ResBlock; real bottleneck was conv2d (resolved via #83) |
-| 7  | 2:4 structured sparsity with IMMA | Already shipped in `phase2/igemm/igemm_sparse_tiled.cu`; documented and closed |
+| 7  | 2:4 structured sparsity with IMMA | Already shipped in `kernels/gemm/igemm/igemm_sparse_tiled.cu`; documented and closed |
 | 17 | smem padding for ldmatrix bank conflicts | Not planned — padding regresses occupancy (Observation O); use fragment-shfl pattern instead |
 | 18 | 128×256 tiles for online-quant kernel | Not planned — 3 independent blockers (static smem max, reg budget, Observation S) |
 | 29 | Apply tiled HGEMM techniques to FA | Three-stage refactor delivered 1.40× (Observation P) |

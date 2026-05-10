@@ -180,7 +180,7 @@ upstream change.
 
 ## A worked example: phase2 IGEMM
 
-`phase2/igemm/igemm_pipelined.cu` is the synchronous baseline. The async
+`kernels/gemm/igemm/igemm_pipelined.cu` is the synchronous baseline. The async
 version is `igemm_pipelined_cpasync.cu`. Both share BM=64, BN=64, BK=32,
 4 warps/block, ~16 KB smem, 4 blocks/SM = 16 warps/SM.
 
@@ -248,7 +248,7 @@ in-flight groups, because:
 - The DRAM transaction queue itself has limited depth
 - The scheduler has limited ports
 
-`phase2/igemm/igemm_pipelined_cpasync_bk64.cu` increases the K-tile size
+`kernels/gemm/igemm/igemm_pipelined_cpasync_bk64.cu` increases the K-tile size
 (BK=64 instead of BK=32, doubling smem traffic per tile but halving outer
 iterations) — a different lever than triple-buffering. Worth comparing.
 
@@ -298,7 +298,7 @@ cd /mnt/d/dev/p/bare-metal/phase2/igemm
 nvcc --cubin -arch=sm_86 -O2 -o igemm_pipelined.sm_86.cubin igemm_pipelined.cu
 nvcc --cubin -arch=sm_86 -O2 -o igemm_pipelined_cpasync.sm_86.cubin igemm_pipelined_cpasync.cu
 
-# (use phase2/igemm/bench.cu to compare; +35% expected on cpasync)
+# (use kernels/gemm/igemm/bench.cu to compare; +35% expected on cpasync)
 
 cd ../../phase3/flash_attention
 
@@ -337,10 +337,10 @@ in disguise.
 
 ## Source files
 
-- `phase2/igemm/igemm_pipelined.cu` (sync baseline, IGEMM)
-- `phase2/igemm/igemm_pipelined_cpasync.cu` (cp.async double-buffer, IGEMM)
-- `phase2/igemm/igemm_pipelined_cpasync_bk64.cu` (BK=64 variant)
-- `phase2/igemm/igemm_pipelined_cpasync_perchannel.cu` (per-channel scale fusion)
+- `kernels/gemm/igemm/igemm_pipelined.cu` (sync baseline, IGEMM)
+- `kernels/gemm/igemm/igemm_pipelined_cpasync.cu` (cp.async double-buffer, IGEMM)
+- `kernels/gemm/igemm/igemm_pipelined_cpasync_bk64.cu` (BK=64 variant)
+- `kernels/gemm/igemm/igemm_pipelined_cpasync_perchannel.cu` (per-channel scale fusion)
 - `phase3/flash_attention/flash_attn_br16_pipeline.cu` (original, lost at 4 warps)
 - `phase3/flash_attention/flash_attn_br16_v2_pipeline.cu` (won after smem reduction)
 

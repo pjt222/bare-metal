@@ -17,8 +17,8 @@
     "tolerance":   "(optional) per-config tolerance override (fraction). Default is the CLI --tolerance (0.10). Use for kernels that are intrinsically noisy on this hardware."
   },
   "kernels": {
-    "phase2/hgemm/hgemm_16warp.cu": {
-      "exe": "phase2/hgemm/bench",
+    "kernels/gemm/hgemm/hgemm_16warp.cu": {
+      "exe": "kernels/gemm/hgemm/bench",
       "2048_2048_2048": {"ms": 0.539, "gflops": 31875,
                          "match": "hgemm_16warp (128x128 2blk/SM)",
                          "note": "median of 5 valid samples, 2026-05-10 (was 0.527 / 31910 on CUDA 12.8)"},
@@ -26,8 +26,8 @@
                          "match": "hgemm_16warp (128x128 2blk/SM)",
                          "note": "median of 5 valid samples, 2026-05-10 (was 4.220 / 31910 on CUDA 12.8)"}
     },
-    "phase2/igemm/igemm_sparse_tiled.cu": {
-      "exe": "phase2/igemm/bench_sparse",
+    "kernels/gemm/igemm/igemm_sparse_tiled.cu": {
+      "exe": "kernels/gemm/igemm/bench_sparse",
       "2048_2048_2048": {"ms": 0.544, "tops": 31588,
                          "match": "igemm_sparse_tiled",
                          "value_label": "dense-equiv GFLOPS",
@@ -38,8 +38,8 @@
                          "tolerance": 0.30,
                          "note": "median of 5 valid samples, 2026-05-10. Bimodal on this laptop: 3.85ms (boost) vs 6.5ms (steady) at the same clock and no throttle signal — likely DRAM cache state at launch. Wider tolerance accepts both modes; re-investigate when running on a desktop GPU."}
     },
-    "phase2/igemm/igemm_pipelined_cpasync.cu": {
-      "exe": "phase2/igemm/bench",
+    "kernels/gemm/igemm/igemm_pipelined_cpasync.cu": {
+      "exe": "kernels/gemm/igemm/bench",
       "4096_4096_4096": {"ms": 6.796, "tops": 20227,
                          "match": "igemm_cpasync",
                          "note": "median of 2 valid samples (3 of 5 hit SwPowerCap and were dropped), 2026-05-10. Within 2.5% of CUDA-12.8 baseline (6.6 ms / 20688 TOPS)."}

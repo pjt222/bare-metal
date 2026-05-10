@@ -20,10 +20,10 @@ into a register tile.
 
 | Path | Variant | Peak | Lead SASS |
 |---|---|---:|---|
-| `phase2/sgemm/`                 | naive / tiled / register-blocked FP32 | ~1 TFLOPS at 2048³  | `FFMA` |
-| `phase2/hgemm/`                 | tiled FP16 WMMA → 16-warp persistent  | **31.9 TFLOPS** at 2048³ | `HMMA.16816.F32` |
-| `phase2/hgemm_sparse/`          | 2:4 structured sparse FP16            | 31.9 TFLOPS dense-equiv at 2048³ | `HMMA.16816.SP` |
-| `phase2/igemm/`                 | INT8 IMMA + cp.async pipelining       | 27.6 TOPS (8warp_256) at 2048³ | `IMMA.16816.S8.S8` |
+| `kernels/gemm/sgemm/`                 | naive / tiled / register-blocked FP32 | ~1 TFLOPS at 2048³  | `FFMA` |
+| `kernels/gemm/hgemm/`                 | tiled FP16 WMMA → 16-warp persistent  | **31.9 TFLOPS** at 2048³ | `HMMA.16816.F32` |
+| `kernels/gemm/hgemm_sparse/`          | 2:4 structured sparse FP16            | 31.9 TFLOPS dense-equiv at 2048³ | `HMMA.16816.SP` |
+| `kernels/gemm/igemm/`                 | INT8 IMMA + cp.async pipelining       | 27.6 TOPS (8warp_256) at 2048³ | `IMMA.16816.S8.S8` |
 | `phase4/conv2d/conv2d_implicit_gemm.cu` | reshapes conv into GEMM with on-the-fly index gen | 7.2 GFLOPS at SD 64×64×320 | `HMMA.16816.F32` |
 
 Postmortems: [Obs N (sparse), HH (CUDA-13.2 IMMA), GG (implicit GEMM v2), II/JJ (cymatic on K/V).](gpu_reflections.md)

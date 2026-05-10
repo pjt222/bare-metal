@@ -31,8 +31,8 @@ uint32_t meta = smem_meta[warp_id * 8 + gid];  // L0/L1 speed
 - Expected gain: +20-30% at 4096³ (from 25,568 → ~33,000 dense-equiv GFLOPS)
 
 ## Files
-- `phase2/igemm/igemm_sparse_tiled.cu`
-- `phase2/igemm/sparse_meta_int8.h`
+- `kernels/gemm/igemm/igemm_sparse_tiled.cu`
+- `kernels/gemm/igemm/sparse_meta_int8.h`
 
 ## Acceptance Criteria
 - [ ] Metadata preload implemented

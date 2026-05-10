@@ -30,7 +30,7 @@ existed).
 `run_benchmark()` parses the first `<X> ms ... <Y> GFLOPS` line out of
 the bench's stdout. But every multi-kernel `bench.cu` (hgemm, igemm,
 etc) prints results for several kernels in order — naive first, the
-"good" variant later. Example, `phase2/hgemm/bench`:
+"good" variant later. Example, `kernels/gemm/hgemm/bench`:
 
 ```
 hgemm_wmma (naive 32x32)        2.437 ms    7048.54 GFLOPS    ← parsed

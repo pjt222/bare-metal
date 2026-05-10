@@ -1652,9 +1652,9 @@ move. Hypothesis falsified.
 
 ### Files
 
-- `phase2/hgemm/hgemm_16warp_aligned.cu` — counterexample variant
-- `phase2/hgemm/hgemm_16warp_aligned.sm_86.cubin` — built artifact
-- `phase2/hgemm/bench_aligned.cu` — A/B comparison harness
+- `kernels/gemm/hgemm/hgemm_16warp_aligned.cu` — counterexample variant
+- `kernels/gemm/hgemm/hgemm_16warp_aligned.sm_86.cubin` — built artifact
+- `kernels/gemm/hgemm/bench_aligned.cu` — A/B comparison harness
 - `results/ncu/hgemm_imad.csv` — NCU output for aligned variant
 
 ---
@@ -1967,8 +1967,8 @@ the original variant was already memory-throttled at 2 blocks/SM.
 
 ### Files
 
-- `phase2/hgemm/hgemm_16warp_epi_pad.cu` — padded variant (dynamic smem)
-- `phase2/hgemm/bench_epi_pad.cu` — A/B harness
+- `kernels/gemm/hgemm/hgemm_16warp_epi_pad.cu` — padded variant (dynamic smem)
+- `kernels/gemm/hgemm/bench_epi_pad.cu` — A/B harness
 - `results/ncu/99_epi_pad.csv` — NCU output
 - The original `hgemm_16warp_epi.cu` is preserved as the counter-example
   (75.9% conflict rate documented in Observation U).
@@ -2377,7 +2377,7 @@ joins the falsified pile.
 ### Test setup
 
 - Kernel: hgemm_16warp (the canonical HGEMM, +8 padded, 2 blocks/SM).
-- Persistent variant: `phase2/hgemm/hgemm_16warp_persistent.cu`. Identical
+- Persistent variant: `kernels/gemm/hgemm/hgemm_16warp_persistent.cu`. Identical
   inner loop, wrapped in `for (int tile_id = blockIdx.x; tile_id <
   n_tiles; tile_id += gridDim.x)` with `<<<sm_count * 2, 512>>>` =
   `<<<92, 512>>>`.
@@ -2447,8 +2447,8 @@ emerges (e.g., A-row reuse across N-tiles).
 
 ### Files
 
-- `phase2/hgemm/hgemm_16warp_persistent.cu` — naive persistent variant
-- `phase2/hgemm/bench_persistent.cu` — A/B bench
+- `kernels/gemm/hgemm/hgemm_16warp_persistent.cu` — naive persistent variant
+- `kernels/gemm/hgemm/bench_persistent.cu` — A/B bench
 
 ---
 
@@ -2462,7 +2462,7 @@ regress 24-41% due to atomicAdd cost + forced 1 block/SM. Result:
 
 ### Implementation
 
-`phase2/hgemm/hgemm_16warp_splitk.cu`: identical inner loop to
+`kernels/gemm/hgemm/hgemm_16warp_splitk.cu`: identical inner loop to
 `hgemm_16warp.cu`, plus:
 
 1. New parameter `int k_split`; new `blockIdx.z` axis selects which
@@ -2533,8 +2533,8 @@ shapes passed.
 
 ### Files
 
-- `phase2/hgemm/hgemm_16warp_splitk.cu` — kernel
-- `phase2/hgemm/bench_splitk.cu` — A/B sweep with k_split autotune
+- `kernels/gemm/hgemm/hgemm_16warp_splitk.cu` — kernel
+- `kernels/gemm/hgemm/bench_splitk.cu` — A/B sweep with k_split autotune
 
 ---
 
@@ -2596,13 +2596,13 @@ preference.
 
 ### Implementation
 
-- `phase2/hgemm/hgemm_dispatch.cuh` — header-only dispatcher
+- `kernels/gemm/hgemm/hgemm_dispatch.cuh` — header-only dispatcher
   (~190 lines). Three pieces:
   - `Handles` struct: pre-loaded function handles + smem size
   - `pick_variant(M,N,K)`: heuristic
   - `launch(...)`: zero-C-then-launch path for splitk; direct launch
     for standard
-- `phase2/hgemm/bench_dispatch.cu` — A/B/C bench harness that runs
+- `kernels/gemm/hgemm/bench_dispatch.cu` — A/B/C bench harness that runs
   standard, splitk-best, and dispatch on each shape
 
 ### Production usage
@@ -2758,7 +2758,7 @@ Two passes:
 | A | S08 | S04 | 7-156 (top: igemm_8warp_256x256) |
 | B | S04 | S02 | 0-33  (top: igemm_8warp_tribuf) |
 
-Bench: file-swap A/B against `phase2/igemm/bench`, 5 reps each.
+Bench: file-swap A/B against `kernels/gemm/igemm/bench`, 5 reps each.
 
 ### Results
 
@@ -2833,7 +2833,7 @@ register-port contention lives.
   S04→S02 modes)
 - `scripts/bench/bench_imma_s04.R`, `scripts/bench/bench_imma_s02.R` -- A/B bench
   driver
-- `phase2/igemm/*.imma_s04.sm_86.cubin` -- patched cubins (kept for
+- `kernels/gemm/igemm/*.imma_s04.sm_86.cubin` -- patched cubins (kept for
   reference, not used in any active bench)
 
 ---

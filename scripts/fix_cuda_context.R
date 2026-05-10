@@ -4,7 +4,7 @@
 #
 # Usage:
 #   Rscript scripts/fix_cuda_context.R                         # all bench files
-#   Rscript scripts/fix_cuda_context.R phase2/hgemm/bench.cu   # one file
+#   Rscript scripts/fix_cuda_context.R kernels/gemm/hgemm/bench.cu   # one file
 
 # (uses base R only — no library() loads needed)
 

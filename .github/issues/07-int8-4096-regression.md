@@ -22,7 +22,7 @@ labels: ["bug", "performance", "igemm"]
 ## Diagnostic Commands
 ```bash
 # Register usage
-nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin phase2/igemm/igemm_sparse_tiled.cu
+nvcc --cubin -arch=sm_86 -O2 -o igemm_sparse_tiled.sm_86.cubin kernels/gemm/igemm/igemm_sparse_tiled.cu
 cuobjdump -res-usage igemm_sparse_tiled.sm_86.cubin
 
 # Profile with Nsight Compute (if available)
@@ -37,18 +37,18 @@ ncu --metrics l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum \
 
 ## Related
 - `CONTINUE_HERE.md` notes: "Register spill suspected. Not investigated."
-- `phase2/igemm/README.md` documents non-sparse IGEMM performance but not sparse variant.
+- `kernels/gemm/igemm/README.md` documents non-sparse IGEMM performance but not sparse variant.
 
 ## Files
-- `phase2/igemm/igemm_sparse_tiled.cu`
-- `phase2/igemm/bench_sparse.cu`
-- `phase2/igemm/sparse_meta_int8.h`
+- `kernels/gemm/igemm/igemm_sparse_tiled.cu`
+- `kernels/gemm/igemm/bench_sparse.cu`
+- `kernels/gemm/igemm/sparse_meta_int8.h`
 
 ## Acceptance Criteria
 - [ ] Root cause identified (profile data or SASS inspection)
 - [ ] Fix implemented OR documented as architectural limitation
 - [ ] Performance at 4096³ within 20% of 2048³, OR limitation clearly explained
-- [ ] Update `phase2/igemm/README.md` with sparse variant results
+- [ ] Update `kernels/gemm/igemm/README.md` with sparse variant results
 
 ## Effort
 Medium — requires profiling and potentially SASS-level analysis.

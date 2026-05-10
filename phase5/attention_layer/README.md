@@ -40,6 +40,6 @@ investigations even though phase 3 holds the headline TFLOPS number.
 
 ## Cross-references
 
-- [phase2/hgemm/README.md](../../phase2/hgemm/README.md) — projection backbone
+- [kernels/gemm/hgemm/README.md](../../kernels/gemm/hgemm/README.md) — projection backbone
 - [phase3/flash_attention/README.md](../../phase3/flash_attention/README.md) — attention core
 - [docs/comparison_to_sota.md](../../docs/comparison_to_sota.md) — vs cuDNN MHA layer
