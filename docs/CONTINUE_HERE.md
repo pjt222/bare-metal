@@ -357,7 +357,7 @@ Only placeholder issue remains. Active CUDA optimization queue: empty.
 
 5. **#90 SASS instruction histogram** — documentation, complements NCU.
 
-6. **#91/#92 Register analyzer + measured roofline** — documentation.
+6. ~~**#91/#92 Register analyzer + measured roofline**~~ — **DONE** (`scripts/audit/reg_audit.R`, `scripts/profile/roofline_measured.R`; outputs `docs/register_audit.{csv,md}`, `docs/roofline_measured.md` + `docs/figures/roofline_measured.png`). Refreshed 2026-05-12 after Tier 13 reorg stale-path discovery (117 `phase{1..5}/` paths replaced with `kernels/{family}/`; +2 experimental cymatic-oxide cubins picked up).
 
 7. **#93/#94/#95 Cymatic + autotuner** — lower priority.
 
@@ -373,11 +373,10 @@ are now padded. The pattern has been exhausted across the codebase.
 - NCU profiling harness + 8 measurement files in `results/ncu/`
 
 **Open issues from previous sprint plan still valid**:
-- #89 NCU profiling harness — **DONE this session** (close)
+- #89 NCU profiling harness — **DONE** (close)
 - #90 SASS instruction histogram — still useful, complements NCU
-- #91 Register pressure analyzer — explains FA occupancy gap (16.4% vs
-  expected 25%)
-- #92 Measured roofline — now feasible (NCU gives DRAM BW directly)
+- ~~#91 Register pressure analyzer~~ — **DONE** (`scripts/audit/reg_audit.R`, shipped commit a29f597, refreshed 2026-05-12 post Tier 13). Explains FA occupancy gap.
+- ~~#92 Measured roofline~~ — **DONE** (`scripts/profile/roofline_measured.R`, current as of 2026-05-12). NCU sweep gives DRAM BW directly.
 - #93/#94 Cymatic — unchanged
 - #95 Tile autotuner — unchanged
 - #96 SASS hand-tuning — unchanged
