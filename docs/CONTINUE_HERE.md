@@ -1,6 +1,64 @@
 # Continue Here
 
-> **Last updated**: 2026-05-10 (cosmetic-only — dark-theme ggplot pass)
+> **Last updated**: 2026-05-12 (documentation-correctness pass — sprint queue was severely stale)
+>
+> **2026-05-12 session (commit `9c91895` + this doc edit)**: audit pass
+> on tooling discovered that `docs/register_audit.{csv,md}` (the #91
+> artifact) still held pre-Tier-13 paths (`phase2/`, `phase3/`, ...).
+> 117 paths refreshed to `kernels/{family}/`; 2 new experimental
+> cymatic-oxide cubins picked up. Both #91 and #92 tools smoke-tested
+> clean: `Rscript scripts/audit/reg_audit.R` produces 123 rows, no errors;
+> `Rscript scripts/profile/roofline_measured.R` matches the committed
+> `docs/roofline_measured.md` byte-for-byte.
+>
+> Then a state-reconciliation pass against `docs/gpu_reflections.md`
+> revealed that the "Next sprint priorities" list in this doc (items
+> 1-7 under the 2026-05-08 banner) was severely out of date. Items
+> closed in Observations Z through LL but never marked here:
+>
+> | item | actual state | observation |
+> |---|---|---|
+> | #96 HGEMM SASS hand-tune | **CLOSED negative result** | Obs HH (sub-task A: S08→S04 geomean 0.996×, S04→S02 geomean 0.992×; ptxas under CUDA 13.2 already schedules optimally; sub-task B superseded; sub-task C speculative) |
+> | #100 FA pipeline coalescing | **CLOSED non-issue** | Obs Z (`load_coalesce_bytes=16` is a SASS-metric artifact that under-counts cp.async; L1tex raw counters show perfect 32 B/sector; real Q-load fraction is 3% of issued global-load bytes) |
+> | #86 Persistent grid + cooperative | **CLOSED falsified** | Obs DD (for compute-bound GEMM the dispatch overhead exceeds the SM-balance win) |
+> | #87 Streaming K-split | **CLOSED validated and exceeded** | Obs EE (skinny shapes; the 1.5× estimate was conservative) |
+> | #90 SASS instruction histogram | **DONE** | Obs AA (median useful_pct = 12.5%, FA family mean 29.2%) |
+> | #91 Register pressure analyzer | **DONE** | Obs CC + this session's refresh |
+> | #92 Measured roofline | **DONE** | Obs BB (all profiled kernels compute-limited) |
+> | #93 Cymatic mode optimization | **DONE** | Obs II (per-trace best 1.371× geomean over default mode (6,4); universal best mode (5,4) at 1.099×) |
+> | #94 Cymatic on Flash Attention | **DONE bounded** | Obs JJ (1.12× structural upper bound; structurally consumed by cp.async) |
+> | #95 Shape-aware HGEMM dispatch | **DONE** | Obs FF (2.54× on the regime it dispatches to) |
+> | #102 cuasmR R-native replacement | **DONE** | commit `61b6aba` (supersedes #101 CuAssembler-on-CUDA-13.2 break) |
+>
+> **Real open code work after this reconciliation (sparse):**
+>
+> 1. **Cross-attention regime dispatch helper** (formerly "Suggestion D"
+>    in the Next-Step Suggestions section at the bottom of this doc):
+>    add `if ((size_t)seq_kv * seq_q >= 200000) launch_v2(); else
+>    launch_baseline();` to call sites. 30-minute task, well-measured
+>    boundary, ships a real perf win to downstream consumers. **Highest-EV
+>    remaining code change.**
+> 2. **#32** polyhedral spring networks — research placeholder, outside
+>    core kernel scope. Unchanged.
+> 3. **#96 sub-task C** non-Tensor-Core hand-tunes — speculative; left for
+>    future work if measurement-driven evidence emerges. No concrete
+>    target.
+> 4. **Suggestion B** fragment-shfl pattern extension to other kernels:
+>    re-checked this session, **no obvious target left in the repo**.
+>    The reductions kernels (softmax/layernorm/groupnorm) already use
+>    SHFL.BFLY natively without a smem round-trip; FA and cross-attention
+>    already have v2 variants applying the pattern. The pattern needs a
+>    *new* Tensor-Core kernel with row-reduction to apply to.
+>
+> **Implication for any next session:** the active optimization queue
+> is genuinely close to empty. The headline numbers in this doc are
+> authoritative as of 2026-05-08 (+padding sprint) + 2026-05-12
+> (Observations DD–JJ ratifying or falsifying every other open item).
+> Choosing to land item 1 above is a clean, small commit; choosing
+> #32 or sub-task C is research-grade scope without a defined success
+> criterion.
+>
+> ---
 >
 > **2026-05-10 session (commit `6cf4161`)**: switched project ggplot
 > theme `theme_baremetal()` in `scripts/audit/_theme.R` to a dark
@@ -337,29 +395,53 @@ Only placeholder issue remains. Active CUDA optimization queue: empty.
 
 ### Next sprint priorities (post-Obs Y)
 
-**Highest-EV remaining items**:
+**Highest-EV remaining items** (RECONCILED 2026-05-12 — see top-of-file
+banner for the items closed since this list was filed):
 
-1. **#96 HGEMM SASS hand-tune** — the only remaining path to break
-   HGEMM's 46% TC util ceiling. NCU showed `stall_math_throttle = 35.46`
-   on hgemm_16warp = HMMA queue pressure. Needs CuAssembler-level
-   instruction reordering. **High effort, high reward.**
+1. ~~**#96 HGEMM SASS hand-tune**~~ — **CLOSED negative result** (Obs HH).
+   sub-task A (IMMA S08→S04, S04→S02) ran on cuasmR (#102) and produced
+   geomean 0.996× and 0.992× respectively. ptxas on CUDA 13.2 already
+   schedules optimally; the 1.10× gap factor in
+   `docs/comparison_to_sota.md` is over-estimated. Sub-task B (HMMA
+   stall audit) confirmed S08 is hardware-fixed. Sub-task C
+   (non-Tensor-Core hand-tunes) speculative; no concrete target.
 
-2. **#100 FA pipeline coalescing** — `load_coalesce_bytes = 16` (half of
-   baseline's 31) even after pad2. Cheap diagnostic, modest gain
-   (estimated 1.05-1.10×).
+2. ~~**#100 FA pipeline coalescing**~~ — **CLOSED non-issue** (Obs Z).
+   `load_coalesce_bytes=16` is a SASS-ratio metric artifact that
+   under-counts cp.async. L1tex raw counters show perfect 32 B/sector
+   on both baseline and pipeline variants. The 1.05-1.10× estimate
+   was based on a metric that doesn't measure the bulk traffic.
 
-3. **#86 Persistent grid + cooperative** — was planned 1.15×. NCU
-   data shows kernels are no longer memory-throttled (post-padding),
-   so this win may not materialize. Needs re-measurement.
+3. ~~**#86 Persistent grid + cooperative**~~ — **CLOSED falsified**
+   (Obs DD) for compute-bound GEMM. Post-padding kernels are not
+   memory-throttled; dispatch overhead exceeds the SM-balance win.
 
-4. **#87 Streaming K-split** — 1.5× for skinny GEMM. Regime-specific,
-   needs dispatch logic.
+4. ~~**#87 Streaming K-split**~~ — **CLOSED validated and exceeded**
+   (Obs EE). 1.5× estimate was conservative on skinny shapes.
 
-5. **#90 SASS instruction histogram** — documentation, complements NCU.
+5. ~~**#90 SASS instruction histogram**~~ — **DONE** (Obs AA). Median
+   useful_pct across 103 kernels = 12.5%. FA family mean 29.2%.
 
-6. ~~**#91/#92 Register analyzer + measured roofline**~~ — **DONE** (`scripts/audit/reg_audit.R`, `scripts/profile/roofline_measured.R`; outputs `docs/register_audit.{csv,md}`, `docs/roofline_measured.md` + `docs/figures/roofline_measured.png`). Refreshed 2026-05-12 after Tier 13 reorg stale-path discovery (117 `phase{1..5}/` paths replaced with `kernels/{family}/`; +2 experimental cymatic-oxide cubins picked up).
+6. ~~**#91/#92 Register analyzer + measured roofline**~~ — **DONE**
+   (`scripts/audit/reg_audit.R`, `scripts/profile/roofline_measured.R`;
+   outputs `docs/register_audit.{csv,md}`, `docs/roofline_measured.md` +
+   `docs/figures/roofline_measured.png`). Refreshed 2026-05-12 after
+   Tier 13 reorg stale-path discovery (117 `phase{1..5}/` paths replaced
+   with `kernels/{family}/`; +2 experimental cymatic-oxide cubins
+   picked up). Per Obs BB all profiled kernels are compute-limited.
 
-7. **#93/#94/#95 Cymatic + autotuner** — lower priority.
+7. ~~**#93/#94/#95 Cymatic + autotuner**~~ — **DONE**. #93 (Obs II):
+   per-trace best 1.371× geomean over default; universal best mode
+   (5,4) at 1.099×. #94 (Obs JJ): 1.12× structural upper bound for
+   FA K/V cymatic, structurally consumed by cp.async. #95 (Obs FF):
+   shape-aware HGEMM dispatch closed at 2.54× on its target regime.
+
+**Sprint exhausted.** All numbered items from the original 2026-05-07
+plan (#84-#96) are now resolved. The single remaining well-defined
+code change is the cross-attention regime dispatch helper documented
+in the top-of-file banner and in "Next-Step Suggestions / D" below.
+All other open work is research-grade scope (#32) or speculative
+(#96 sub-task C).
 
 **No more obvious smem-conflict wins remaining.** All canonical kernels
 are now padded. The pattern has been exhausted across the codebase.
@@ -372,14 +454,15 @@ are now padded. The pattern has been exhausted across the codebase.
 - 5 new canonical kernels (`*_pad*.cu`)
 - NCU profiling harness + 8 measurement files in `results/ncu/`
 
-**Open issues from previous sprint plan still valid**:
-- #89 NCU profiling harness — **DONE** (close)
-- #90 SASS instruction histogram — still useful, complements NCU
-- ~~#91 Register pressure analyzer~~ — **DONE** (`scripts/audit/reg_audit.R`, shipped commit a29f597, refreshed 2026-05-12 post Tier 13). Explains FA occupancy gap.
-- ~~#92 Measured roofline~~ — **DONE** (`scripts/profile/roofline_measured.R`, current as of 2026-05-12). NCU sweep gives DRAM BW directly.
-- #93/#94 Cymatic — unchanged
-- #95 Tile autotuner — unchanged
-- #96 SASS hand-tuning — unchanged
+**Open issues from previous sprint plan still valid** (RECONCILED 2026-05-12):
+- ~~#89 NCU profiling harness~~ — **DONE**
+- ~~#90 SASS instruction histogram~~ — **DONE** (Obs AA)
+- ~~#91 Register pressure analyzer~~ — **DONE** (Obs CC + 2026-05-12 refresh; explains FA occupancy gap)
+- ~~#92 Measured roofline~~ — **DONE** (Obs BB; all profiled kernels compute-limited; NCU sweep gives DRAM BW directly)
+- ~~#93 Cymatic mode optimization~~ — **DONE** (Obs II)
+- ~~#94 Cymatic on FA K/V~~ — **DONE bounded** (Obs JJ, 1.12× upper bound)
+- ~~#95 Tile autotuner / shape-aware dispatch~~ — **DONE** (Obs FF)
+- ~~#96 SASS hand-tuning~~ — **CLOSED negative result** (Obs HH; ptxas on CUDA 13.2 already schedules optimally)
 
 ## Original Next Sprint Plan (issues #84-96, partially invalidated)
 
