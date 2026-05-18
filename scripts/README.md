@@ -13,9 +13,7 @@ scripts/
 ├── build.R                   ── compile / disasm / roundtrip (uses local cuasmR)
 ├── verify_setup.R            ── environment check (CUDA, GPU, cuasmR, renv)
 ├── install_cuasmR.R          ── (re)install the local cuasmR R package
-├── fix_cuda_context.R        ── one-shot codemod: cuCtxCreate → cuDevicePrimaryCtxRetain
 ├── install-hooks.sh          ── install repo-local git hooks
-├── create_issues.sh          ── batch-create GitHub issues from .github/issues/*.md
 │
 ├── model/                    ── analytical perf models (no GPU required)
 │   ├── occupancy_calc.R      ── block params → warps/SM, bottleneck identifier

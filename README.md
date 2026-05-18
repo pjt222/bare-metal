@@ -311,7 +311,7 @@ few utility / setup drivers used as named CLI tools. See
 
 | Subdir | Purpose | Key scripts |
 |---|---|---|
-| `scripts/`            | utility / setup drivers   | `build.R`, `verify_setup.R`, `install_cuasmR.R`, `fix_cuda_context.R`, `install-hooks.sh`, `create_issues.sh` |
+| `scripts/`            | utility / setup drivers   | `build.R`, `verify_setup.R`, `install_cuasmR.R`, `install-hooks.sh` |
 | `scripts/model/`      | analytical models         | `occupancy_calc.R`, `perf_model_panel.R`, `pipeline_balance.R`, `analyze_smem_layout.R`, `find_optimal_smem_layout.R`, `config_optimizer.R`, `kernel_dashboard.R` |
 | `scripts/cymatic/`    | Chladni-layout pipeline   | `cymatic_mapping.R`, `cymatic_analyze.R`, `cymatic_visualize.R`, `cymatic_optimize.R`, `cymatic_optimize_summary.R`, `cymatic_fa_alignment.R` |
 | `scripts/bench/`      | benchmark harnesses       | `bench_regress.R`, `bench_flash_all.R`, `bench_imma_s02.R`, `bench_imma_s04.R`, `handtune_imma_s04.R` |
