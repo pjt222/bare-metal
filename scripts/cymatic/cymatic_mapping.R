@@ -20,12 +20,12 @@
 #   - The mapping is deterministic and computable per (mode, resolution).
 #
 # Outputs:
-#   - region map matrix (grid_n × grid_n, region_id ∈ {0, 1, ...}; 0 = outside disc)
+#   - region map matrix (grid_n × grid_n, region_id ∈ {0, 1, ...}; 0 = outside active domain)
 #   - per-cell linear address (row-major over occupied cells, in region order)
 #   - region table: region_id, cell_count, centroid_r, centroid_theta, area_fraction
 #
 # Usage:
-#   Rscript scripts/cymatic/cymatic_mapping.R [grid_n=128] [n=4] [m=3] [n2=0] [m2=0] [alpha=0]
+#   Rscript scripts/cymatic/cymatic_mapping.R [grid_n=128] [n=4] [m=3] [n2=0] [m2=0] [alpha=0] [domain=disc|square|overlayed]
 # Example single mode (4, 3):  Rscript scripts/cymatic/cymatic_mapping.R 128 4 3
 # Example mixed (4,3)+0.6*(2,5): Rscript scripts/cymatic/cymatic_mapping.R 128 4 3 2 5 0.6
 
@@ -79,19 +79,31 @@ mixed_mode_field <- function(r, theta, modes) {
   out
 }
 
-# ---- Disc grid -------------------------------------------------------------
+# ---- Active grid -----------------------------------------------------------
 
-build_disc_grid <- function(grid_n, R_disc = 1) {
-  # Cartesian grid_n × grid_n covering [-R, R]^2; mark cells inside the disc.
+build_active_grid <- function(grid_n, R_disc = 1, active_domain = c("disc", "square", "overlayed")) {
+  # Cartesian grid_n × grid_n covering [-R, R]^2; keep either the original
+  # in-circle disc, the inscribed square, or the full disc for the composite
+  # overlayed layout (square-ordered core + ring-ordered remainder).
+  active_domain <- match.arg(active_domain)
   xs <- seq(-R_disc, R_disc, length.out = grid_n)
   ys <- seq(-R_disc, R_disc, length.out = grid_n)
   Xg <- matrix(rep(xs, each = grid_n), grid_n, grid_n)
   Yg <- matrix(rep(ys, times = grid_n), grid_n, grid_n)
   Rg <- sqrt(Xg^2 + Yg^2)
   Tg <- atan2(Yg, Xg)
-  inside <- Rg <= R_disc * (1 - 0.5 / grid_n)  # margin to avoid edge spikes
+  disc_radius <- R_disc * (1 - 0.5 / grid_n)
+  square_half_extent <- (R_disc / sqrt(2)) * (1 - 0.5 / grid_n)
+  inside <- if (active_domain %in% c("disc", "overlayed")) {
+    Rg <= disc_radius
+  } else {
+    abs(Xg) <= square_half_extent & abs(Yg) <= square_half_extent
+  }
   list(x = Xg, y = Yg, r = Rg, theta = Tg, inside = inside,
-       grid_n = grid_n, R_disc = R_disc)
+       grid_n = grid_n, R_disc = R_disc,
+       active_domain = active_domain,
+       disc_radius = disc_radius,
+       square_half_extent = square_half_extent)
 }
 
 # ---- Region labeling (4-connected flood fill on sign of field) ------------
@@ -186,7 +198,7 @@ order_regions_radial <- function(label, grid) {
 assign_addresses <- function(label, region_order) {
   # Walk regions in region_order; within each region, assign addresses in
   # row-major Cartesian sweep over the region's cells. Returns a matrix the
-  # same shape as label, with linear addresses (NA outside disc / nodal cells).
+  # same shape as label, with linear addresses (NA outside active domain / nodal cells).
   grid_n <- nrow(label)
   addr <- matrix(NA_integer_, grid_n, grid_n)
   ptr <- 0L
@@ -206,16 +218,118 @@ assign_addresses <- function(label, region_order) {
 
 # ---- Top-level compute -----------------------------------------------------
 
+cymatic_mapping_overlayed <- function(grid_n, modes, R_disc = 1) {
+  disc_grid <- build_active_grid(grid_n, R_disc, active_domain = "disc")
+  square_grid <- build_active_grid(grid_n, R_disc, active_domain = "square")
+  field <- mixed_mode_field(disc_grid$r, disc_grid$theta, modes)
+  field[!disc_grid$inside] <- 0
+
+  square_lab <- label_regions(field, square_grid$inside)
+  square_ord <- order_regions_radial(square_lab$label, square_grid)
+  square_addr <- assign_addresses(square_lab$label, square_ord)
+
+  ring_inside <- disc_grid$inside & !square_grid$inside
+  ring_label <- matrix(0L, grid_n, grid_n)
+  ring_order <- square_ord[0, , drop = FALSE]
+  ring_addr <- list(address = matrix(NA_integer_, grid_n, grid_n), total_cells = 0L)
+  if (any(ring_inside)) {
+    ring_lab <- label_regions(field, ring_inside)
+    ring_order <- order_regions_radial(ring_lab$label, disc_grid)
+    ring_addr <- assign_addresses(ring_lab$label, ring_order)
+    ring_label <- ring_lab$label
+  }
+
+  label <- matrix(0L, grid_n, grid_n)
+  address <- matrix(NA_integer_, grid_n, grid_n)
+
+  n_square_regions <- nrow(square_ord)
+  n_ring_regions <- nrow(ring_order)
+
+  if (n_square_regions > 0L) {
+    square_region_map <- setNames(square_ord$new_id, square_ord$region_id)
+    square_region_ids <- square_region_map[as.character(square_lab$label[square_grid$inside])]
+    label[square_grid$inside] <- as.integer(square_region_ids)
+    address[square_grid$inside] <- square_addr$address[square_grid$inside]
+  }
+
+  square_total_cells <- square_addr$total_cells
+  if (n_ring_regions > 0L) {
+    ring_region_map <- setNames(n_square_regions + ring_order$new_id, ring_order$region_id)
+    ring_region_ids <- ring_region_map[as.character(ring_label[ring_inside])]
+    label[ring_inside] <- as.integer(ring_region_ids)
+    address[ring_inside] <- ring_addr$address[ring_inside] + square_total_cells
+  }
+
+  region_order_square <- data.frame(
+    region_id = square_ord$new_id,
+    new_id = square_ord$new_id,
+    r_centroid = square_ord$r_centroid,
+    theta_centroid = square_ord$theta_centroid,
+    cell_count = square_ord$cell_count,
+    component = "square_core"
+  )
+  region_order_ring <- data.frame(
+    region_id = n_square_regions + ring_order$new_id,
+    new_id = n_square_regions + ring_order$new_id,
+    r_centroid = ring_order$r_centroid,
+    theta_centroid = ring_order$theta_centroid,
+    cell_count = ring_order$cell_count,
+    component = "disc_ring"
+  )
+  region_order <- rbind(region_order_square, region_order_ring)
+
+  total_cells <- square_total_cells + ring_addr$total_cells
+  stopifnot(total_cells == sum(disc_grid$inside))
+
+  list(
+    grid = disc_grid,
+    field = field,
+    label = label,
+    n_regions = nrow(region_order),
+    region_order = region_order,
+    address = address,
+    total_cells = total_cells,
+    modes = modes,
+    active_domain = "overlayed",
+    overlay_components = list(
+      square_cells = square_total_cells,
+      ring_cells = ring_addr$total_cells,
+      square_regions = n_square_regions,
+      ring_regions = n_ring_regions
+    )
+  )
+}
+
 cymatic_mapping <- function(grid_n = 128,
                              modes = list(list(n = 4, m = 3, alpha = 1.0)),
-                             R_disc = 1) {
-  cat(sprintf("[cymatic] grid=%d  modes=", grid_n))
+                             R_disc = 1,
+                             active_domain = c("disc", "square", "overlayed")) {
+  active_domain <- match.arg(active_domain)
+  cat(sprintf("[cymatic] grid=%d  domain=%s  modes=", grid_n, active_domain))
   for (md in modes) {
     cat(sprintf("(n=%d, m=%d, α=%.2f) ", md$n, md$m, md$alpha))
   }
   cat("\n")
 
-  grid <- build_disc_grid(grid_n, R_disc)
+  if (active_domain == "overlayed") {
+    mapping <- cymatic_mapping_overlayed(grid_n = grid_n, modes = modes, R_disc = R_disc)
+    cat(sprintf("[cymatic] %d cells addressed (%s domain)\n",
+                mapping$total_cells, active_domain))
+    cat(sprintf("[cymatic] overlay split: square_core=%d cells (%d regions), disc_ring=%d cells (%d regions)\n",
+                mapping$overlay_components$square_cells,
+                mapping$overlay_components$square_regions,
+                mapping$overlay_components$ring_cells,
+                mapping$overlay_components$ring_regions))
+    sizes <- mapping$region_order$cell_count
+    cat(sprintf("[cymatic] region size: min=%d  median=%d  mean=%.1f  max=%d\n",
+                as.integer(min(sizes)), as.integer(median(sizes)),
+                mean(sizes), as.integer(max(sizes))))
+    cat(sprintf("[cymatic] size ratio max/min = %.1fx\n",
+                max(sizes) / max(min(sizes), 1)))
+    return(mapping)
+  }
+
+  grid <- build_active_grid(grid_n, R_disc, active_domain = active_domain)
   field <- mixed_mode_field(grid$r, grid$theta, modes)
   field[!grid$inside] <- 0
 
@@ -225,7 +339,7 @@ cymatic_mapping <- function(grid_n = 128,
 
   ord <- order_regions_radial(lab$label, grid)
   addr <- assign_addresses(lab$label, ord)
-  cat(sprintf("[cymatic] %d cells addressed (disc area)\n", addr$total_cells))
+  cat(sprintf("[cymatic] %d cells addressed (%s domain)\n", addr$total_cells, active_domain))
 
   # Region size statistics
   sizes <- ord$cell_count
@@ -243,7 +357,8 @@ cymatic_mapping <- function(grid_n = 128,
     region_order  = ord,
     address       = addr$address,
     total_cells   = addr$total_cells,
-    modes         = modes
+    modes         = modes,
+    active_domain = active_domain
   )
 }
 
@@ -291,13 +406,14 @@ if (.is_main()) {
   n2     <- if (length(args) >= 4) as.integer(args[4]) else 0L
   m2     <- if (length(args) >= 5) as.integer(args[5]) else 0L
   alpha2 <- if (length(args) >= 6) as.numeric(args[6]) else 0.0
+  active_domain <- if (length(args) >= 7) args[7] else "disc"
 
   modes <- list(list(n = n1, m = m1, alpha = 1.0))
   if (n2 > 0L && m2 > 0L && alpha2 != 0) {
     modes[[length(modes) + 1L]] <- list(n = n2, m = m2, alpha = alpha2)
   }
 
-  mapping <- cymatic_mapping(grid_n = grid_n, modes = modes)
+  mapping <- cymatic_mapping(grid_n = grid_n, modes = modes, active_domain = active_domain)
 
   # Write to kernels/memory_layout/cymatic/ (audit Tier 4: stop polluting repo root).
   out_dir <- "kernels/memory_layout/cymatic"
@@ -305,8 +421,8 @@ if (.is_main()) {
     # Fall back to CWD if invoked from inside kernels/memory_layout/cymatic/ already.
     out_dir <- "."
   }
-  csv_path <- file.path(out_dir, "cymatic_mapping.csv")
-  rds_path <- file.path(out_dir, "cymatic_mapping.rds")
+  csv_path <- file.path(out_dir, sprintf("cymatic_mapping_%s.csv", active_domain))
+  rds_path <- file.path(out_dir, sprintf("cymatic_mapping_%s.rds", active_domain))
   write_mapping_table(mapping, csv_path)
   saveRDS(mapping, rds_path)
   cat(sprintf("[cymatic] wrote %s\n[cymatic] wrote %s\n", csv_path, rds_path))

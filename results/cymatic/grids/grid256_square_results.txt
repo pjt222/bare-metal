@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_square.bin | traces_square.bin
+Grid:   256 × 256   n_inside=32400   buffer=0.13 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0                198          0.000          5.4     0.9%          0.000          5.5     0.9%      1.01x
+radial_mid_pi6              264          0.000          6.9     1.1%          0.000          7.4     1.2%      1.08x
+radial_mid_pi3              264          0.000          7.4     1.2%          0.000          7.4     1.2%      1.00x
+radial_bnd_pi12             214          0.000          5.7     0.9%          0.000          5.7     0.9%      1.00x
+radial_bnd_pi4              392          0.000         10.7     1.8%          0.000         10.7     1.8%      1.00x
+radial_bnd_5pi12            214          0.000          5.7     0.9%          0.000          5.7     0.9%      0.99x
+circular_r060               456          0.000         12.2     2.0%          0.000         12.4     2.0%      1.02x
+circular_r030               240          0.000          6.4     1.0%          0.000          6.0     1.0%      0.95x
+polar_tile_pi6             3408          0.000         90.4    14.9%          0.000        114.6    18.8%      1.27x
+polar_tile_pi4             3410          0.000        112.7    18.5%          0.000        114.0    18.8%      1.01x
+radial_bias_07            65536          0.000        648.1   106.6%          0.000        679.0   111.7%      1.05x
+radial_bias_00            65536          0.000        618.6   101.7%          0.000        635.5   104.5%      1.03x
+rowmajor_full             32400          0.000        581.2    95.6%          0.000        655.8   107.9%      1.13x
+colmajor_full             32400          0.000        534.0    87.8%          0.000        510.3    83.9%      0.96x
+random                    32400          0.000        525.8    86.5%          0.000        525.2    86.4%      1.00x

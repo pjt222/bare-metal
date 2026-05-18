@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_square.bin | traces_square.bin
+Grid:   1024 × 1024   n_inside=524176   buffer=2.10 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0                798          0.000         21.7     3.6%          0.000         21.9     3.6%      1.01x
+radial_mid_pi6             1072          0.000         29.8     4.9%          0.000         29.3     4.8%      0.98x
+radial_mid_pi3             1072          0.000         29.7     4.9%          0.000         29.8     4.9%      1.00x
+radial_bnd_pi12             861          0.000         23.5     3.9%          0.000         23.0     3.8%      0.98x
+radial_bnd_pi4             1618          0.000         44.5     7.3%          0.000         43.9     7.2%      0.99x
+radial_bnd_5pi12            861          0.000         29.2     4.8%          0.000         27.7     4.6%      0.95x
+circular_r060              1880          0.000         61.8    10.2%          0.000         61.6    10.1%      1.00x
+circular_r030               956          0.000         30.4     5.0%          0.000         30.5     5.0%      1.00x
+polar_tile_pi6            54810          0.000        562.4    92.5%          0.000        578.7    95.2%      1.03x
+polar_tile_pi4            54810          0.000        589.8    97.0%          0.000        594.7    97.8%      1.01x
+radial_bias_07            65536          0.001        221.6    36.5%          0.001        220.9    36.3%      1.00x
+radial_bias_00            65536          0.001        253.7    41.7%          0.001        247.1    40.6%      0.97x
+rowmajor_full            524176          0.001       1632.5   268.5%          0.001       1666.4   274.1%      1.02x
+colmajor_full            524176          0.012        180.9    29.8%          0.011        193.4    31.8%      1.07x
+random                    65536          0.001        213.5    35.1%          0.001        214.6    35.3%      1.01x

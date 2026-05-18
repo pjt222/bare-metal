@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_disc.bin | traces_disc.bin
+Grid:   256 × 256   n_inside=50848   buffer=0.20 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0                396          0.000         10.8     1.8%          0.000         10.8     1.8%      1.00x
+radial_mid_pi6              395          0.000         10.7     1.8%          0.000         10.7     1.8%      1.00x
+radial_mid_pi3              395          0.000         10.6     1.7%          0.000         10.6     1.7%      1.01x
+radial_bnd_pi12             398          0.000          9.0     1.5%          0.000         10.8     1.8%      1.19x
+radial_bnd_pi4              400          0.000         10.8     1.8%          0.000         10.6     1.8%      0.99x
+radial_bnd_5pi12            398          0.000         10.7     1.8%          0.000          9.5     1.6%      0.89x
+circular_r060               456          0.000         12.3     2.0%          0.000         12.4     2.0%      1.01x
+circular_r030               240          0.000          6.4     1.1%          0.000          6.3     1.0%      0.98x
+polar_tile_pi6             3408          0.000         92.6    15.2%          0.000         89.7    14.8%      0.97x
+polar_tile_pi4             3410          0.000         89.8    14.8%          0.000        113.7    18.7%      1.27x
+radial_bias_07            65536          0.000        632.5   104.0%          0.000        630.9   103.8%      1.00x
+radial_bias_00            65536          0.000        526.7    86.6%          0.000        711.1   117.0%      1.35x
+rowmajor_full             50848          0.000       1097.4   180.5%          0.000       1079.5   177.5%      0.98x
+colmajor_full             50848          0.000        577.4    95.0%          0.000        673.3   110.7%      1.17x
+random                    50848          0.000        554.9    91.3%          0.000        556.4    91.5%      1.00x

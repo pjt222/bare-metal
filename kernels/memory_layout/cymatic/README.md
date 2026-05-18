@@ -9,7 +9,7 @@
 
 Two memory layouts of the same logical data:
 
-- **Row-major**: cells inside the disc indexed in raster order (i ascending, j ascending).
+- **Row-major**: active cells indexed in raster order (i ascending, j ascending).
 - **Cymatic**: cells permuted to the layout produced by `scripts/cymatic/cymatic_mapping.R`,
   ordered by (centroid_r, centroid_θ) over Chladni-mode antinode regions.
 
@@ -20,13 +20,25 @@ differ. The benchmark runs a gather kernel:
 __global__ void gather_sum(const float *data, const int *idx,
                            float *out, int n, int iters) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
     float s = 0.0f;
     for (int it = 0; it < iters; ++it)
         for (int k = tid; k < n; k += stride)
             s += data[idx[k]];
-    if (tid == 0) atomicAdd(out, s);
+    out[blockIdx.x] = block_reduce_sum(s);
 }
 ```
+
+The sampling grid still spans the full disc bounding box, and the benchmark
+now supports three domain/layout variants:
+
+- **`DOMAIN=disc`** — original in-circle disc
+- **`DOMAIN=square`** — inscribed square, with the outer disc ring dropped
+- **`DOMAIN=overlayed`** — full disc support, but with the square-domain core
+  ordered first and the remaining disc-only ring ordered afterward
+
+The `--overlay` visualization comparing the disc and square masks is written to
+`docs/figures/cymatic/cymatic_domain_overlay.png`.
 
 For each access trace, we feed the same logical cell sequence as two index
 buffers — `idx_row[t] = trace[t]` for the row layout, `idx_cym[t] =
@@ -36,26 +48,36 @@ trace, same data values → bandwidth difference is pure layout.
 ## How to run
 
 ```bash
-# 1. Generate inputs (perm.bin + traces.bin) for a 1024×1024 grid, mode (6, 4)
-make gen GRID=1024
+# 1. Generate the original disc-domain inputs
+make gen GRID=1024 DOMAIN=disc
 
-# 2. Build CUDA bench
+# 2. Generate the inscribed-square inputs
+make gen GRID=1024 DOMAIN=square
+
+# 3. Generate the composite overlayed inputs
+make gen GRID=1024 DOMAIN=overlayed
+
+# 4. Build CUDA bench
 make
 
-# 3. Run (defaults: 200 iters/run, 5 warmup, 11 runs, median reported)
-./bench
+# 5. Run any variant (defaults: 200 iters/run, 5 warmup, 11 runs, median reported)
+make run DOMAIN=disc
+make run DOMAIN=square
+make run DOMAIN=overlayed
 
 # Or sweep grid sizes
-make sweep
+make sweep DOMAIN=disc
+make sweep DOMAIN=square
+make sweep DOMAIN=overlayed
 ```
 
 Output: per-trace table with row_ms, row_GB/s, row_eff%, cym_ms, cym_GB/s,
 cym_eff%, speedup (= row_ms / cym_ms; > 1 ⇒ cymatic wins).
 
 Captured runs land in the centralised `results/cymatic/grids/` tree at
-the repo root (`grid<N>_results.txt` for N = 256, 512, 1024, 2048).
+the repo root (`grid<N>_<domain>_results.txt` for N = 256, 512, 1024, 2048).
 
-## Key result: cymatic locality is angle-dependent
+## Key result: overlayed keeps the disc-sized working set and most of the disc-domain wins
 
 For mode (n=6, m=4), the angular sectors have midlines at θ = k·π/6 (where
 `cos(6θ) = ±1`) and boundaries at θ = π/12 + k·π/6 (where `cos(6θ) = 0`).
@@ -65,29 +87,25 @@ trace at a sector boundary sits exactly on the nodal line between two
 opposite-sign regions, so adjacent (i, j) cells in the trace map to
 entirely different region address ranges. Worst case for the layout.
 
-Measured speedup at GRID=2048 (13 MB buffer, fully DRAM):
+Measured speedup at GRID=2048 (fresh 2026-05-18 sweeps):
 
-| trace | speedup | interpretation |
-|---|---|---|
-| `radial_mid_pi6` (θ=π/6, midline) | **1.53×** | cymatic wins |
-| `radial_mid_0` (θ=0, midline) | 1.01× | tie — row layout already coalesces (cells in single row) |
-| `radial_bnd_pi4` (θ=π/4, boundary) | **0.54×** | cymatic loses by 1.85× |
-| `radial_bnd_5pi12` (θ=5π/12, boundary) | **0.53×** | cymatic loses by 1.89× |
-| `circular_r030` (small radius) | **1.38×** | cymatic wins (radial-band scan) |
-| `circular_r060` (large radius) | 1.12× | mild cymatic win |
-| `polar_tile_pi6` (midline-centered) | 0.98× | tie |
-| `polar_tile_pi4` (boundary-centered) | 1.03× | tie |
-| `radial_bias_07` (random gather, r₀=0.7) | 1.07× | tie |
-| `random` (uniform shuffle) | 1.03× | tie |
-| `rowmajor_full` (sequential native row scan) | **0.66×** | row layout wins by 1.51× |
-| `colmajor_full` (sequential column scan) | 0.98× | tie (both bad) |
+| trace | disc | square | overlayed | reading |
+|---|---:|---:|---:|---|
+| `radial_mid_pi6` | **1.50×** | 0.99× | **1.48×** | overlayed keeps the disc-style sector-midline win |
+| `radial_bnd_pi4` | **0.70×** | **0.86×** | **0.71×** | overlayed keeps the disc-style nodal-boundary loss |
+| `radial_bnd_5pi12` | **0.69×** | **0.70×** | **0.70×** | boundary loss is robust in all full-disc variants |
+| `circular_r030` | 2.10× | 1.01× | **2.11×** | overlayed preserves the biggest disc-domain win |
+| `circular_r060` | 1.21× | 0.97× | **1.25×** | overlayed also keeps the larger-radius circular win |
+| `polar_tile_pi6` | **1.27×** | 0.93× | 1.02× | overlayed flattens this one back toward neutral |
+| `rowmajor_full` | 0.67× | **0.82×** | **0.64×** | row-major still wins hardest when the full disc is active |
+| `colmajor_full` | 0.83× | **1.09×** | 0.99× | overlayed removes the square-only col-major win |
 
-Reading: **the layout amplifies its mode geometry**. Workloads that align
-with a sector midline are strongly accelerated; workloads that graze a
-nodal line are strongly decelerated; everything else is neutral. The
-worst slowdown (1.89×) is comparable in magnitude to the best speedup
-(1.53×). For a workload with a fixed access pattern, this is meaningful.
-For a generic workload, it's a wash.
+Reading: **overlayed behaves much more like disc than square.** Because it
+restores the full disc active set, it keeps the strongest geometry-aligned
+wins (`circular_r030`, `radial_mid_pi6`, `circular_r060`) and the strong
+row-major penalty. But the square-first address ordering does change some
+mid-structure cases: `polar_tile_pi6` falls back to near-tie and
+`colmajor_full` loses the square-domain advantage.
 
 ## Why circular sweeps win (the R analysis was wrong)
 
@@ -106,20 +124,22 @@ gives it locality even tangentially.
 This is a real-system finding the static metric missed. The CUDA bench
 catches it; the R metric does not.
 
-## Result table across grid sizes (speedups, robust patterns only)
+## Overlayed cross-grid table (selected patterns)
 
 | Pattern | 256² | 512² | 1024² | 2048² |
 |---|---|---|---|---|
-| `radial_bnd_pi4` | 0.98× | 0.99× | **0.63×** | **0.54×** |
-| `radial_bnd_5pi12` | 0.99× | 0.96× | 0.99× | **0.53×** |
-| `radial_mid_pi6` | 0.98× | 0.99× | 1.00× | **1.53×** |
-| `circular_r060` | 1.02× | 0.97× | **1.86×** | 1.12× |
-| `circular_r030` | 0.97× | 0.98× | 0.90× | **1.38×** |
-| `rowmajor_full` | 0.78× | 1.40× | 1.09× | **0.66×** |
+| `radial_bnd_pi4` | 0.99× | 0.99× | 0.99× | **0.71×** |
+| `radial_bnd_5pi12` | 0.99× | 0.96× | 0.98× | **0.70×** |
+| `radial_mid_pi6` | 1.01× | 1.00× | 0.99× | **1.48×** |
+| `circular_r060` | 1.02× | 0.98× | **1.89×** | **1.25×** |
+| `circular_r030` | 0.99× | 0.99× | 0.98× | **2.11×** |
+| `polar_tile_pi6` | 0.98× | **1.05×** | **1.10×** | 1.02× |
+| `rowmajor_full` | 1.02× | 1.00× | 1.00× | **0.64×** |
+| `colmajor_full` | **1.17×** | 1.04× | 1.03× | 0.99× |
 
-Buffer sizes: 256² = 0.2 MB (L1/L2), 512² = 0.8 MB (L2), 1024² = 3.3 MB
-(L2 boundary), 2048² = 13 MB (DRAM). Wins and losses sharpen at DRAM
-scale because the cache no longer hides locality differences.
+Active buffer sizes for the overlayed domain: 256² = 0.20 MB, 512² = 0.82 MB,
+1024² = 3.28 MB, 2048² = 13.16 MB. Like the disc domain, overlayed only
+really separates from row-major once the working set pushes beyond L2.
 
 The smaller grids show mostly ties because the entire buffer fits in
 L2 and post-warmup all accesses are L2 hits regardless of layout. The
@@ -144,22 +164,24 @@ L2 and post-warmup all accesses are L2 hits regardless of layout. The
   Sources `../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
 - `bench.cu` — CUDA gather bench with median + scaled iters.
 - `Makefile` — `make`, `make gen`, `make run`, `make sweep`, `make clean`.
-- `results/cymatic/grids/grid{256,512,1024,2048}_results.txt` — captured benchmark output.
+- `results/cymatic/grids/grid{256,512,1024,2048}_{disc,square,overlayed}_results.txt` — captured benchmark output.
 
 ## Honest assessment
 
-Cymatic memory mapping is **not a universal speedup**. At DRAM scale
-(2048², 13 MB buffer) on RTX 3070 Ti:
+Cymatic memory mapping is **not a universal speedup**. At DRAM scale on
+RTX 3070 Ti:
 
-- **Wins** when the access pattern aligns with mode geometry —
-  midline radial sweeps (1.5×), small-radius circular (1.4×). This
-  matches workloads where the data has true rotational/radial
-  structure: polar warps, FFT butterflies in radial decomposition,
-  attention with rotational position bias.
-- **Loses** when the pattern grazes mode nodal lines (boundary radial
-  sweeps, ~1.9× slowdown) or matches row-major native order
-  (sequential full scans, ~1.5× row-layout advantage).
-- **Indifferent** for random gather, polar tiles, and biased samples.
+- **Disc domain** is the more expressive variant: it keeps the large
+  geometry-aligned wins (up to 2.10×) but also the clearest failures
+  on nodal-boundary and row-major-native scans.
+- **Square domain** is the more conservative variant: it dampens both
+  the wins and the losses, leaving mostly ties plus a few modest wins
+  and persistent nodal-boundary regressions.
+- **Overlayed domain** preserves the disc-sized active set and most of the
+  strongest disc wins, but with a square-first core ordering that flattens
+  some mid-structure traces back toward neutral.
+- **Indifferent** patterns remain random-gather-like traces where both
+  domains stay near 1.0×.
 
 For a fixed workload with known geometry, this layout is a real tool.
 For a workload with unknown or mixed access patterns, row-major is

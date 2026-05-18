@@ -1,13 +1,18 @@
 # Generated input files (regenerate with `make gen`)
 perm.bin
+perm_*.bin
 traces.bin
+traces_*.bin
 mapping.rds
+mapping_*.rds
 
 # Compiled bench
-bench_cymatic
+bench
 *.o
 
 # R-side artifacts (not specific to phase4/cymatic but written here when CWD)
 cymatic_mapping.csv
 cymatic_mapping.rds
+cymatic_mapping_*.csv
+cymatic_mapping_*.rds
 cymatic_locality.csv

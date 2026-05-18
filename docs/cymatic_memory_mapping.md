@@ -3,8 +3,11 @@
 > Exploratory layout study. R scripts under `scripts/cymatic_*.R` compute
 > the mappings and report static locality metrics. CUDA benchmarks under
 > `kernels/memory_layout/cymatic/` measure actual GPU performance. **Conclusion: the
-> layout is a real, conditional speedup — wins 1.5× when access patterns
-> align with mode geometry, loses 1.9× when they graze nodal lines.**
+> layout is a geometry-sensitive layout experiment whose measured benefit
+> depends strongly on the active domain: the full-disc variants (`disc`
+> and now `overlayed`) still reach about **2.1×**, while the inscribed-square
+> variant is much more muted and still loses on nodal-boundary and
+> row-major-native scans.**
 > See `kernels/memory_layout/cymatic/README.md` for full empirical results.
 
 ## The idea
@@ -105,6 +108,13 @@ Algorithm:
 5. Within each region, assign linear addresses in Cartesian raster
    order.
 
+The benchmark tooling now exposes three concrete layout/domain variants:
+
+- **`disc`** — full in-circle support, ordered by the disc regions
+- **`square`** — inscribed-square support only
+- **`overlayed`** — full disc support again, but with the square-domain
+  core ordered first and the outer disc-only ring ordered after it
+
 ### `scripts/cymatic/cymatic_visualize.R`
 
 Generates four panels from a saved mapping:
@@ -112,6 +122,12 @@ Generates four panels from a saved mapping:
 ```bash
 Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds docs/figures/cymatic/cymatic
 # writes cymatic_field.png, cymatic_regions.png, cymatic_addresses.png, cymatic_sizes.png
+
+# compare the disc and square masks only (visualization, not a benchmark domain)
+Rscript scripts/cymatic/cymatic_visualize.R --overlay \
+  kernels/memory_layout/cymatic/mapping_disc.rds \
+  kernels/memory_layout/cymatic/mapping_square.rds \
+  docs/figures/cymatic/cymatic_domain
 ```
 
 ### `scripts/cymatic/cymatic_analyze.R`
@@ -182,20 +198,25 @@ logical data: row-major-inside vs cymatic-permuted. Same gather kernel,
 same access trace, different physical layout. Bandwidth difference is
 pure layout effect (warp coalescing, L1/L2 hit rate).
 
-Tested on RTX 3070 Ti (GA104, 4 MB L2, 608 GB/s DRAM peak). At GRID=2048
-(13 MB buffer, fully DRAM regime), mode (n=6, m=4):
+Tested on RTX 3070 Ti (GA104, 4 MB L2, 608 GB/s DRAM peak). The fresh
+2026-05-18 three-way sweep at GRID=2048 used:
 
-| trace | speedup (row_ms / cym_ms) | interpretation |
-|---|---|---|
-| `radial_mid_pi6` (θ=π/6, sector midline) | **1.53×** | cymatic wins |
-| `radial_bnd_pi4` (θ=π/4, sector boundary) | **0.54×** | cymatic loses by 1.85× |
-| `radial_bnd_5pi12` (θ=5π/12, boundary) | **0.53×** | cymatic loses by 1.89× |
-| `circular_r030` (small radius circle) | **1.38×** | cymatic wins |
-| `circular_r060` (large radius circle) | 1.12× | mild cymatic win |
-| `polar_tile_pi6` (midline-centered) | 0.98× | tie |
-| `radial_bias_07` (random gather, r₀=0.7) | 1.07× | tie |
-| `random` (uniform shuffle) | 1.03× | tie |
-| `rowmajor_full` (sequential native row scan) | **0.66×** | row layout wins by 1.51× |
+- **disc**: `n_inside = 3,289,344` (13.16 MB)
+- **square**: `n_inside = 2,096,704` (8.39 MB)
+- **overlayed**: `n_inside = 3,289,344` (13.16 MB, same active set as disc)
+
+Mode was `(n=6, m=4)` in all three cases.
+
+| trace | disc | square | overlayed | interpretation |
+|---|---:|---:|---:|---|
+| `radial_mid_pi6` (θ=π/6, sector midline) | **1.50×** | 0.99× | **1.48×** | overlayed keeps the strong disc-style sector-midline win |
+| `radial_bnd_pi4` (θ=π/4, sector boundary) | **0.70×** | **0.86×** | **0.71×** | overlayed keeps the full-disc nodal-boundary loss |
+| `radial_bnd_5pi12` (θ=5π/12, boundary) | **0.69×** | **0.70×** | **0.70×** | boundary loss is robust across all variants |
+| `circular_r030` (small radius circle) | 2.10× | 1.01× | **2.11×** | overlayed preserves the biggest disc-domain win |
+| `circular_r060` (large radius circle) | 1.21× | 0.97× | **1.25×** | overlayed also keeps the larger-radius circular win |
+| `polar_tile_pi6` (midline-centered) | **1.27×** | 0.93× | 1.02× | overlayed flattens this one back toward neutral |
+| `rowmajor_full` (sequential native row scan) | 0.67× | **0.82×** | **0.64×** | row-major still wins hardest for the full-disc variants |
+| `colmajor_full` (sequential column scan) | 0.83× | **1.09×** | 0.99× | overlayed removes the square-only col-major win |
 
 The layout is **angle-dependent**: mode (n=6) has angular sectors with
 midlines at θ = k·π/6 (`cos(6θ) = ±1`) and boundaries at θ = π/12 + k·π/6
@@ -205,9 +226,14 @@ A trace at a sector boundary sits exactly on the nodal line between two
 opposite-sign regions → adjacent (i, j) cells map to entirely different
 region address ranges. Worst case for the layout.
 
-Wins and losses sharpen at DRAM scale because cache hides locality
-differences when the buffer is L2-resident. At 256² (0.2 MB) and 512²
-(0.8 MB), most patterns are ties; at 2048² (13 MB) they are sharp.
+The key result is that **domain choice materially changes the measured
+benefit**, and `overlayed` shows that **active-set geometry matters more
+than the exact core ordering**. Once the full disc support is restored,
+the big wins (`circular_r030`, `radial_mid_pi6`) come back almost unchanged.
+What the square-first composite ordering changes are the more marginal
+cases such as `polar_tile_pi6` and `colmajor_full`, which move back toward
+neutral. That is strong evidence that the active-set geometry itself is
+part of the performance story, not just the address permutation.
 
 ### Correction to static analysis
 

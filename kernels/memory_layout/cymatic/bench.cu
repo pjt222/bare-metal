@@ -1,11 +1,11 @@
 // bench.cu
 //
 // Measures effective gather bandwidth for two memory layouts of the same
-// data: row-major-inside vs cymatic-permuted.
+// data: row-major-active vs cymatic-permuted.
 //
 // Setup:
 //   - Read perm.bin (grid_n, n_inside, perm[n_inside])
-//   - Read traces.bin (list of access traces in row-major-inside index space)
+//   - Read traces.bin (list of access traces in row-major-active index space)
 //   - Allocate two device buffers of size n_inside × float, identical content
 //     in different positions:
 //       data_row[k]            = value(k)
@@ -20,7 +20,7 @@
 // (warp coalescing, L1/L2 hit rate).
 //
 // Build: see Makefile.
-// Run:   ./bench [iters_per_run=200] [warmup=5] [runs=5]
+// Run:   ./bench [iters_per_run=200] [warmup=5] [runs=5] [perm.bin] [traces.bin]
 
 #include <cuda_runtime.h>
 #include <stdio.h>
@@ -29,6 +29,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <cmath>
 
 #define CHECK(call) do { cudaError_t e = (call); if (e != cudaSuccess) { \
     fprintf(stderr, "cuda error %s at %s:%d: %s\n", #call, __FILE__, __LINE__, \
@@ -36,8 +37,15 @@
 
 struct Trace {
     std::string name;
-    std::vector<int> rmi;   // row-major-inside indices
+    std::vector<int> rmi;   // row-major-active indices
 };
+
+static void checked_read(void *dst, size_t size, size_t count, FILE *f, const char *what) {
+    if (fread(dst, size, count, f) != count) {
+        fprintf(stderr, "short read while reading %s\n", what);
+        exit(1);
+    }
+}
 
 // ---- File parsing ----------------------------------------------------------
 
@@ -45,12 +53,10 @@ static void read_perm(const char *path, int &grid_n, int &n_inside,
                        std::vector<int> &perm) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
-    if (fread(&grid_n, 4, 1, f) != 1) { fprintf(stderr, "read grid_n\n"); exit(1); }
-    if (fread(&n_inside, 4, 1, f) != 1) { fprintf(stderr, "read n_inside\n"); exit(1); }
+    checked_read(&grid_n, 4, 1, f, "grid_n");
+    checked_read(&n_inside, 4, 1, f, "n_inside");
     perm.resize(n_inside);
-    if ((int)fread(perm.data(), 4, n_inside, f) != n_inside) {
-        fprintf(stderr, "read perm\n"); exit(1);
-    }
+    checked_read(perm.data(), 4, n_inside, f, "perm");
     fclose(f);
 }
 
@@ -58,38 +64,67 @@ static void read_traces(const char *path, std::vector<Trace> &traces) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
     int n_traces = 0;
-    if (fread(&n_traces, 4, 1, f) != 1) { fprintf(stderr, "read n_traces\n"); exit(1); }
+    checked_read(&n_traces, 4, 1, f, "n_traces");
     traces.resize(n_traces);
     for (int i = 0; i < n_traces; ++i) {
         int name_len = 0, n = 0;
-        fread(&name_len, 4, 1, f);
+        checked_read(&name_len, 4, 1, f, "trace name_len");
         std::string nm(name_len, '\0');
-        fread(&nm[0], 1, name_len, f);
-        fread(&n, 4, 1, f);
+        if (name_len > 0) {
+            checked_read(&nm[0], 1, name_len, f, "trace name");
+            if (!nm.empty() && nm.back() == '\0') nm.pop_back();
+        }
+        checked_read(&n, 4, 1, f, "trace length");
         traces[i].name = nm;
         traces[i].rmi.resize(n);
-        fread(traces[i].rmi.data(), 4, n, f);
+        if (n > 0) checked_read(traces[i].rmi.data(), 4, n, f, "trace indices");
     }
     fclose(f);
 }
 
 // ---- Kernels ---------------------------------------------------------------
 
+static constexpr int kBenchThreads = 256;
+static constexpr int kMaxBenchBlocks = 1024;
+
+__device__ __forceinline__ float warp_reduce_sum(float v) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    }
+    return v;
+}
+
 // Gather + reduce. `iters` repeats over the same trace to amortize launch
-// overhead and stress the cache hierarchy.
+// overhead and stress the cache hierarchy. Each block writes one checksum
+// so every participating thread contributes observable work.
+__launch_bounds__(kBenchThreads)
 __global__ void gather_sum(const float *__restrict__ data,
-                            const int   *__restrict__ idx,
-                            float       *__restrict__ out,
-                            int n, int iters) {
+                           const int   *__restrict__ idx,
+                           float       *__restrict__ out,
+                           int n, int iters) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     float s = 0.0f;
     for (int it = 0; it < iters; ++it) {
         for (int k = tid; k < n; k += stride) {
-            s += data[idx[k]];
+            int index = __ldg(&idx[k]);
+            s += __ldg(&data[index]);
         }
     }
-    if (tid == 0) atomicAdd(out, s);  // single per-block reducer is fine for bench
+
+    s = warp_reduce_sum(s);
+
+    __shared__ float warp_sums[kBenchThreads / 32];
+    int lane = threadIdx.x & 31;
+    int warp = threadIdx.x >> 5;
+    if (lane == 0) warp_sums[warp] = s;
+    __syncthreads();
+
+    if (warp == 0) {
+        float block_sum = (lane < (blockDim.x / 32)) ? warp_sums[lane] : 0.0f;
+        block_sum = warp_reduce_sum(block_sum);
+        if (lane == 0) out[blockIdx.x] = block_sum;
+    }
 }
 
 // ---- Host helpers ----------------------------------------------------------
@@ -99,9 +134,9 @@ __global__ void gather_sum(const float *__restrict__ data,
 static double bench_kernel(const float *d_data, const int *d_idx,
                             float *d_out, int n, int iters,
                             int warmup, int runs) {
-    int threads = 256;
+    int threads = kBenchThreads;
     int blocks  = (n + threads - 1) / threads;
-    if (blocks > 1024) blocks = 1024;
+    if (blocks > kMaxBenchBlocks) blocks = kMaxBenchBlocks;
 
     // Scale iters up if trace is tiny so kernel time is well above ~10 us
     // event-timer noise. Target ~5 ms per kernel.
@@ -113,7 +148,7 @@ static double bench_kernel(const float *d_data, const int *d_idx,
     CHECK(cudaEventCreate(&e1));
 
     for (int i = 0; i < warmup; ++i) {
-        CHECK(cudaMemset(d_out, 0, sizeof(float)));
+        CHECK(cudaMemset(d_out, 0, blocks * sizeof(float)));
         gather_sum<<<blocks, threads>>>(d_data, d_idx, d_out, n, iters);
     }
     CHECK(cudaDeviceSynchronize());
@@ -121,7 +156,7 @@ static double bench_kernel(const float *d_data, const int *d_idx,
     std::vector<double> times;
     times.reserve(runs);
     for (int i = 0; i < runs; ++i) {
-        CHECK(cudaMemset(d_out, 0, sizeof(float)));
+        CHECK(cudaMemset(d_out, 0, blocks * sizeof(float)));
         CHECK(cudaEventRecord(e0));
         gather_sum<<<blocks, threads>>>(d_data, d_idx, d_out, n, iters);
         CHECK(cudaEventRecord(e1));
@@ -142,19 +177,22 @@ int main(int argc, char **argv) {
     int iters  = (argc > 1) ? atoi(argv[1]) : 200;
     int warmup = (argc > 2) ? atoi(argv[2]) : 5;
     int runs   = (argc > 3) ? atoi(argv[3]) : 5;
+    const char *perm_path = (argc > 4) ? argv[4] : "perm.bin";
+    const char *traces_path = (argc > 5) ? argv[5] : "traces.bin";
 
     int grid_n = 0, n_inside = 0;
     std::vector<int> perm;
-    read_perm("perm.bin", grid_n, n_inside, perm);
+    read_perm(perm_path, grid_n, n_inside, perm);
 
     std::vector<Trace> traces;
-    read_traces("traces.bin", traces);
+    read_traces(traces_path, traces);
 
     cudaDeviceProp prop;
     CHECK(cudaGetDeviceProperties(&prop, 0));
     printf("=== Cymatic memory-mapping benchmark ===\n");
     printf("Device: %s  (sm_%d%d, %d SMs)\n", prop.name,
            prop.major, prop.minor, prop.multiProcessorCount);
+    printf("Inputs: %s | %s\n", perm_path, traces_path);
     printf("Grid:   %d × %d   n_inside=%d   buffer=%.2f MB\n",
            grid_n, grid_n, n_inside, n_inside * 4.0 / 1e6);
     printf("Traces: %zu   iters/run=%d   warmup=%d   runs=%d\n\n",
@@ -170,10 +208,16 @@ int main(int argc, char **argv) {
         h_cym[perm[k]]  = v;
     }
 
+    size_t max_trace_n = 0;
+    for (const auto &tr : traces) max_trace_n = std::max(max_trace_n, tr.rmi.size());
+
     float *d_row = nullptr, *d_cym = nullptr, *d_out = nullptr;
+    int *d_idx_row = nullptr, *d_idx_cym = nullptr;
     CHECK(cudaMalloc(&d_row, n_inside * sizeof(float)));
     CHECK(cudaMalloc(&d_cym, n_inside * sizeof(float)));
-    CHECK(cudaMalloc(&d_out, sizeof(float)));
+    CHECK(cudaMalloc(&d_out, kMaxBenchBlocks * sizeof(float)));
+    CHECK(cudaMalloc(&d_idx_row, max_trace_n * sizeof(int)));
+    CHECK(cudaMalloc(&d_idx_cym, max_trace_n * sizeof(int)));
     CHECK(cudaMemcpy(d_row, h_row.data(), n_inside * sizeof(float), cudaMemcpyHostToDevice));
     CHECK(cudaMemcpy(d_cym, h_cym.data(), n_inside * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -194,9 +238,6 @@ int main(int argc, char **argv) {
         std::vector<int> idx_cym(n);
         for (int t = 0; t < n; ++t) idx_cym[t] = perm[tr.rmi[t]];
 
-        int *d_idx_row = nullptr, *d_idx_cym = nullptr;
-        CHECK(cudaMalloc(&d_idx_row, n * sizeof(int)));
-        CHECK(cudaMalloc(&d_idx_cym, n * sizeof(int)));
         CHECK(cudaMemcpy(d_idx_row, idx_row.data(), n * sizeof(int), cudaMemcpyHostToDevice));
         CHECK(cudaMemcpy(d_idx_cym, idx_cym.data(), n * sizeof(int), cudaMemcpyHostToDevice));
 
@@ -217,11 +258,10 @@ int main(int argc, char **argv) {
                row_ms, row_gbs, row_eff,
                cym_ms, cym_gbs, cym_eff,
                row_ms / cym_ms);
-
-        cudaFree(d_idx_row);
-        cudaFree(d_idx_cym);
     }
 
+    cudaFree(d_idx_row);
+    cudaFree(d_idx_cym);
     cudaFree(d_row);
     cudaFree(d_cym);
     cudaFree(d_out);

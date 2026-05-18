@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_disc.bin | traces_disc.bin
+Grid:   1024 × 1024   n_inside=821104   buffer=3.28 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0               1602          0.000         45.2     7.4%          0.000         45.3     7.4%      1.00x
+radial_mid_pi6             1603          0.000         44.9     7.4%          0.000         45.0     7.4%      1.00x
+radial_mid_pi3             1603          0.000         30.8     5.1%          0.000         45.2     7.4%      1.47x
+radial_bnd_pi12            1604          0.000         44.8     7.4%          0.000         45.3     7.5%      1.01x
+radial_bnd_pi4             1626          0.000         44.0     7.2%          0.000         44.4     7.3%      1.01x
+radial_bnd_5pi12           1604          0.000         44.9     7.4%          0.000         44.6     7.3%      0.99x
+circular_r060              1880          0.000         27.1     4.5%          0.000         48.8     8.0%      1.80x
+circular_r030               956          0.000         31.2     5.1%          0.000         21.0     3.4%      0.67x
+polar_tile_pi6            54810          0.000        527.3    86.7%          0.000        585.0    96.2%      1.11x
+polar_tile_pi4            54810          0.000        581.8    95.7%          0.000        508.6    83.6%      0.87x
+radial_bias_07            65536          0.001        214.4    35.3%          0.001        215.5    35.4%      1.00x
+radial_bias_00            65536          0.001        251.0    41.3%          0.001        246.2    40.5%      0.98x
+rowmajor_full            821104          0.002       1833.3   301.5%          0.002       1783.3   293.3%      0.97x
+colmajor_full            821104          0.019        176.3    29.0%          0.018        180.7    29.7%      1.02x
+random                    65536          0.001        207.3    34.1%          0.001        208.5    34.3%      1.01x

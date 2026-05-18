@@ -6,62 +6,58 @@
 # Used by Issue #94 to measure whether cymatic helps real FA workloads.
 #
 # Usage:
-#   Rscript gen_fa_traces.R [grid_n=1024] [n=6] [m=4]
+#   Rscript gen_fa_traces.R [grid_n=1024] [n=6] [m=4] [domain=disc|square|overlayed]
 #
 # FA configuration assumed: Br=16 (queries/tile), Bc=64 (keys/tile).
 # At seq=N: Nq = N/Br, Nk = N/Bc query/key tiles. Each FA iteration is
 # one (q_tile, k_tile) pair. Trace = sequence of those pairs.
 #
 # We map (q_tile_idx, k_tile_idx) -> grid cell (i, j). The grid must be
-# at least max(Nq, Nk) on each axis. Run from kernels/memory_layout/cymatic/.
+# at least max(Nq, Nk) on each axis. Repo paths are resolved from the
+# script location so invocation CWD does not matter.
 
-source("../../scripts/cymatic/cymatic_mapping.R")
-source("../../scripts/cymatic/cymatic_analyze.R")
+args_full <- commandArgs(trailingOnly = FALSE)
+file_arg <- grep("^--file=", args_full, value = TRUE)
+script_dir <- if (length(file_arg)) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[1]), winslash = "/", mustWork = TRUE))
+} else {
+    normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+source(normalizePath(file.path(script_dir, "..", "..", "..", "scripts", "cymatic", "cymatic_bench_io.R"),
+                     winslash = "/", mustWork = TRUE))
+cymatic_source("cymatic_mapping.R")
+cymatic_source("cymatic_analyze.R")
 
 args   <- commandArgs(trailingOnly = TRUE)
 grid_n <- if (length(args) >= 1) as.integer(args[1]) else 1024L
 n1     <- if (length(args) >= 2) as.integer(args[2]) else 6L
 m1     <- if (length(args) >= 3) as.integer(args[3]) else 4L
+active_domain <- normalize_cymatic_domain(if (length(args) >= 4) args[4] else "disc")
 
-cat(sprintf("[gen_fa] grid=%d  mode=(%d, %d)\n", grid_n, n1, m1))
-mapping <- cymatic_mapping(grid_n = grid_n, modes = list(list(n=n1, m=m1, alpha=1.0)))
+out_dir <- cymatic_kernel_dir()
+
+cat(sprintf("[gen_fa] grid=%d  mode=(%d, %d)  domain=%s\n", grid_n, n1, m1, active_domain))
+mapping <- cymatic_mapping(grid_n = grid_n,
+                           modes = list(list(n=n1, m=m1, alpha=1.0)),
+                           active_domain = active_domain)
 
 # ---- Row-major-inside ordering --------------------------------------------
-inside       <- mapping$grid$inside
-inside_cells <- which(inside, arr.ind = TRUE)
-ord          <- order(inside_cells[, 1], inside_cells[, 2])
-inside_cells <- inside_cells[ord, , drop = FALSE]
-n_inside     <- nrow(inside_cells)
+inside_index <- build_inside_index(mapping)
+inside_cells <- inside_index$inside_cells
+n_inside <- inside_index$n_inside
 
-ij_key     <- paste(inside_cells[, 1], inside_cells[, 2], sep = "_")
-rmi_lookup <- setNames(seq_len(n_inside) - 1L, ij_key)
-
-ij_to_rmi <- function(cells) {
-    k   <- paste(cells[, 1], cells[, 2], sep = "_")
-    out <- rmi_lookup[k]
-    out[!is.na(out)]
+trace_to_rmi <- function(cells) {
+    cells_to_rmi(cells, inside_index$rmi_lookup)
 }
 
-perm <- mapping$address[inside_cells] - 1L
-stopifnot(min(perm) == 0L, max(perm) == n_inside - 1L)
-stopifnot(length(unique(perm)) == n_inside)
+perm <- extract_perm(mapping, inside_cells)
 
-con <- file("perm.bin", "wb")
-writeBin(as.integer(grid_n),   con, size = 4)
-writeBin(as.integer(n_inside), con, size = 4)
-writeBin(as.integer(perm),     con, size = 4)
-close(con)
-cat(sprintf("[gen_fa] wrote perm.bin  n_inside=%d  buffer=%.1f MB\n",
-            n_inside, n_inside * 4 / 1e6))
+write_default_and_domain_artifact(write_perm_bin, "perm", "bin", active_domain,
+                                  grid_n = grid_n, n_inside = n_inside, perm = perm)
+cat(sprintf("[gen_fa] wrote perm.bin and perm_%s.bin  n_inside=%d  buffer=%.1f MB\n",
+            active_domain, n_inside, n_inside * 4 / 1e6))
 
 # ---- FA trace generators --------------------------------------------------
-
-# Translate trace cells to grid coordinates with origin at center.
-center_offset <- function(cells, grid_n) {
-    cells[, 1] <- cells[, 1] + as.integer(grid_n / 2)
-    cells[, 2] <- cells[, 2] + as.integer(grid_n / 2)
-    cells
-}
 
 # Block-level FA: each iteration is one (q_block_idx, k_block_idx) pair.
 # Per query block, scan all key blocks (causal mask off; full attention).
@@ -113,7 +109,7 @@ orders <- c("rowmajor", "diagonal", "zigzag")
 Br <- 16L; Bc <- 64L; D_head <- 64L
 
 build_trace <- function(name, cells) {
-    rmi <- ij_to_rmi(cells)
+    rmi <- trace_to_rmi(cells)
     list(name = name, rmi = as.integer(rmi))
 }
 
@@ -132,15 +128,7 @@ traces[[length(traces) + 1L]] <- build_trace("rowmajor_full", inside_cells)
 cat(sprintf("  %-30s n=%d cells (control)\n", "rowmajor_full", n_inside))
 
 # ---- Write traces.bin -----------------------------------------------------
-con <- file("traces.bin", "wb")
-writeBin(as.integer(length(traces)), con, size = 4)
-for (tr in traces) {
-    name_b <- charToRaw(tr$name); name_b <- c(name_b, as.raw(0))
-    writeBin(as.integer(length(name_b)), con, size = 4)
-    writeBin(name_b, con)
-    writeBin(as.integer(length(tr$rmi)), con, size = 4)
-    writeBin(as.integer(tr$rmi), con, size = 4)
-}
-close(con)
-cat(sprintf("[gen_fa] wrote traces.bin (%d FA + 1 control trace)\n",
-            length(traces) - 1L))
+write_default_and_domain_artifact(write_traces_bin, "traces", "bin", active_domain,
+                                  traces = traces)
+cat(sprintf("[gen_fa] wrote traces.bin and traces_%s.bin (%d FA + 1 control trace)\n",
+            active_domain, length(traces) - 1L))

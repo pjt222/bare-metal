@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_disc.bin | traces_disc.bin
+Grid:   2048 × 2048   n_inside=3289344   buffer=13.16 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0               3204          0.000         87.5    14.4%          0.000         88.1    14.5%      1.01x
+radial_mid_pi6             3213          0.000         58.7     9.7%          0.000         88.3    14.5%      1.50x
+radial_mid_pi3             3213          0.000         86.1    14.2%          0.000         88.2    14.5%      1.02x
+radial_bnd_pi12            3211          0.000         96.2    15.8%          0.000         97.1    16.0%      1.01x
+radial_bnd_pi4             3256          0.000         96.4    15.8%          0.000         67.9    11.2%      0.70x
+radial_bnd_5pi12           3211          0.000         97.4    16.0%          0.000         67.1    11.0%      0.69x
+circular_r060              3844          0.000         64.5    10.6%          0.000         78.2    12.9%      1.21x
+circular_r030              1936          0.000         26.9     4.4%          0.000         56.6     9.3%      2.10x
+polar_tile_pi6           219396          0.003        291.6    48.0%          0.002        371.0    61.0%      1.27x
+polar_tile_pi4           219406          0.002        402.4    66.2%          0.002        393.1    64.7%      0.98x
+radial_bias_07            65536          0.003         93.8    15.4%          0.003         93.6    15.4%      1.00x
+radial_bias_00            65536          0.001        205.1    33.7%          0.001        214.8    35.3%      1.05x
+rowmajor_full           3289344          0.008       1615.2   265.7%          0.012       1087.5   178.9%      0.67x
+colmajor_full           3289344          0.198         66.4    10.9%          0.239         55.0     9.1%      0.83x
+random                    65536          0.004         73.0    12.0%          0.003         75.0    12.3%      1.03x

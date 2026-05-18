@@ -1,12 +1,13 @@
 #!/usr/bin/env Rscript
 # cymatic_visualize.R
 #
-# Visualize a cymatic memory mapping produced by cymatic_mapping.R.
-# Three panels: raw field, region partition (colored by region_id), linear
-# address heatmap (rainbow gradient over disc).
+# Visualize one or two cymatic memory mappings produced by cymatic_mapping.R.
+# Default mode writes field/region/address/size panels for one mapping.
+# Overlay mode writes a domain comparison plot for two mappings.
 #
 # Usage:
 #   Rscript scripts/cymatic/cymatic_visualize.R cymatic_mapping.rds [out_prefix]
+#   Rscript scripts/cymatic/cymatic_visualize.R --overlay disc.rds square.rds [out_prefix]
 
 suppressPackageStartupMessages({
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
@@ -107,6 +108,37 @@ plot_region_size_histogram <- function(mapping,
     theme_baremetal()
 }
 
+plot_domain_overlay <- function(disc_mapping, square_mapping,
+                                title = "Disc vs inscribed-square active domains") {
+  stopifnot(identical(dim(disc_mapping$grid$inside), dim(square_mapping$grid$inside)))
+  grid <- disc_mapping$grid
+  disc_inside <- as.vector(disc_mapping$grid$inside)
+  square_inside <- as.vector(square_mapping$grid$inside)
+  cls <- ifelse(disc_inside & square_inside, "shared",
+                ifelse(disc_inside, "disc_only", ifelse(square_inside, "square_only", "outside")))
+  df <- data.frame(
+    x = as.vector(grid$x),
+    y = as.vector(grid$y),
+    cls = factor(cls, levels = c("shared", "disc_only", "square_only", "outside"))
+  )
+  df <- df[df$cls != "outside", ]
+
+  ggplot(df, aes(x = x, y = y, fill = cls)) +
+    geom_raster() +
+    scale_fill_manual(
+      values = c(
+        shared = BM_VIRIDIS_MID,
+        disc_only = BM_VIRIDIS_HIGH,
+        square_only = BM_VIRIDIS_LOW
+      ),
+      breaks = c("shared", "disc_only", "square_only"),
+      labels = c("shared cells", "disc-only ring", "square-only")
+    ) +
+    coord_equal() +
+    labs(title = title, x = NULL, y = NULL, fill = NULL) +
+    theme_baremetal()
+}
+
 plot_quad <- function(mapping, out_prefix) {
   # Always write the four individual PNGs - they are referenced directly
   # from docs/cymatic_memory_mapping.md (cymatic_regions.png, _addresses.png
@@ -144,6 +176,24 @@ plot_quad <- function(mapping, out_prefix) {
 
 if (.is_main_viz()) {
   args <- commandArgs(trailingOnly = TRUE)
+  if (length(args) >= 1 && args[1] == "--overlay") {
+    if (length(args) < 3) {
+      stop("overlay mode requires: --overlay <disc_rds> <square_rds> [out_prefix]")
+    }
+    disc_rds <- args[2]
+    square_rds <- args[3]
+    out_prefix <- if (length(args) >= 4) args[4] else {
+      if (dir.exists("docs/figures/cymatic")) "docs/figures/cymatic/cymatic_domain"
+      else "cymatic_domain"
+    }
+    disc_mapping <- readRDS(disc_rds)
+    square_mapping <- readRDS(square_rds)
+    p <- plot_domain_overlay(disc_mapping, square_mapping)
+    ggsave(paste0(out_prefix, "_overlay.png"), p, width = 6, height = 6, dpi = 140)
+    cat(sprintf("[cymatic] wrote %s_overlay.png\n", out_prefix))
+    quit(save = "no", status = 0)
+  }
+
   rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
   # Default writes into docs/figures/cymatic/cymatic_*.png to match the
   # post-Tier-7 layout. Override with second positional arg to change.

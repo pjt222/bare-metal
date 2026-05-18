@@ -21,7 +21,16 @@
 # Usage:
 #   Rscript scripts/cymatic/cymatic_analyze.R cymatic_mapping.rds [cache_line_cells=32]
 
-if (!exists("cymatic_mapping")) source("scripts/cymatic/cymatic_mapping.R")
+if (!exists("cymatic_mapping")) {
+  args_full <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args_full, value = TRUE)
+  script_dir <- if (length(file_arg)) {
+    dirname(normalizePath(sub("^--file=", "", file_arg[1]), winslash = "/", mustWork = TRUE))
+  } else {
+    normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+  }
+  source(normalizePath(file.path(script_dir, "cymatic_mapping.R"), winslash = "/", mustWork = TRUE))
+}
 
 # ---- Trace generators ------------------------------------------------------
 
@@ -70,7 +79,7 @@ cymatic_addr_of <- function(cells, mapping) {
 }
 
 rowmajor_addr_of <- function(cells, grid) {
-  # Address contiguous over inside-disc cells in row-major order
+  # Address contiguous over active cells in row-major order
   inside <- grid$inside
   raster <- which(inside, arr.ind = TRUE)
   raster <- raster[order(raster[, 1], raster[, 2]), , drop = FALSE]

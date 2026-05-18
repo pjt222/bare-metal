@@ -3,20 +3,29 @@
 #
 # Generate binary inputs for the CUDA cymatic benchmark:
 #   perm.bin    — int32[n_inside]: cymatic address (0-indexed) for each
-#                 row-major-inside cell, plus header (grid_n, n_inside).
+#                 row-major-active cell, plus header (grid_n, n_inside).
 #   traces.bin  — packed access traces, one per pattern. Each trace is a
-#                 list of row-major-inside indices (0-indexed). The CUDA
+#                 list of row-major-active indices (0-indexed). The CUDA
 #                 bench reads them and gathers from data[trace[k]] for
 #                 row-major and data[perm[trace[k]]] for cymatic.
 #
 # Usage:
-#   Rscript gen_cymatic_data.R [grid_n=1024] [n=6] [m=4] [n2=0] [m2=0] [alpha2=0]
+#   Rscript gen_cymatic_data.R [grid_n=1024] [n=6] [m=4] [n2=0] [m2=0] [alpha2=0] [domain=disc|square|overlayed]
 #
-# Run from kernels/memory_layout/cymatic/. Sources ../../scripts/cymatic/cymatic_mapping.R and
-# ../../scripts/cymatic/cymatic_analyze.R for the field math and trace generators.
+# Resolves repo paths from the script location so it works both from the
+# kernel directory and from the repo root.
 
-source("../../scripts/cymatic/cymatic_mapping.R")
-source("../../scripts/cymatic/cymatic_analyze.R")
+args_full <- commandArgs(trailingOnly = FALSE)
+file_arg <- grep("^--file=", args_full, value = TRUE)
+script_dir <- if (length(file_arg)) {
+  dirname(normalizePath(sub("^--file=", "", file_arg[1]), winslash = "/", mustWork = TRUE))
+} else {
+  normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+source(normalizePath(file.path(script_dir, "..", "..", "..", "scripts", "cymatic", "cymatic_bench_io.R"),
+                     winslash = "/", mustWork = TRUE))
+cymatic_source("cymatic_mapping.R")
+cymatic_source("cymatic_analyze.R")
 
 args <- commandArgs(trailingOnly = TRUE)
 grid_n <- if (length(args) >= 1) as.integer(args[1]) else 1024L
@@ -25,50 +34,39 @@ m1     <- if (length(args) >= 3) as.integer(args[3]) else 4L
 n2     <- if (length(args) >= 4) as.integer(args[4]) else 0L
 m2     <- if (length(args) >= 5) as.integer(args[5]) else 0L
 alpha2 <- if (length(args) >= 6) as.numeric(args[6]) else 0.0
+active_domain <- normalize_cymatic_domain(if (length(args) >= 7) args[7] else "disc")
 
 modes <- list(list(n = n1, m = m1, alpha = 1.0))
 if (n2 > 0L && m2 > 0L && alpha2 != 0) {
   modes[[length(modes) + 1L]] <- list(n = n2, m = m2, alpha = alpha2)
 }
 
-cat(sprintf("[gen] computing mapping grid_n=%d ...\n", grid_n))
-mapping <- cymatic_mapping(grid_n = grid_n, modes = modes)
+out_dir <- cymatic_kernel_dir()
 
-# ---- Row-major-inside ordering --------------------------------------------
+cat(sprintf("[gen] computing mapping grid_n=%d domain=%s ...\n", grid_n, active_domain))
+mapping <- cymatic_mapping(grid_n = grid_n, modes = modes, active_domain = active_domain)
 
-inside <- mapping$grid$inside
-inside_cells <- which(inside, arr.ind = TRUE)
-ord <- order(inside_cells[, 1], inside_cells[, 2])
-inside_cells <- inside_cells[ord, , drop = FALSE]
-n_inside <- nrow(inside_cells)
+# ---- Row-major-active ordering --------------------------------------------
+
+inside_index <- build_inside_index(mapping)
+inside_cells <- inside_index$inside_cells
+n_inside <- inside_index$n_inside
 stopifnot(n_inside == mapping$total_cells)
 
-# Map (i, j) -> row-major-inside index for trace conversion
-ij_key <- paste(inside_cells[, 1], inside_cells[, 2], sep = "_")
-rmi_lookup <- setNames(seq_len(n_inside) - 1L, ij_key)
-
-ij_to_rmi <- function(cells) {
-  k <- paste(cells[, 1], cells[, 2], sep = "_")
-  out <- rmi_lookup[k]
-  out[!is.na(out)]
+trace_to_rmi <- function(cells) {
+  cells_to_rmi(cells, inside_index$rmi_lookup)
 }
 
 # ---- Permutation ----------------------------------------------------------
 
-perm <- mapping$address[inside_cells] - 1L  # 0-indexed
-stopifnot(!any(is.na(perm)))
-stopifnot(min(perm) == 0L, max(perm) == n_inside - 1L)
-stopifnot(length(unique(perm)) == n_inside)  # bijection check
+perm <- extract_perm(mapping, inside_cells)
 
 cat(sprintf("[gen] grid=%d  n_inside=%d  buffer=%.1f MB (float)\n",
             grid_n, n_inside, n_inside * 4 / 1e6))
 
-con <- file("perm.bin", "wb")
-writeBin(as.integer(grid_n),   con, size = 4)
-writeBin(as.integer(n_inside), con, size = 4)
-writeBin(as.integer(perm),     con, size = 4)
-close(con)
-cat("[gen] wrote perm.bin\n")
+write_default_and_domain_artifact(write_perm_bin, "perm", "bin", active_domain,
+                                  grid_n = grid_n, n_inside = n_inside, perm = perm)
+cat(sprintf("[gen] wrote perm.bin and perm_%s.bin\n", active_domain))
 
 # ---- Trace generation -----------------------------------------------------
 
@@ -76,7 +74,7 @@ cat("[gen] generating traces ...\n")
 grid <- mapping$grid
 
 build_trace <- function(name, cells) {
-  rmi <- ij_to_rmi(cells)
+  rmi <- trace_to_rmi(cells)
   list(name = name, rmi = as.integer(rmi))
 }
 
@@ -111,17 +109,10 @@ shuffled <- sample(seq_len(n_inside) - 1L, min(65536L, n_inside))
 traces[[length(traces) + 1L]] <- list(name = "random", rmi = as.integer(shuffled))
 
 # Write traces.bin
-con <- file("traces.bin", "wb")
-writeBin(as.integer(length(traces)), con, size = 4)
-for (tr in traces) {
-  name_bytes <- charToRaw(tr$name)
-  writeBin(as.integer(length(name_bytes)), con, size = 4)
-  writeBin(name_bytes, con)
-  writeBin(as.integer(length(tr$rmi)),     con, size = 4)
-  writeBin(tr$rmi, con, size = 4)
-}
-close(con)
-cat(sprintf("[gen] wrote traces.bin (%d traces)\n", length(traces)))
+write_default_and_domain_artifact(write_traces_bin, "traces", "bin", active_domain,
+                                  traces = traces)
+cat(sprintf("[gen] wrote traces.bin and traces_%s.bin (%d traces)\n",
+            active_domain, length(traces)))
 
 # Print summary
 cat("\n=== Trace sizes ===\n")
@@ -130,5 +121,6 @@ for (tr in traces) {
 }
 
 # Save mapping rds for reproducibility
-saveRDS(mapping, "mapping.rds")
-cat("[gen] saved mapping.rds\n")
+saveRDS(mapping, file.path(out_dir, "mapping.rds"))
+saveRDS(mapping, file.path(out_dir, sprintf("mapping_%s.rds", active_domain)))
+cat(sprintf("[gen] saved mapping.rds and mapping_%s.rds\n", active_domain))

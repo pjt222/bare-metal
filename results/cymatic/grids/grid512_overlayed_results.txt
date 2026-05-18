@@ -1,0 +1,23 @@
+=== Cymatic memory-mapping benchmark ===
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU  (sm_86, 46 SMs)
+Inputs: perm_overlayed.bin | traces_overlayed.bin
+Grid:   512 × 512   n_inside=204664   buffer=0.82 MB
+Traces: 15   iters/run=200   warmup=5   runs=11
+
+trace                         n         row_ms     row_GB/s row_eff%         cym_ms     cym_GB/s cym_eff%    speedup
+----------              -------         ------     --------   ------         ------     --------   ------    -------
+radial_mid_0                796          0.000         21.6     3.5%          0.000         21.7     3.6%      1.01x
+radial_mid_pi6              797          0.000         21.7     3.6%          0.000         21.7     3.6%      1.00x
+radial_mid_pi3              797          0.000         21.2     3.5%          0.000         21.6     3.6%      1.02x
+radial_bnd_pi12             800          0.000         23.3     3.8%          0.000         23.0     3.8%      0.99x
+radial_bnd_pi4              808          0.000         22.7     3.7%          0.000         22.5     3.7%      0.99x
+radial_bnd_5pi12            800          0.000         22.8     3.8%          0.000         22.0     3.6%      0.96x
+circular_r060               972          0.000         26.4     4.3%          0.000         25.8     4.2%      0.98x
+circular_r030               468          0.000         12.2     2.0%          0.000         12.1     2.0%      0.99x
+polar_tile_pi6            13670          0.000        213.6    35.1%          0.000        223.4    36.7%      1.05x
+polar_tile_pi4            13670          0.000        267.0    43.9%          0.000        336.5    55.3%      1.26x
+radial_bias_07            65536          0.001        250.2    41.2%          0.001        249.5    41.0%      1.00x
+radial_bias_00            65536          0.000        625.9   102.9%          0.000        585.8    96.4%      0.94x
+rowmajor_full            204664          0.001       1259.0   207.1%          0.001       1260.6   207.3%      1.00x
+colmajor_full            204664          0.002        418.6    68.8%          0.002        434.8    71.5%      1.04x
+random                    65536          0.001        230.3    37.9%          0.001        236.8    39.0%      1.03x
