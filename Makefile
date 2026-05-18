@@ -71,9 +71,7 @@ benches: $(BENCH_EXES)
 	@mkdir -p $(dir $@)
 	$(NVCC) $(CUBIN_FLAGS) -o $@ $<
 
-# Generic bench rule for any kernels/<family>/<kernel>/bench.cu. Per-dir
-# multi-variant rules (bench_*.cu) follow below; make's % can't bind two
-# different segments in one target so we list them family-by-family.
+# Generic bench rule for kernels/<family>/<kernel>/bench.cu.
 kernels/%/bench: kernels/%/bench.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
@@ -82,27 +80,23 @@ kernels/tutorial/host: kernels/tutorial/host.cu
 	@echo "[HOST]  $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
 
-# Flash Attention has multiple bench variants
-kernels/attention/flash_attention/bench_%: kernels/attention/flash_attention/bench_%.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+# Per-directory bench_*.cu variants. Make's % can only bind a single
+# stem, so we generate one rule per directory via $(eval). To add a new
+# directory with bench variants, append it to BENCH_VARIANT_DIRS.
+BENCH_VARIANT_DIRS := \
+  kernels/attention/flash_attention \
+  kernels/convolution/conv2d \
+  kernels/convolution/resblock \
+  kernels/gemm/hgemm \
+  kernels/gemm/igemm
 
-# Conv2d / resblock have multiple bench variants too
-kernels/convolution/conv2d/bench_%: kernels/convolution/conv2d/bench_%.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+define BENCH_VARIANT_RULE
+$(1)/bench_%: $(1)/bench_%.cu
+	@echo "[BENCH] $$<"
+	$$(NVCC) $$(NVCC_FLAGS) -o $$@ $$< -lcuda -Ikernels/_common
+endef
 
-kernels/convolution/resblock/bench_%: kernels/convolution/resblock/bench_%.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-kernels/gemm/hgemm/bench_%: kernels/gemm/hgemm/bench_%.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
-
-kernels/gemm/igemm/bench_%: kernels/gemm/igemm/bench_%.cu
-	@echo "[BENCH] $<"
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
+$(foreach d,$(BENCH_VARIANT_DIRS),$(eval $(call BENCH_VARIANT_RULE,$(d))))
 
 kernels/reference/%/bench: kernels/reference/%/bench.cu
 	@echo "[BENCH] $<"
