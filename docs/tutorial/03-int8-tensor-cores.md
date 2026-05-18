@@ -213,7 +213,7 @@ cost as 11,834 TOPS of dense compute, the sparse kernel is doing
 what the user actually experiences on a sparse model.
 
 This is **issue #7's resolution** — the 2:4 sparsity path was already
-shipped before this session and confirmed by re-benchmarking.
+shipped and confirmed by re-benchmarking.
 
 ## The IMMA hand-tuning postmortem
 

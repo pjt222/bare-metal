@@ -196,7 +196,7 @@ if (.is_main_viz()) {
 
   rds_path   <- if (length(args) >= 1) args[1] else "cymatic_mapping.rds"
   # Default writes into docs/figures/cymatic/cymatic_*.png to match the
-  # post-Tier-7 layout. Override with second positional arg to change.
+  # Output directory. Override with second positional arg to change.
   default_prefix <- if (dir.exists("docs/figures/cymatic")) {
     "docs/figures/cymatic/cymatic"
   } else {

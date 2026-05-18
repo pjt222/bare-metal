@@ -1,6 +1,6 @@
 # tests/bench_regress/test_meta.R
 #
-# Tier 10: tests for the GPU/host metadata capture in
+# Tests for the GPU/host metadata capture in
 # scripts/bench/bench_meta.R. Most tests use canned data so they pass
 # on any host (CI runners without nvidia-smi included). A live-capture
 # smoke test runs only when nvidia-smi is on PATH.

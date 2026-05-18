@@ -415,7 +415,7 @@ if (.is_main()) {
 
   mapping <- cymatic_mapping(grid_n = grid_n, modes = modes, active_domain = active_domain)
 
-  # Write to kernels/memory_layout/cymatic/ (audit Tier 4: stop polluting repo root).
+  # Write to kernels/memory_layout/cymatic/ (not the repo root).
   out_dir <- "kernels/memory_layout/cymatic"
   if (!dir.exists(out_dir)) {
     # Fall back to CWD if invoked from inside kernels/memory_layout/cymatic/ already.

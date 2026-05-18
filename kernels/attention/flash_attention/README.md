@@ -153,9 +153,9 @@ Tested against CPU numerically stable naive attention for all configurations:
 
 | seq_len | max_abs | max_rel | Result |
 |---|---|---|---|
-| 512 | 1.27e-07 | 5.18e-03 | ✅ PASS |
-| 1024 | 1.71e-07 | 2.16e-02 | ✅ PASS |
-| 2048 | 1.70e-07 | 1.04e-01 | ✅ PASS |
+| 512 | 1.27e-07 | 5.18e-03 | PASS |
+| 1024 | 1.71e-07 | 2.16e-02 | PASS |
+| 2048 | 1.70e-07 | 1.04e-01 | PASS |
 
 The `max_rel` increases with `seq_len` because the online softmax has more accumulation rounding, and near-zero output elements produce high relative errors (see correctness check section in troubleshooting.md — AND logic: only fails if both absolute and relative are large). `max_abs` stays below 2e-7 across all sizes.
 

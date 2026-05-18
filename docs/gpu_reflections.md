@@ -1,7 +1,33 @@
 # GPU Reflections — Notes From the RTX 3070 Ti
 
-*A first-person performance analysis of the Phase 3–4 kernel implementations,
-from the perspective of the hardware itself.*
+*A first-person performance analysis from the perspective of the
+GA104 hardware.*
+
+## About this document
+
+This catalogue is a deliberate stylistic experiment, not the
+repository's default voice. The opening sections (Observations 1–5,
+Priority Ranking, Summary, Step 1–4 Postmortems) personify the GA104
+as a first-person narrator addressing the kernel author. Later
+sections (Consolidated Key Insights and Observations N–LL) drift
+into a more technical third-person register; both halves coexist
+intentionally as a record of how the project's voice evolved. The
+rest of the documentation (`README.md`, `docs/inventory.md`, the
+tutorial chapters, the per-kernel READMEs) uses neutral technical
+prose.
+
+Numbering scheme, preserved for stability of the ~80 cross-references
+from other documents:
+
+| Range                  | Section                                       |
+|------------------------|-----------------------------------------------|
+| Observation 1–5        | Original first-person narrative observations  |
+| Insight 1–24           | Consolidated key insights (third person)      |
+| Observation N–LL       | Postmortem catalogue, lettered (A–M were never assigned for historical reasons; the catalogue starts at N) |
+
+When a tutorial chapter or per-kernel README references
+"Observation Q" or "Insight 14", the reference resolves against this
+file.
 
 ---
 

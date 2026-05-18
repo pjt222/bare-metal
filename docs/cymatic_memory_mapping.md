@@ -156,7 +156,7 @@ Locality (cache_line = 32 cells):
 | pattern | cym_lines | row_lines | cym_jump | row_jump | cym_vs_row_lines | cym_vs_row_jump |
 |---|---|---|---|---|---|---|
 | radial_sweep θ=0 | — | — | — | — | **1.18×** | **3.58×** |
-| radial_sweep θ=π/4 | — | — | — | — | 1.16× | 0.06× ⚠️ |
+| radial_sweep θ=π/4 | — | — | — | — | 1.16× | 0.06× (outlier) |
 | circular r=0.6 | — | — | — | — | **1.69×** | 0.63× |
 | circular r=0.3 | — | — | — | — | 1.32× | 0.22× |
 | polar_tile_π/4 | — | — | — | — | **1.56×** | 0.32× |

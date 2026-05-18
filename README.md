@@ -24,9 +24,10 @@ reassembled, and run on a real RTX 3070 Ti Laptop. Performance numbers
 are measured (median of 11 runs after 5 warmup iterations), not
 extrapolated.
 
-> 📋 **Per-kernel data:** [`docs/kernels.md`](docs/kernels.md) (by phase) · [`docs/kernels_by_family.md`](docs/kernels_by_family.md) (by content)
-> is the single entry point for all comparison views (headline wins,
-> SASS mix, register audit, roofline, vs SOTA, baselines, source paths).
+**Per-kernel data:** [`docs/inventory.md`](docs/inventory.md) is the
+single entry point for all comparison views (headline wins, SASS mix,
+register audit, roofline, vs reference libraries, baselines, source
+paths).
 
 ---
 
@@ -96,8 +97,8 @@ optimization with a clear mechanism — no autotuning, no library magic.
 
 The Flash Attention path peaked at ~7,154 GFLOPS for the original
 register-PV kernel (`flash_attn_br16_regpv.cu`). Three structural
-refactors brought it to **11,453 GFLOPS** = **1.60× cumulative** in
-this session, plateauing at ~6.6% of FP16 Tensor Core peak:
+refactors brought it to **11,453 GFLOPS** = **1.60× cumulative**,
+plateauing at ~6.6% of FP16 Tensor Core peak:
 
 | step                        | technique                              | gain      |
 |-----------------------------|----------------------------------------|-----------|
@@ -215,14 +216,14 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 
 | Phase | Topic                                         | Status | Highlight                                             |
 |-------|-----------------------------------------------|--------|-------------------------------------------------------|
-| 0     | Environment: CUDA 13.2, cuasmR, WSL           | ✅     | cuasmR byte-identical roundtrip verified              |
-| 1     | Vector add, FADD→FMUL hand-modification       | ✅     | First SASS edit proven correct                        |
-| 2     | ML primitives: SGEMM, HGEMM, softmax, layernorm, activations | ✅ | 31,910 GFLOPS HGEMM via HMMA.16816.F32      |
-| 3     | Flash Attention: scalar → 4-warp → Br=16 HMMA | ✅     | **1.60× cumulative** post-session, 11,453 GFLOPS    |
-| 4     | Diffusion UNet: timestep, GroupNorm, conv2d, ResNet, cross-attn | ✅ | Full SASS primitive inventory + cymatic study |
-| 5     | Sparse 2:4 GEMM, INT8 quant, optimized epilogues | ✅  | 41,721 sparse-equiv GFLOPS                            |
-| Exp   | Front-end alternatives: cuda-oxide Rust→PTX spike | ✅  | Pipeline portable, 2× SASS bloat, nvcc stays default (Obs KK) |
-| Exp   | cuda-oxide on gather_sum (cymatic kernel)         | ✅  | oxide 0.67× SASS but 0.65–0.80× runtime; nvcc unroll heuristic dominates (Obs LL) |
+| 0     | Environment: CUDA 13.2, cuasmR, WSL           | done   | cuasmR byte-identical roundtrip verified              |
+| 1     | Vector add, FADD→FMUL hand-modification       | done   | First SASS edit proven correct                        |
+| 2     | ML primitives: SGEMM, HGEMM, softmax, layernorm, activations | done | 31,910 GFLOPS HGEMM via HMMA.16816.F32      |
+| 3     | Flash Attention: scalar → 4-warp → Br=16 HMMA | done   | **1.60× cumulative**, 11,453 GFLOPS                  |
+| 4     | Diffusion UNet: timestep, GroupNorm, conv2d, ResNet, cross-attn | done | Full SASS primitive inventory + cymatic study |
+| 5     | Sparse 2:4 GEMM, INT8 quant, optimized epilogues | done | 41,721 sparse-equiv GFLOPS                            |
+| Exp   | Front-end alternatives: cuda-oxide Rust→PTX spike | done | Pipeline portable, 2× SASS bloat, nvcc stays default (Obs KK) |
+| Exp   | cuda-oxide on gather_sum (cymatic kernel)         | done | oxide 0.67× SASS but 0.65–0.80× runtime; nvcc unroll heuristic dominates (Obs LL) |
 
 *Exp = `experiments/` (front-end / tooling research, not a numbered kernel phase)*
 
@@ -327,7 +328,7 @@ First-time setup: `Rscript -e 'renv::restore()'`.
   [kernels/memory_layout/cymatic/](kernels/memory_layout/cymatic/) — Chladni-pattern memory layout
   with measured GPU benchmarks. Conditional 1.53× win on
   mode-aligned access, 1.89× loss on nodal-line access. Treated
-  as a regular phase4 kernel (audit Tier 12); not gated by the
+  as a regular kernel; not gated by the
   regression hook because its bench prints multi-column row-vs-cym
   output that doesn't fit the single-number baselines schema.
 
@@ -346,7 +347,7 @@ First-time setup: `Rscript -e 'renv::restore()'`.
 ## Project structure
 
 ```
-kernels/             — grouped by content / internal structure (Tier 13)
+kernels/             — grouped by content / internal structure
   _common/           — shared bench.h, check.h, bench_driver.h
   tutorial/          — vector_add: first SASS hand-edit (FADD→FMUL)
   gemm/              — General matrix multiply

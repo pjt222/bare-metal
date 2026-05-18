@@ -40,7 +40,7 @@ BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path .
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
 
-# Family-specific bench executables (Tier 13 reorg replaces phase{1..5}/).
+# Family-specific bench executables.
 GEMM_BENCH         := $(shell find kernels/gemm          -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 REDUCTIONS_BENCH   := $(shell find kernels/reductions    -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 ELEMENTWISE_BENCH  := $(shell find kernels/elementwise   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
@@ -123,8 +123,8 @@ memory_layout:  $(shell find kernels/memory_layout -name '*.cu' ! -name 'bench*.
 composition:    $(shell find kernels/composition   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(COMPOSITION_BENCH)
 reference:      $(REFERENCE_BENCH)
 
-# Legacy phaseN aliases — forward to family targets so old invocations
-# (e.g. tutorials, scripts) keep working post-Tier-13.
+# Legacy phaseN aliases forward to family targets for backward
+# compatibility with older invocations and external documentation.
 phase1: tutorial
 phase2: gemm reductions elementwise
 phase3: attention
@@ -158,7 +158,7 @@ disasm: cubins
 	@echo "=== Disassembly complete ==="
 
 # ------------------------------------------------------------------
-# Reproducibility entry points (Tier 11)
+# Reproducibility entry points.
 #
 # Single chain from a fresh clone to a passing regression check.
 # 'make reproduce' executes setup -> verify -> all -> bench in order;
@@ -187,11 +187,11 @@ reference-pipeline: reference bench-reference compare-reference
 reproduce: setup verify all bench
 	@echo ""
 	@echo "================================================================"
-	@echo "✓ Full reproduction complete."
-	@echo "  setup    — R deps installed via renv"
-	@echo "  verify   — toolchain + GPU detected"
-	@echo "  all      — every cubin + bench compiled"
-	@echo "  bench    — results compared to docs/baselines.json"
+	@echo "Full reproduction complete."
+	@echo "  setup    -- R deps installed via renv"
+	@echo "  verify   -- toolchain + GPU detected"
+	@echo "  all      -- every cubin + bench compiled"
+	@echo "  bench    -- results compared to docs/baselines.json"
 	@echo "================================================================"
 
 # ------------------------------------------------------------------
@@ -213,7 +213,7 @@ clean:
 help:
 	@echo "bare-metal GPU build system"
 	@echo ""
-	@echo "Reproducibility (Tier 11):"
+	@echo "Reproducibility:"
 	@echo "  make reproduce — one-stop: setup + verify + build + bench"
 	@echo "  make setup     — renv::restore() + install cuasmR"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
@@ -230,7 +230,7 @@ help:
 	@echo "  make disasm    — disassemble all cubins to .sass"
 	@echo "  make clean     — remove all generated artifacts"
 	@echo ""
-	@echo "By family (Tier 13):"
+	@echo "By family:"
 	@echo "  make tutorial      — vector_add hello-world"
 	@echo "  make gemm          — sgemm/hgemm/hgemm_sparse/igemm"
 	@echo "  make reductions    — softmax/layernorm/groupnorm"

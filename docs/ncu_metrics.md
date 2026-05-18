@@ -188,25 +188,6 @@ when the magnitude was close. **Mechanism is what determines the right
 fix.** Update `comparison_to_sota.md` to mark these `(measured)` and
 revise the optimization plan.
 
-## Reprioritization for next sprint
-
-Before NCU: top candidates were #84 (split-Q FA), #85 (HGEMM
-4-stage pipeline), #86 (persistent grid).
-
-After NCU:
-1. **NEW: Hunt FFMA chain in HGEMM 16-warp** — `stall_math_throttle=35.46`.
-   Close most of the 46% → 70-80% TC util gap. No issue yet, file one.
-2. **#88 XOR-swizzled smem** — promote. Directly attacks the dominant
-   FA stall (`stall_mio + stall_short_sb`).
-3. **NEW: Extend fragment-shfl pattern to FA load path** — Observation P
-   already validated the idea on the score buffer; load path is a
-   second use.
-4. **#84 split-Q** — close as not-planned for trained-attention shapes,
-   OR refile targeting decoding (b=1, seq_q=1) regime where SMs DO
-   starve.
-5. **#85 4-stage pipeline** — re-evaluate after FFMA hunt completes.
-   Pipelining loads won't help if FFMA is the wall.
-
 ## Methodology notes
 
 - WSL2 + Windows host: NCU counters require enabling on the host side

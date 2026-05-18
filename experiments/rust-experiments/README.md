@@ -187,19 +187,19 @@ export CUDA_OXIDE_LLC="$HOME/cuda-oxide-deps/llvm21/bin/llc"
 Spike confirms everything from the structural analysis and adds two
 empirical findings:
 
-✅ **Pipeline converges cleanly at PTX.** cuasmR + nvdisasm + cuobjdump
+**Pipeline converges cleanly at PTX.** cuasmR + nvdisasm + cuobjdump
 all work on Rust-origin cubins with zero changes. Hand-edit research is
 fully portable.
 
-✅ **CUDA 13.2 + sm_86 is supported in practice** despite cuda-oxide
+**CUDA 13.2 + sm_86 is supported in practice** despite cuda-oxide
 targeting Hopper/Blackwell as the headline. Ampere is not abandoned.
 
-⚠️ **2× SASS bloat for safety-typed kernels.** For DRAM-bound kernels
+**2× SASS bloat for safety-typed kernels.** For DRAM-bound kernels
 this is invisible. For HMMA/IMMA-throughput kernels (the entire point of
 this project's later phases) this is a structural cost that grows with
 kernel complexity, not amortized away.
 
-⚠️ **16 GB toolchain footprint** to support what is currently a
+**16 GB toolchain footprint** to support what is currently a
 single-language alternative for the kernel front-end.
 
 ### Recommended integration (if any)

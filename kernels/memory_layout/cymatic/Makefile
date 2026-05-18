@@ -23,7 +23,7 @@ run: bench perm.bin traces.bin
 	./bench 200 5 11 perm_$(DOMAIN).bin traces_$(DOMAIN).bin
 
 # Sweep grid sizes (L1 / L2 / DRAM regimes). Captures per-grid results
-# into the centralised results/ tree (audit Tier 7).
+# into the centralised results/ tree.
 RESULTS_DIR ?= ../../../results/cymatic/grids
 sweep: bench
 	@mkdir -p $(RESULTS_DIR)

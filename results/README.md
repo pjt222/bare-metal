@@ -8,7 +8,7 @@ profiling sweeps are introduced.
 
 ```
 results/
-├── ncu/                     ── NCU 15-metric sweeps (audit Tier 7 entry point)
+├── ncu/                     ── NCU 15-metric sweeps
 │   ├── all.csv              ── canonical roofline sweep, 10 representative kernels
 │   ├── cross_check.csv      ── independent re-run for noise estimate
 │   ├── 97_pad.csv           ── per-issue captures

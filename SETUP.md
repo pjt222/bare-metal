@@ -135,7 +135,8 @@ result is compared against the recorded baseline. Three verdicts:
 - `IMPROVED` / `REGRESSION` — outside tolerance, real change
 - `SKIPPED` — measurement-time GPU state was unfair (thermal
   throttle, sw power cap, etc.); the run is dropped, not failed.
-  See [Tier 10 doc in baselines.json schema](docs/baselines.json).
+  See the baselines schema in `docs/baselines.json` and `CHANGELOG.md`
+  for the fair-run capture policy.
 
 To list recorded baselines without running:
 

@@ -13,8 +13,8 @@
 
 library(jsonlite)
 
-# Tier 10 metadata capture: GPU + host state pre/post each bench. Sourced
-# here so other modules can rely on bench_regress.R + meta together.
+# GPU + host state pre/post each bench. Sourced here so other modules
+# can rely on bench_regress.R + meta together.
 .bench_meta_path <- {
   candidates <- c(
     file.path(dirname(sub("^--file=", "",
@@ -39,7 +39,7 @@ if (dir.exists(.WSL_CUDA_LIB) &&
 }
 
 # Walk up from the script's directory until a repo marker is found
-# (.git or renv.lock). Resilient to subdir relocation (audit Tier 5
+# (.git or renv.lock). Resilient to subdir relocation (the scripts/
 # moved this script into scripts/bench/, so a fixed dirname() count no
 # longer hits the repo root).
 REPO_ROOT <- {
@@ -203,7 +203,7 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   setwd(exe_dir)
   on.exit(setwd(prev_wd), add = TRUE)
 
-  # Tier 10: snapshot GPU + host state around the bench launch so we
+  # Snapshot GPU + host state around the bench launch so we
   # can refuse to compare against baseline if the GPU was thermally
   # throttled, on battery, etc. capture_gpu_state() is a no-op (NULL)
   # if bench_meta.R didn't load (e.g. running on a CI box without nvidia-smi).
@@ -256,7 +256,7 @@ check_regression <- function(current, baseline, tolerance,
                 msg = sprintf("CRASH (exit=%d)", current$returncode)))
   }
 
-  # Tier 10: refuse to compare if the GPU was in an unfair state
+  # Refuse to compare if the GPU was in an unfair state
   # during the run (thermal throttle, sw power cap, etc). Reported as
   # SKIPPED, not REGRESSION — the measurement isn't comparable to
   # baseline regardless of what the number says.
@@ -359,7 +359,7 @@ main <- function() {
   # Reserved keys at the kernel-entry level that are not config names.
   RESERVED_KEYS <- c("exe")
 
-  # Tier 10: print one-line GPU state header so the user can see
+  # Print one-line GPU state header so the user can see
   # whether the run started under unfair conditions.
   if (exists("capture_gpu_state", mode = "function")) {
     .pre_session <- capture_gpu_state()
@@ -370,7 +370,7 @@ main <- function() {
     }
   }
 
-  # Tier 10: project-wide default valid_when (e.g. require no throttle).
+  # Project-wide default valid_when (e.g. require no throttle).
   # Per-kernel valid_when overrides this; absent both, classify_meta
   # uses its own internal defaults.
   .default_vw <- if (!is.null(baselines$default_valid_when))
@@ -378,7 +378,7 @@ main <- function() {
 
   for (kernel_path in names(kernels)) {
     entry <- kernels[[kernel_path]]
-    # `exe` override (Tier 9 schema): use it if present, else heuristic.
+    # `exe` override from baselines schema: use if present, else heuristic.
     exe <- if (!is.null(entry$exe)) entry$exe else find_executable(kernel_path)
     if (is.null(exe) || !file.exists(exe)) {
       cat(sprintf("\n%s\n  SKIP -- executable not found (try: make benches)\n",
@@ -391,7 +391,7 @@ main <- function() {
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
       baseline_cfg <- entry[[cfg]]
       current <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
-      # Per-config tolerance override (Tier 10 follow-up): some
+      # Per-config tolerance override: some
       # kernels are intrinsically noisy on this hardware (bimodal
       # boost-state behavior) and need a wider tolerance band.
       eff_tol <- if (!is.null(baseline_cfg$tolerance))

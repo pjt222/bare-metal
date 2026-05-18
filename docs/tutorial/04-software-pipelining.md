@@ -137,8 +137,7 @@ aren't enough warps to issue cp.async, do compute, and have any instruction
 slot left for anything else. The cp.async commit/wait machinery itself
 costs cycles that aren't hidden.
 
-This is **Observation 14** in the project notes, refined by **Observation Q**
-this session.
+This is **Insight 14** in the project notes, refined by **Observation Q**.
 
 ### Regime 2 — short compute, 8+ warps (cp.async wins big)
 
@@ -155,7 +154,7 @@ the compute phase is short — about 100 cycles. The LDG stall is 300+
 cycles. Even with 8 warps to overlap, the load-compute imbalance leaves
 exposed bubbles. cp.async fills them.
 
-The FA v2_pipeline case is the surprise of this session. The kernel
+The FA v2_pipeline case is the central surprise in the catalogue. The kernel
 *originally* lost 5% to cp.async at 4 warps/SM. After issue #29's smem
 reduction (32 KB → 24 KB), the same kernel structure ran at 8 warps/SM
 (2 blocks/SM). cp.async on top of the *same compute kernel* now wins
@@ -197,7 +196,7 @@ The lesson from this case is that *high warp count alone* is not enough
 to make cp.async lose. The compute/load ratio matters. When compute is
 short relative to load, cp.async wins even at high warp count.
 
-## A worked example: Flash Attention (this session)
+## A worked example: Flash Attention
 
 The before/after for the FA v2_pipeline is the cleanest case study in the
 project. Same kernel structure, two smem footprints, two opposite results.
@@ -205,7 +204,7 @@ project. Same kernel structure, two smem footprints, two opposite results.
 | variant | smem | blocks/SM | warps/SM | compute/tile | cp.async result |
 |---|---|---|---|---|---|
 | Original FA pipeline | 64 KB | 1 | 4 | 64 HMMA | **-5%** |
-| FA v2_pipeline (this session) | 40 KB | 2 | 8 | 64 HMMA | **+14-41%** |
+| FA v2_pipeline               | 40 KB | 2 | 8 | 64 HMMA | **+14-41%** |
 
 The compute did not change. The warp count doubled because the smem
 budget allowed an extra block per SM. cp.async flipped from a 5% loss
@@ -278,11 +277,11 @@ cp.async**.
 
 | kernel | warps/SM | compute/tile | cp.async Δ | source |
 |---|---|---|---|---|
-| HGEMM 64×64 | 8 | 64 HMMA | -5% | observation 2 |
+| HGEMM 64×64 | 8 | 64 HMMA | -5% | Insight 2 |
 | Cross-attn 64×64 (orig) | 8 | 16 HMMA | -16% | issue #5 |
-| Self-attn (FA orig pipeline) | 4 | 64 HMMA | -5% | observation 14 |
-| **IGEMM 64×64 BK=32** | 8 | 8 IMMA | **+35%** | observation 14 |
-| **FA v2_pipeline** | 8 | 64 HMMA | **+14 to +41%** | this session, observation Q |
+| Self-attn (FA orig pipeline) | 4 | 64 HMMA | -5% | Insight 14 |
+| **IGEMM 64×64 BK=32** | 8 | 8 IMMA | **+35%** | Insight 14 |
+| **FA v2_pipeline** | 8 | 64 HMMA | **+14 to +41%** | Observation Q |
 
 The two bold rows are the regimes where cp.async pays. They share warps/SM
 ≥ 8, and either short compute (IGEMM) or recently-freed warps via smem

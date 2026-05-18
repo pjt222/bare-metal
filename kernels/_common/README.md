@@ -54,13 +54,13 @@ Untracked / gitignored:
 | `bench`         | compiled output of `bench.cu` (gitignored) |
 | `bench_*`       | compiled outputs of variant sources (gitignored) |
 
-Deprecated names cleaned up in audit Tier 6 / Tier 8:
+Deprecated names cleaned up in earlier hygiene passes (see `CHANGELOG.md`):
 - `bench_refactored.cu` (BenchDriver demo files, removed once the API
   was documented in this README)
 - `bench_orig` / `bench_new` / `*_orig` (stale binaries and superseded
   source variants)
 - `bench_persistent_hgemm.cu`, `bench_igemm_sparse.cu`,
-  `bench_cymatic.cu` (renamed in Tier 8 to drop redundant dir-name
+  `bench_cymatic.cu` (renamed to drop redundant dir-name
   prefixes).
 
 ## Cross-references

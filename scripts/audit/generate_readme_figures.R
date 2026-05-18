@@ -304,7 +304,7 @@ if (nrow(cym_df) > 0) {
     theme(legend.position = "right",
           axis.text.y = element_text(size = 8))
 
-  # Cymatic figures grouped under docs/figures/cymatic/ since audit Tier 7.
+  # Cymatic figures live under docs/figures/cymatic/.
   cym_dir <- file.path(OUT, "cymatic")
   dir.create(cym_dir, showWarnings = FALSE, recursive = TRUE)
   bm_save(p4, file.path(cym_dir, "cymatic_speedup_grid.png"),

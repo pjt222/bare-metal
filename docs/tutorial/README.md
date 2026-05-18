@@ -6,25 +6,23 @@ Built from the empirical work in this repository: 5 phases of increasingly
 sophisticated kernels, 17+ optimization postmortems, and several
 instructive failures.
 
-> Status: **all 6 chapters complete** (full prose). Each chapter is
-> self-contained and tested against the actual kernels and benchmark numbers
-> in this repo. Total length: ~80 KB across 6 files. Contributions welcome
-> for further refinement.
->
-> The series fits a 1-2 day reading. Chapters can be read in any order, but
-> 02 → 03/04 → 05 is the suggested dependency chain. Chapter 06 is the
-> synthesis chapter and can be read first or last.
+All six chapters are full prose, ~80 KB total. Each chapter is
+self-contained and cross-references the actual kernels and benchmark
+numbers in this repository. The series fits a 1-2 day reading.
+Chapters can be read in any order; 02 → 03/04 → 05 is the suggested
+dependency chain, with 06 as a synthesis chapter that can be read
+first or last.
 
 ## Chapters
 
-| # | Title | Topic | Status |
-|---|---|---|---|
-| 01 | [SASS Hello World](01-sass-hello-world.md) | FADD→FMUL hand-edit, CuAssembler roundtrip, why hand-editing matters | **complete** ✓ |
-| 02 | [GEMM from Scratch](02-gemm-from-scratch.md) | naive → tiled → register-blocked → HMMA → 16-warp HGEMM (31910 GFLOPS) | **complete** ✓ |
-| 03 | [INT8 Tensor Cores](03-int8-tensor-cores.md) | IMMA, online quant, 2:4 sparse (35509 dense-equiv TOPS) | **complete** ✓ |
-| 04 | [Software Pipelining](04-software-pipelining.md) | cp.async, regime-dependent wins, before/after FA case study | **complete** ✓ |
-| 05 | [Flash Attention](05-flash-attention.md) | online softmax, fragment-shfl reductions, occupancy tradeoffs, 3 instructive failures | **complete** ✓ |
-| 06 | [The Four Laws](06-the-four-laws.md) | Empirical principles distilled from all experiments | **complete** ✓ |
+| # | Title | Topic |
+|---|---|---|
+| 01 | [SASS Hello World](01-sass-hello-world.md) | FADD→FMUL hand-edit, CuAssembler roundtrip, why hand-editing matters |
+| 02 | [GEMM from Scratch](02-gemm-from-scratch.md) | naive → tiled → register-blocked → HMMA → 16-warp HGEMM (31910 GFLOPS) |
+| 03 | [INT8 Tensor Cores](03-int8-tensor-cores.md) | IMMA, online quant, 2:4 sparse (35509 dense-equiv TOPS) |
+| 04 | [Software Pipelining](04-software-pipelining.md) | cp.async, regime-dependent wins, before/after FA case study |
+| 05 | [Flash Attention](05-flash-attention.md) | online softmax, fragment-shfl reductions, occupancy tradeoffs, 3 instructive failures |
+| 06 | [The Four Laws](06-the-four-laws.md) | Empirical principles distilled from all experiments |
 
 ## Reading Order
 

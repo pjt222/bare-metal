@@ -17,7 +17,7 @@ echo "  (bypass with: git push --no-verify)"
 echo "========================================"
 
 # Only run on the main repo (not externals).
-# After audit Tier 5, scripts/bench_regress.py was retired in favour of
+# scripts/bench_regress.py was retired in favour of
 # scripts/bench/bench_regress.R (project's R-only tooling policy).
 REGRESS_SCRIPT="scripts/bench/bench_regress.R"
 if [ ! -f "$REGRESS_SCRIPT" ]; then
