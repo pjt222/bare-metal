@@ -1,0 +1,105 @@
+{
+  "recorded_date": "2026-05-18",
+  "platform": "RTX 3070 Ti Laptop (GA104, sm_86, Ampere)",
+  "note": "Local production-library reference baselines measured on this exact machine. Only locally available reference stacks are recorded here; unsupported kernels are marked unavailable instead of estimated.",
+  "default_valid_when": {
+    "require_no_throttle": true,
+    "allow_throttle": ["GpuIdle"],
+    "comment": "Same fair-run policy as docs/baselines.json."
+  },
+  "schema": {
+    "exe": "(optional) path to reference bench executable",
+    "library": "(optional) local reference stack used by this bench, e.g. cuBLAS",
+    "match": "(optional) substring of the bench-output line that holds this reference value",
+    "project_kernel": "(required for comparisons) path to the project-kernel baseline entry in docs/baselines.json",
+    "project_config": "(required for comparisons) config key in docs/baselines.json to compare against",
+    "label": "(optional) human-readable row label for compare_reference.R output"
+    ,"peak": "(optional) hardware peak for this workload's precision class, in the same unit as the stored metric"
+  },
+  "unsupported": [
+    {
+      "label": "Flash Attention seq=1024 b=8 h=8 d=64",
+      "library": "cuDNN SDPA",
+      "reason": "Installed cuDNN headers on this machine do not expose the graph-based SDPA frontend used for a direct local attention reference, so this row remains unmeasured locally."
+    },
+    {
+      "label": "GroupNorm SD 320ch",
+      "library": "cuDNN",
+      "reason": "No direct local cuDNN GroupNorm harness is implemented yet, so this row remains unmeasured locally."
+    }
+  ],
+  "kernels": {
+    "kernels/reference/cublas_hgemm/bench.cu": {
+      "exe": "kernels/reference/cublas_hgemm/bench",
+      "library": "cuBLAS",
+      "2048_2048_2048": {
+        "ms": 0.600,
+        "gflops": 28631,
+        "match": "cublas_hgemm",
+        "peak": 174000,
+        "project_kernel": "kernels/gemm/hgemm/hgemm_16warp.cu",
+        "project_config": "2048_2048_2048",
+        "label": "HGEMM 16-warp 2048^3"
+      },
+      "4096_4096_4096": {
+        "ms": 4.626,
+        "gflops": 29708,
+        "match": "cublas_hgemm",
+        "peak": 174000,
+        "project_kernel": "kernels/gemm/hgemm/hgemm_16warp.cu",
+        "project_config": "4096_4096_4096",
+        "label": "HGEMM 16-warp 4096^3"
+      }
+    },
+    "kernels/reference/cublas_igemm/bench.cu": {
+      "exe": "kernels/reference/cublas_igemm/bench",
+      "library": "cuBLAS",
+      "4096_4096_4096": {
+        "ms": 4.668,
+        "tops": 29.44,
+        "match": "cublas_igemm",
+        "peak": 348,
+        "project_kernel": "kernels/gemm/igemm/igemm_pipelined_cpasync.cu",
+        "project_config": "4096_4096_4096",
+        "label": "IGEMM pipelined cp.async 4096^3"
+      }
+    },
+    "kernels/reference/cusparselt_igemm_sparse/bench.cu": {
+      "exe": "kernels/reference/cusparselt_igemm_sparse/bench",
+      "library": "cuSPARSELt",
+      "2048_2048_2048": {
+        "ms": 0.138,
+        "tops": 124.28,
+        "match": "cusparselt_igemm_sparse",
+        "peak": 348,
+        "project_kernel": "kernels/gemm/igemm/igemm_sparse_tiled.cu",
+        "project_config": "2048_2048_2048",
+        "label": "Sparse IGEMM tiled 2048^3"
+      },
+      "4096_4096_4096": {
+        "ms": 0.808,
+        "tops": 170.11,
+        "match": "cusparselt_igemm_sparse",
+        "peak": 348,
+        "project_kernel": "kernels/gemm/igemm/igemm_sparse_tiled.cu",
+        "project_config": "4096_4096_4096",
+        "label": "Sparse IGEMM tiled 4096^3"
+      }
+    },
+    "kernels/reference/cudnn_conv2d/bench.cu": {
+      "exe": "kernels/reference/cudnn_conv2d/bench",
+      "library": "cuDNN",
+      "1_64_64_320_320": {
+        "ms": 0.446,
+        "gflops": 16910,
+        "match": "cudnn_conv2d",
+        "tolerance": 0.20,
+        "peak": 174000,
+        "project_kernel": "kernels/convolution/conv2d/conv2d_implicit_gemm.cu",
+        "project_config": "1_64_64_320_320",
+        "label": "Conv2d implicit GEMM 1x64x64x320x320",
+        "note": "Median of repeated local cuDNN runs clusters around ~16.9 TFLOPS, but first invocation from an idle laptop state can dip into the mid-14 TFLOPS range; use a wider tolerance to avoid false regressions."
+      }
+    }
+  }
+}

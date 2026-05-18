@@ -106,22 +106,25 @@ Figure: [`figures/phase_progression.png`](figures/phase_progression.png).
 
 ---
 
-## vs SOTA gap (representative 7)
+## Local reference gap (measured only)
 
-Honest accounting: this project is **4–20× slower than cuBLAS / cuDNN /
-FA-2 official** depending on kernel. The point is to understand the
-gap, not close it. Full breakdown with what closes each gap:
+This section no longer uses extrapolated SOTA estimates. It now reports
+only **locally measured reference-library comparisons**. Full pipeline:
 [`comparison_to_sota.md`](comparison_to_sota.md).
 
-| Kernel              | Ours          | % peak  | SOTA est        | Gap       |
-|---------------------|---------------|--------:|-----------------|----------:|
-| HGEMM 4096³         | 31.9 TFLOPS   | 18.3%   | 130–150 TFLOPS  | 4–5×      |
-| Sparse HGEMM 2:4    | 41.7 TF eq    | 24.0%   | 240–280 TF eq   | 6×        |
-| IGEMM 4096³         | 27.6 TOPS     | 7.9%    | 200–230 TOPS    | 7–8×      |
-| Sparse INT8         | 39.7 TOPS eq  | 11.4%   | 350–400 TOPS eq | 9–10×     |
-| FA seq=1024 b=8 h=8 | 11.5 TFLOPS   | 6.6%    | 80–100 TFLOPS   | 7–8×      |
-| Conv2d 64×64×320    | 6.7 TFLOPS    | 3.8%    | 100–130 TFLOPS  | 15–20×    |
-| GroupNorm SD 320ch  | ~50 GB/s      | 8.2% BW | ~400–500 GB/s   | 8–10×     |
+| Workload | Ours | Local reference | % of reference |
+|---|---:|---:|---:|
+| HGEMM 16-warp 2048³ | 31,875 GFLOPS | 28,631 GFLOPS (cuBLAS) | **111.3%** |
+| HGEMM 16-warp 4096³ | 31,765 GFLOPS | 29,708 GFLOPS (cuBLAS) | **106.9%** |
+| IGEMM pipelined cp.async 4096³ | 20.23 TOPS | 29.44 TOPS (cuBLAS) | **68.7%** |
+| Sparse IGEMM tiled 2048³ | 31.59 TOPS | 124.28 TOPS (cuSPARSELt) | **25.4%** |
+| Sparse IGEMM tiled 4096³ | 30.89 TOPS | 170.11 TOPS (cuSPARSELt) | **18.2%** |
+| Conv2d implicit GEMM 1×64×64×320×320 | 7,150 GFLOPS | 16,910 GFLOPS (cuDNN) | **42.3%** |
+
+Not measured locally yet:
+
+- Flash Attention — installed cuDNN headers on this machine do not expose the graph-based SDPA frontend needed for a direct local reference
+- GroupNorm — no direct local cuDNN GroupNorm harness yet
 
 ---
 

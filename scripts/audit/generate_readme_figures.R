@@ -12,12 +12,13 @@
 #   5. phase_progression.png     — cumulative speedup through phases 1-5
 
 suppressPackageStartupMessages({
-  for (pkg in c("ggplot2", "scales", "viridisLite")) {
+  for (pkg in c("ggplot2", "scales", "viridisLite", "jsonlite")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop(sprintf("install.packages('%s')", pkg))
     }
   }
   library(ggplot2)
+  library(jsonlite)
   library(scales)
 })
 
@@ -368,58 +369,87 @@ cat("[fig] wrote phase_progression.png\n")
 
 cat("\n[fig] all figures written to ", OUT, "/\n", sep = "")
 
-# ---- 6. Gap to SOTA --------------------------------------------------------
+# ---- 6. Gap to measured local references -----------------------------------
 
-gap <- data.frame(
-  kernel = c(
-    "HGEMM 4096^3",
-    "Sparse HGEMM 2:4",
-    "IGEMM 4096^3",
-    "Sparse INT8",
-    "Flash Attn (small seq)",
-    "Conv2d implicit",
-    "GroupNorm SD"
-  ),
-  ours_pct  = c(18.3, 24.0,  7.9, 11.4,  6.6,  3.8,  8.2),
-  sota_pct  = c(80.0, 75.0, 62.5, 55.0, 51.5, 65.0, 73.5),
-  precision = c("FP16 TC", "FP16 TC sparse", "INT8 TC", "INT8 TC sparse",
-                "FP16 TC", "FP16 TC", "DRAM BW")
-)
-gap$gap_factor <- gap$sota_pct / gap$ours_pct
-gap_long <- rbind(
-  data.frame(kernel = gap$kernel, pct = gap$ours_pct,
-             which = "this project (measured)", precision = gap$precision),
-  data.frame(kernel = gap$kernel, pct = gap$sota_pct,
-             which = "SOTA estimate (cuBLAS / cuDNN / FA-2)", precision = gap$precision)
-)
-gap_long$kernel <- factor(gap_long$kernel, levels = rev(gap$kernel))
-gap_long$which  <- factor(gap_long$which,
+.metric_from_entry <- function(entry) {
+  if (!is.null(entry$gflops)) return(as.numeric(entry$gflops))
+  if (!is.null(entry$tops)) {
+    value <- as.numeric(entry$tops)
+    if (!is.na(value) && value > 1000) value <- value / 1000.0
+    return(value)
+  }
+  NA_real_
+}
+
+project_baselines <- fromJSON(file.path("docs", "baselines.json"), simplifyVector = FALSE)
+reference_baselines <- fromJSON(file.path("docs", "reference_baselines.json"), simplifyVector = FALSE)
+
+gap_rows <- list()
+for (ref_kernel in names(reference_baselines$kernels)) {
+  entry <- reference_baselines$kernels[[ref_kernel]]
+  cfg_names <- setdiff(names(entry), c("exe", "library"))
+  for (cfg in cfg_names) {
+    ref_cfg <- entry[[cfg]]
+    if (is.null(ref_cfg$project_kernel) || is.null(ref_cfg$project_config) || is.null(ref_cfg$peak)) next
+    project_entry <- project_baselines$kernels[[ref_cfg$project_kernel]]
+    if (is.null(project_entry)) next
+    project_cfg <- project_entry[[ref_cfg$project_config]]
+    if (is.null(project_cfg)) next
+
+    ours <- .metric_from_entry(project_cfg)
+    ref <- .metric_from_entry(ref_cfg)
+    peak <- as.numeric(ref_cfg$peak)
+    if (is.na(ours) || is.na(ref) || is.na(peak) || peak <= 0) next
+
+    gap_rows[[length(gap_rows) + 1L]] <- data.frame(
+      kernel = ref_cfg$label,
+      ours_pct = 100 * ours / peak,
+      ref_pct = 100 * ref / peak,
+      stringsAsFactors = FALSE
+    )
+  }
+}
+
+if (length(gap_rows)) {
+  gap <- do.call(rbind, gap_rows)
+  gap$gap_factor <- gap$ref_pct / gap$ours_pct
+  gap_long <- rbind(
+    data.frame(kernel = gap$kernel, pct = gap$ours_pct,
+               which = "this project (measured)"),
+    data.frame(kernel = gap$kernel, pct = gap$ref_pct,
+               which = "local reference (measured)")
+  )
+  gap_long$kernel <- factor(gap_long$kernel, levels = rev(gap$kernel))
+  gap_long$which  <- factor(gap_long$which,
                             levels = c("this project (measured)",
-                                       "SOTA estimate (cuBLAS / cuDNN / FA-2)"))
+                                       "local reference (measured)"))
 
-p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
-  geom_text(data = gap,
-            aes(x = kernel, y = sota_pct + 4,
-                label = sprintf("%.1fx gap", gap_factor)),
-            inherit.aes = FALSE,
-            hjust = 0, size = 3.0, colour = BM_DARK_FG_MUTED, fontface = "italic") +
-  coord_flip() +
-  scale_y_continuous(limits = c(0, 105),
-                     expand = expansion(mult = c(0, 0.02)),
-                     labels = function(x) paste0(x, "%")) +
-  scale_fill_bm_disc() +
-  labs(
-    title = "Gap to State of the Art",
-    subtitle = "Percent of hardware peak — this project vs production libraries (RTX 3070 Ti class)",
-    x = NULL, y = "% of precision-class peak",
-    fill = NULL,
-    caption = "SOTA estimates from CUTLASS / FA-2 published numbers scaled to GA104; ±10-15% uncertainty. Gap factors are illustrative."
-  ) +
-  theme_baremetal() +
-  theme(legend.position = "bottom",
-        axis.text.y = element_text(size = 9))
+  p6 <- ggplot(gap_long, aes(x = kernel, y = pct, fill = which)) +
+    geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+    geom_text(data = gap,
+              aes(x = kernel, y = pmax(ours_pct, ref_pct) + 4,
+                  label = sprintf("%.2fx ref/ours", gap_factor)),
+              inherit.aes = FALSE,
+              hjust = 0, size = 3.0, colour = BM_DARK_FG_MUTED, fontface = "italic") +
+    coord_flip() +
+    scale_y_continuous(limits = c(0, 105),
+                       expand = expansion(mult = c(0, 0.02)),
+                       labels = function(x) paste0(x, "%")) +
+    scale_fill_bm_disc() +
+    labs(
+      title = "Measured Local Reference Gap",
+      subtitle = "Percent of hardware peak — this project vs locally measured reference libraries",
+      x = NULL, y = "% of precision-class peak",
+      fill = NULL,
+      caption = "Only workloads with locally installed reference-library harnesses are shown. Missing stacks are excluded rather than estimated."
+    ) +
+    theme_baremetal() +
+    theme(legend.position = "bottom",
+          axis.text.y = element_text(size = 9))
 
-bm_save(p6, file.path(OUT, "gap_to_sota.png"),
-        width = 11, height = 5.5)
-cat("[fig] wrote gap_to_sota.png\n")
+  bm_save(p6, file.path(OUT, "gap_to_sota.png"),
+          width = 11, height = 5.5)
+  cat("[fig] wrote gap_to_sota.png\n")
+} else {
+  cat("[fig] local reference baselines not found, skipping gap_to_sota.png\n")
+}

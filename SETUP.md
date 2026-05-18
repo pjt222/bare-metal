@@ -120,7 +120,10 @@ make disasm               # cubins -> SASS dumps
 ## Running benches
 
 ```bash
+make reference-pipeline  # build + validate + compare local reference benches
 make bench                # all kernels vs docs/baselines.json
+make bench-reference      # local reference libs vs docs/reference_baselines.json
+make compare-reference    # project baselines vs local reference baselines
 ```
 
 Equivalent to `Rscript scripts/bench/bench_regress.R`. Each kernel
@@ -138,6 +141,13 @@ To list recorded baselines without running:
 
 ```bash
 Rscript scripts/bench/bench_regress.R --list
+```
+
+For local reference-library baselines:
+
+```bash
+Rscript scripts/bench/bench_reference.R --list
+Rscript scripts/bench/compare_reference.R
 ```
 
 ## SASS hand-edit workflow (cuasmR)

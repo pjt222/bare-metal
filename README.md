@@ -115,40 +115,39 @@ Detailed walkthrough in [docs/tutorial/05-flash-attention.md](docs/tutorial/05-f
 
 ---
 
-## How does this compare to the SOTA?
+## How does this compare to local reference implementations?
 
-![Gap to state of the art](docs/figures/gap_to_sota.png)
+![Measured local reference gap](docs/figures/gap_to_sota.png)
 
-Honest answer: **we are 4-20× slower than NVIDIA's production libraries**
-(cuBLAS, cuDNN, FlashAttention-2 official) depending on kernel. The gap
-is well-characterized:
+This repo now avoids estimated SOTA tables in the main docs. The numbers
+below are **measured locally on this exact machine** against installed
+reference libraries only:
 
-| Kernel                    | Ours      | SOTA estimate | Gap     |
-|---------------------------|-----------|---------------|---------|
-| HGEMM 4096³                | 18.3% peak | 75-85% peak   | **4-5×** |
-| Sparse HGEMM 2:4 2048³      | 24.0% peak | 70-80% peak   | **3×**   |
-| IGEMM 4096³ INT8 dense      | 7.9% peak  | 60-65% peak   | **8×**   |
-| Flash Attention seq=1024   | 6.6% peak  | 45-58% peak   | **7-8×** |
-| Conv2d implicit GEMM       | 3.8% peak  | 55-75% peak   | **15-20×** |
+| Workload | Ours | Local reference | % of reference | Reading |
+|---------------------------|-----------|------------------|----------------|---------|
+| HGEMM 16-warp 2048³       | 31,875 GFLOPS | 28,631 GFLOPS (cuBLAS) | **111.3%** | current project kernel beats the recorded local cuBLAS path on this shape |
+| HGEMM 16-warp 4096³       | 31,765 GFLOPS | 29,708 GFLOPS (cuBLAS) | **106.9%** | same result at the larger square GEMM anchor |
+| IGEMM cp.async 4096³      | 20.23 TOPS | 29.44 TOPS (cuBLAS) | **68.7%** | local cuBLAS still leads on dense INT8 |
+| Sparse IGEMM tiled 2048³  | 31.59 TOPS | 124.28 TOPS (cuSPARSELt) | **25.4%** | local cuSPARSELt is the first real sparse-Tensor-Core anchor and is far ahead of the current project sparse INT8 kernel |
+| Sparse IGEMM tiled 4096³  | 30.89 TOPS | 170.11 TOPS (cuSPARSELt) | **18.2%** | the gap widens at the larger square sparse anchor |
+| Conv2d implicit GEMM 64×64 320ch | 7,150 GFLOPS | 16,910 GFLOPS (cuDNN) | **42.3%** | local cuDNN leads by 2.37x on the Stable Diffusion-style 320-channel conv anchor |
 
-The gap exists because production kernels use techniques this project
-deliberately does not implement to keep code readable:
+What is **not** shown above is equally important: there is currently no
+local measured reference for Flash Attention via cuDNN SDPA or for
+GroupNorm. cuDNN is installed here, but the installed headers do not
+expose the graph-based SDPA frontend needed for a direct local attention
+reference, and there is still no direct GroupNorm harness. Those rows
+remain **not measured locally** instead of guessed.
 
-1. **Multi-stage cp.async pipelines** (4-6 stages vs our 2)
-2. **Persistent grids** with cooperative work distribution
-3. **Streaming K splits** with cross-block reduction
-4. **Hand-tuned tile sizes** per (M, N, K) range
-5. **XOR-swizzled smem layouts** vs simple `+8` padding
-6. **Split-Q parallelism** for attention (the dominant FA gap factor)
-7. **Hand-written SASS** for inner loops (we use nvcc + cuasmR byte-level edits)
+Run it with:
 
-The relevant comparison is not "how close to cuBLAS" but **"how close
-to peak per line of code"**. cuBLAS is ~4 million lines; CUTLASS
-HGEMM alone is ~3,000 lines of templates. This project: ~15,000 lines
-total, ~2,000-3,000 GFLOPS per kloc of kernel code at the high end.
+```bash
+make reference-pipeline
+make bench-reference
+make compare-reference
+```
 
-Full breakdown with per-factor gap accounting and "what it would take
-to close the gap" in [docs/comparison_to_sota.md](docs/comparison_to_sota.md).
+Full methodology and current coverage in [docs/comparison_to_sota.md](docs/comparison_to_sota.md).
 
 ---
 

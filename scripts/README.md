@@ -36,6 +36,8 @@ scripts/
 │
 ├── bench/                    ── benchmark harnesses (need GPU)
 │   ├── bench_regress.R       ── runs all benches vs docs/baselines.json
+│   ├── bench_reference.R     ── runs local reference benches vs docs/reference_baselines.json
+│   ├── compare_reference.R   ── joins project baselines to local reference baselines
 │   ├── bench_flash_all.R     ── runs every FA variant in kernels/attention/flash_attention/, prints table
 │   ├── bench_imma_s02.R      ── one-off: IMMA S02 vs S04 stall comparison
 │   ├── bench_imma_s04.R      ── companion to s02
@@ -61,6 +63,8 @@ scripts/
 | Build a single cubin                        | `Rscript scripts/build.R compile path/to/kernel.cu` |
 | Disassemble + cuasmR roundtrip a cubin      | `Rscript scripts/build.R disasm path/to/kernel.sm_86.cubin` |
 | Run all benches vs baselines                | `Rscript scripts/bench/bench_regress.R` |
+| Run local reference benches                 | `Rscript scripts/bench/bench_reference.R` |
+| Compare project vs local references         | `Rscript scripts/bench/compare_reference.R` |
 | Profile a kernel with ncu                   | `Rscript scripts/profile/ncu_profile.R --kernel path/to/bench --out results/ncu/foo.csv` |
 | Sweep occupancy / SMEM layout               | `Rscript scripts/model/find_optimal_smem_layout.R` |
 | Regenerate cymatic data + figures           | `Rscript scripts/cymatic/cymatic_mapping.R 2048 6 4 && Rscript scripts/cymatic/cymatic_visualize.R` |

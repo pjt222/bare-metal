@@ -17,8 +17,17 @@ SM_ARCH     := sm_86
 NVCC        := nvcc
 NVCC_FLAGS  := -arch=$(SM_ARCH) -O2
 CUBIN_FLAGS := --cubin -arch=$(SM_ARCH) -O2
+REFERENCE_NVCC_FLAGS := $(NVCC_FLAGS) -std=c++17
 
 RSCRIPT     := Rscript
+
+CUSPARSELT_HOME ?= $(HOME)/.local/cusparselt
+REFERENCE_INC_FLAGS := -Ikernels/reference/_common -I/usr/include -I/usr/include/x86_64-linux-gnu
+REFERENCE_LIB_FLAGS := -lcudart -lcublas -lcublasLt -lcudnn
+ifneq ($(wildcard $(CUSPARSELT_HOME)/include/cusparseLt.h),)
+REFERENCE_INC_FLAGS += -I$(CUSPARSELT_HOME)/include
+REFERENCE_LIB_FLAGS += -L$(CUSPARSELT_HOME)/lib64 -Xlinker -rpath -Xlinker $(CUSPARSELT_HOME)/lib64 -lcusparseLt
+endif
 
 # ------------------------------------------------------------------
 # Find all source files
@@ -39,13 +48,14 @@ ATTENTION_BENCH    := $(shell find kernels/attention     -name 'bench*.cu' 2>/de
 CONVOLUTION_BENCH  := $(shell find kernels/convolution   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 MEMORY_LAYOUT_BENCH:= $(shell find kernels/memory_layout -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 COMPOSITION_BENCH  := $(shell find kernels/composition   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
+REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
 .PHONY: all cubins benches phase1 phase2 phase3 phase4 phase5 test clean disasm help \
-        setup verify bench reproduce \
-        tutorial gemm reductions attention convolution elementwise memory_layout composition
+        setup verify bench bench-reference compare-reference reference-pipeline reproduce \
+        tutorial gemm reductions attention convolution elementwise memory_layout composition reference
 
 all: cubins benches
 
@@ -94,6 +104,10 @@ kernels/gemm/igemm/bench_%: kernels/gemm/igemm/bench_%.cu
 	@echo "[BENCH] $<"
 	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda -Ikernels/_common
 
+kernels/reference/%/bench: kernels/reference/%/bench.cu
+	@echo "[BENCH] $<"
+	$(NVCC) $(REFERENCE_NVCC_FLAGS) -o $@ $< $(REFERENCE_INC_FLAGS) $(REFERENCE_LIB_FLAGS)
+
 # ------------------------------------------------------------------
 # Phase targets
 # ------------------------------------------------------------------
@@ -107,6 +121,7 @@ attention:      $(shell find kernels/attention     -name '*.cu' ! -name 'bench*.
 convolution:    $(shell find kernels/convolution   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(CONVOLUTION_BENCH)
 memory_layout:  $(shell find kernels/memory_layout -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(MEMORY_LAYOUT_BENCH)
 composition:    $(shell find kernels/composition   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(COMPOSITION_BENCH)
+reference:      $(REFERENCE_BENCH)
 
 # Legacy phaseN aliases — forward to family targets so old invocations
 # (e.g. tutorials, scripts) keep working post-Tier-13.
@@ -161,6 +176,14 @@ verify:
 bench:
 	@$(RSCRIPT) scripts/bench/bench_regress.R
 
+bench-reference: reference
+	@$(RSCRIPT) scripts/bench/bench_reference.R
+
+compare-reference:
+	@$(RSCRIPT) scripts/bench/compare_reference.R
+
+reference-pipeline: reference bench-reference compare-reference
+
 reproduce: setup verify all bench
 	@echo ""
 	@echo "================================================================"
@@ -195,6 +218,9 @@ help:
 	@echo "  make setup     — renv::restore() + install cuasmR"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
 	@echo "  make bench     — run benches vs docs/baselines.json"
+	@echo "  make bench-reference — run local reference benches vs docs/reference_baselines.json"
+	@echo "  make compare-reference — compare project baselines to local reference baselines"
+	@echo "  make reference-pipeline — build + validate + compare local reference benches"
 	@echo ""
 	@echo "Build:"
 	@echo "  make all       — build all cubins + benches"
@@ -213,6 +239,7 @@ help:
 	@echo "  make convolution   — conv2d/resblock"
 	@echo "  make memory_layout — cymatic"
 	@echo "  make composition   — attention_layer"
+	@echo "  make reference     — local reference-library benches"
 	@echo "  make phaseN        — alias → corresponding family targets"
 	@echo ""
 	@echo "  make help      — show this message"
