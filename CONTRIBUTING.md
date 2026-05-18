@@ -91,7 +91,7 @@ bash scripts/install-hooks.sh
 
 This configures a `pre-push` hook that:
 1. Runs `make test` to build and smoke-test benches
-2. Runs `scripts/bench/bench_regress.R` to detect performance regressions against `docs/baselines.json`
+2. Runs `scripts/bench/bench_regress.R` to detect performance regressions against `data/baselines.json`
 3. Blocks the push if any kernel regresses beyond tolerance
 
 **Bypass** (for WIP or when you know baseline is stale):

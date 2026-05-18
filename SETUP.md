@@ -19,7 +19,7 @@ The `make reproduce` target runs:
 1. `make setup`   — `renv::restore()` + install local cuasmR R package
 2. `make verify`  — env check (CUDA, GPU, cuasmR)
 3. `make all`     — compile every kernel `.cu` to `.cubin` + every bench `.cu` to executable
-4. `make bench`   — run all benches, compare against `docs/baselines.json`
+4. `make bench`   — run all benches, compare against `data/baselines.json`
 
 A clean run on a healthy GPU ends with `RESULT: PASSED -- all
 benchmarks within tolerance`. The pre-push git hook calls the same
@@ -121,8 +121,8 @@ make disasm               # cubins -> SASS dumps
 
 ```bash
 make reference-pipeline  # build + validate + compare local reference benches
-make bench                # all kernels vs docs/baselines.json
-make bench-reference      # local reference libs vs docs/reference_baselines.json
+make bench                # all kernels vs data/baselines.json
+make bench-reference      # local reference libs vs data/reference_baselines.json
 make compare-reference    # project baselines vs local reference baselines
 ```
 
@@ -135,7 +135,7 @@ result is compared against the recorded baseline. Three verdicts:
 - `IMPROVED` / `REGRESSION` — outside tolerance, real change
 - `SKIPPED` — measurement-time GPU state was unfair (thermal
   throttle, sw power cap, etc.); the run is dropped, not failed.
-  See the baselines schema in `docs/baselines.json` and `CHANGELOG.md`
+  See the baselines schema in `data/baselines.json` and `CHANGELOG.md`
   for the fair-run capture policy.
 
 To list recorded baselines without running:
@@ -178,7 +178,7 @@ Re-baselining on different hardware is mandatory:
 make clean && make all
 # Manually verify each kernel runs, then capture new numbers:
 Rscript scripts/bench/bench_regress.R --list  # see what to measure
-# Run each bench, record into docs/baselines.json by hand
+# Run each bench, record into data/baselines.json by hand
 ```
 
 ## Troubleshooting

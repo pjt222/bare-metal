@@ -35,7 +35,7 @@ HW_STATIC_SMEM_KB   <- 48L         # default static smem cap
 parse_args <- function(argv) {
   out <- list(
     root    = ".",
-    csv_out = "docs/register_audit.csv",
+    csv_out = "data/register_audit.csv",
     md_out  = "docs/register_audit.md",
     quiet   = FALSE
   )

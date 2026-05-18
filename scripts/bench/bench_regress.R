@@ -2,7 +2,7 @@
 # bench_regress.R - Automated performance regression checker.
 #
 # Runs benchmark executables and compares against recorded baselines in
-# docs/baselines.json. Exits non-zero if any kernel regresses beyond tolerance.
+# data/baselines.json. Exits non-zero if any kernel regresses beyond tolerance.
 # Mirrors bench_regress.py.
 #
 # Usage:
@@ -60,7 +60,7 @@ REPO_ROOT <- {
   }
   cur
 }
-BASELINES_PATH    <- file.path(REPO_ROOT, "docs", "baselines.json")
+BASELINES_PATH    <- file.path(REPO_ROOT, "data", "baselines.json")
 DEFAULT_TOLERANCE <- 0.10
 
 # ----------------------------------------------------------------------
@@ -309,7 +309,7 @@ main <- function() {
 
   if (!file.exists(BASELINES_PATH)) {
     cat(sprintf("ERROR: Baselines file not found: %s\n", BASELINES_PATH))
-    cat("Run benchmarks manually and record results to docs/baselines.json\n")
+    cat("Run benchmarks manually and record results to data/baselines.json\n")
     quit(status = 1)
   }
   baselines <- jsonlite::fromJSON(BASELINES_PATH, simplifyVector = FALSE)

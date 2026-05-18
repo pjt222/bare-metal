@@ -33,8 +33,8 @@ scripts/
 │   └── cymatic_fa_alignment.R ── how cymatic regions align with FA seq tiles
 │
 ├── bench/                    ── benchmark harnesses (need GPU)
-│   ├── bench_regress.R       ── runs all benches vs docs/baselines.json
-│   ├── bench_reference.R     ── runs local reference benches vs docs/reference_baselines.json
+│   ├── bench_regress.R       ── runs all benches vs data/baselines.json
+│   ├── bench_reference.R     ── runs local reference benches vs data/reference_baselines.json
 │   ├── compare_reference.R   ── joins project baselines to local reference baselines
 │   ├── bench_flash_all.R     ── runs every FA variant in kernels/attention/flash_attention/, prints table
 │   ├── bench_imma_s02.R      ── one-off: IMMA S02 vs S04 stall comparison

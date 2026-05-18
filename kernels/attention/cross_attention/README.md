@@ -38,4 +38,4 @@ nvcc -arch=sm_86 -O2 -o bench_pipelined bench_pipelined.cu -lcuda -I../../kernel
 
 - Phase 3 [flash_attention/README.md](../flash_attention/README.md) for the symmetric self-attention case
 - [docs/tutorial/05-flash-attention.md](../../../docs/tutorial/05-flash-attention.md) — softmax + tiling derivation
-- [docs/kernels.md](../../../docs/kernels.md) — measured numbers
+- [docs/inventory.md](../../../docs/inventory.md) — measured numbers

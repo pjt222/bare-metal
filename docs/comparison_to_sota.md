@@ -8,7 +8,7 @@
 
 The repo previously mixed:
 
-- **measured local project baselines** in `docs/baselines.json`
+- **measured local project baselines** in `data/baselines.json`
 - **estimated external reference values** in README/SOTA docs
 
 That was not robust enough. The current policy is:
@@ -38,8 +38,8 @@ sparse INT8 GEMM, and the main 3x3 conv2d anchor.
 
 ```bash
 make reference          # build local reference-library benches
-make bench-reference    # validate docs/reference_baselines.json
-make compare-reference  # join docs/baselines.json to docs/reference_baselines.json
+make bench-reference    # validate data/reference_baselines.json
+make compare-reference  # join data/baselines.json to data/reference_baselines.json
 ```
 
 Low-level entry points:
@@ -51,8 +51,8 @@ Rscript scripts/bench/compare_reference.R
 
 ## Data files
 
-- `docs/baselines.json` — measured local project baselines
-- `docs/reference_baselines.json` — measured local reference-library baselines
+- `data/baselines.json` — measured local project baselines
+- `data/reference_baselines.json` — measured local reference-library baselines
 
 Both files use the same fair-run policy:
 
@@ -76,8 +76,8 @@ Current measured local reference rows:
 These are the only rows that are currently both:
 
 1. implemented as local reference-library harnesses
-2. recorded in `docs/reference_baselines.json`
-3. matched to project baselines in `docs/baselines.json`
+2. recorded in `data/reference_baselines.json`
+3. matched to project baselines in `data/baselines.json`
 
 ## Explicitly unsupported today
 
@@ -112,7 +112,7 @@ estimate-based table.
 To add a new local reference row:
 
 1. add a new reference bench executable under `kernels/reference/`
-2. add its measured local baseline to `docs/reference_baselines.json`
+2. add its measured local baseline to `data/reference_baselines.json`
 3. map it to a project baseline via `project_kernel` + `project_config`
 4. rerun `make bench-reference` and `make compare-reference`
 

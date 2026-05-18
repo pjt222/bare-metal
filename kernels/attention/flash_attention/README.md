@@ -233,7 +233,7 @@ The benefit is **tail-wave elimination**, not SM utilization improvement at smal
 
 ---
 
-## Phase 3c — Br=16 HMMA (Best Result)
+## Br=16 HMMA
 
 The scalar kernels above are succeeded by `flash_attn_br16_regpv.cu`, which uses HMMA.16816.F32 Tensor Cores with Br=16, Bc=64:
 
@@ -248,10 +248,10 @@ Bc=128 crosses the 50 KB smem cliff → 1 block/SM occupancy regression. Bc=64 s
 
 ---
 
-## Phase 3d — flash_attn_br16_v2 (Current Canonical, Issue #29)
+## flash_attn_br16_v2 (current canonical, issue #29)
 
-The `flash_attn_br16_v2.cu` kernel is the result of a three-stage refactor of
-`flash_attn_br16_regpv` (issue #29, 2026-05-07). It is now the canonical
+The `flash_attn_br16_v2.cu` kernel is the result of a three-stage refactor
+of `flash_attn_br16_regpv` (issue #29). It is the canonical
 high-performance Flash Attention kernel.
 
 ### Performance (RTX 3070 Ti, sm_86)

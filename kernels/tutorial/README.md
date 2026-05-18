@@ -1,4 +1,4 @@
-# Phase 1: Hello World — Vector Add in SASS
+# Tutorial: Vector Add — the SASS hello world
 
 ## Goal
 

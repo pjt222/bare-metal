@@ -2178,7 +2178,7 @@ rewrites.
 ### Files
 
 - `scripts/audit/sass_histogram.R` — scanner (replaces deleted Python original)
-- `docs/sass_histogram.csv` — full per-kernel data
+- `data/sass_histogram.csv` — full per-kernel data
 - `docs/sass_histogram.md`  — Markdown table sorted by useful_pct
 - `docs/figures/sass_histogram.png` — top-40 stacked bar visualization
 
@@ -2373,7 +2373,7 @@ audit:
 ### Tooling
 
 - `scripts/audit/reg_audit.R` — the audit (256 lines)
-- `docs/register_audit.csv` — full per-kernel data
+- `data/register_audit.csv` — full per-kernel data
 - `docs/register_audit.md` — Markdown report
 
 The launch_bounds parser handles the common pattern of macro-defined

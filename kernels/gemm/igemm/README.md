@@ -217,7 +217,7 @@ cuobjdump -sass igemm.sm_86.cubin | grep IMMA
 cuobjdump -sass igemm.sm_86.cubin | grep I2F
 ```
 
-## Phase 5: Online FP16 → INT8 Quantization & Sparse GEMM
+## Online FP16 → INT8 quantization and sparse GEMM
 
 ### Online Quantization
 
@@ -228,7 +228,7 @@ Quantizes FP16 inputs on-the-fly inside the kernel:
 | Online-quant in-place | 8.3 ms | **16,646** | **2.12×** |
 | Bank-conflict-free | 8.05 ms | **17,070** | **2.18×** |
 
-See `kernels/composition/` (formerly phase5) for layer-level integration.
+See `kernels/composition/` for layer-level integration.
 
 ### Sparse INT8 GEMM
 

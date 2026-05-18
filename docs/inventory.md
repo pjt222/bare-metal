@@ -1,17 +1,13 @@
-# Kernels grouped by content / internal structure
+# Kernel inventory
 
-Companion to [`kernels.md`](kernels.md), which lists kernels by
-**development phase** (chronological). This file groups the same
-kernels by **what's inside them** — the dominant SASS family, the
-algorithmic pattern, the on-chip resource that bottlenecks them.
-Every directory under `phase{1..5}/` is a regular kernel; nothing
-here is "speculative" or second-class (audit Tier 12 dropped that
-distinction).
+The canonical kernel index for this repository, grouped by content
+and internal structure. Every directory under `kernels/<family>/` is
+a regular kernel; there are no speculative or second-class entries.
 
 The classification is non-exclusive: a kernel that uses both HMMA
-and SHFL.BFLY appears in both A and B. The first column gives the
-filesystem path; the second the *primary* identity, the third the
-peak number on RTX 3070 Ti (sm_86).
+and SHFL.BFLY appears in both section A and section B. Columns are:
+filesystem path, primary identity, peak measured number on
+RTX 3070 Ti (sm_86), and the dominant SASS instruction family.
 
 ## A. General matrix multiply (GEMM family)
 
@@ -164,7 +160,9 @@ Same kernels indexed by the instruction that defines them.
 
 ## See also
 
-- [`kernels.md`](kernels.md) — the same kernels indexed by phase, with auto-generated headline tables and source paths.
-- [`gpu_reflections.md`](gpu_reflections.md) — the full Obs catalog (~50 entries) with per-kernel postmortems.
-- [`tutorial/`](tutorial/) — 6-chapter prose walkthrough that follows the phase ordering.
-- [`comparison_to_sota.md`](comparison_to_sota.md) — gap analysis vs cuBLAS / cuDNN / FA-2 per family.
+- [`gpu_reflections.md`](gpu_reflections.md) — observation catalogue with per-kernel postmortems.
+- [`tutorial/`](tutorial/) — six-chapter prose walkthrough.
+- [`comparison_to_sota.md`](comparison_to_sota.md) — measured gap to cuBLAS / cuDNN / cuSPARSELt per family.
+- [`roofline_measured.md`](roofline_measured.md), [`sass_histogram.md`](sass_histogram.md), [`register_audit.md`](register_audit.md) — per-kernel measurement tables.
+- Underlying data lives in [`../data/`](../data/).
+- [`index.md`](index.md) — full documentation map.

@@ -5,14 +5,14 @@
   "default_valid_when": {
     "require_no_throttle": true,
     "allow_throttle": ["GpuIdle"],
-    "comment": "Same fair-run policy as docs/baselines.json."
+    "comment": "Same fair-run policy as data/baselines.json."
   },
   "schema": {
     "exe": "(optional) path to reference bench executable",
     "library": "(optional) local reference stack used by this bench, e.g. cuBLAS",
     "match": "(optional) substring of the bench-output line that holds this reference value",
-    "project_kernel": "(required for comparisons) path to the project-kernel baseline entry in docs/baselines.json",
-    "project_config": "(required for comparisons) config key in docs/baselines.json to compare against",
+    "project_kernel": "(required for comparisons) path to the project-kernel baseline entry in data/baselines.json",
+    "project_config": "(required for comparisons) config key in data/baselines.json to compare against",
     "label": "(optional) human-readable row label for compare_reference.R output"
     ,"peak": "(optional) hardware peak for this workload's precision class, in the same unit as the stored metric"
   },

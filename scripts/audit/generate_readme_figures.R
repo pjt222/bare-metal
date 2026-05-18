@@ -381,8 +381,8 @@ cat("\n[fig] all figures written to ", OUT, "/\n", sep = "")
   NA_real_
 }
 
-project_baselines <- fromJSON(file.path("docs", "baselines.json"), simplifyVector = FALSE)
-reference_baselines <- fromJSON(file.path("docs", "reference_baselines.json"), simplifyVector = FALSE)
+project_baselines <- fromJSON(file.path("data", "baselines.json"), simplifyVector = FALSE)
+reference_baselines <- fromJSON(file.path("data", "reference_baselines.json"), simplifyVector = FALSE)
 
 gap_rows <- list()
 for (ref_kernel in names(reference_baselines$kernels)) {

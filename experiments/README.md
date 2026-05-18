@@ -20,4 +20,4 @@ backends, and developer-experience tooling.
 
 - [docs/gpu_reflections.md](../docs/gpu_reflections.md) — Obs KK, LL writeups
 - [docs/cuasm_r.md](../docs/cuasm_r.md) — local R package for SASS hand-edits (replaces upstream CuAssembler)
-- [docs/kernels.md](../docs/kernels.md) — kernel phase mapping (phase 6 row links here)
+- [docs/inventory.md](../docs/inventory.md) — kernel inventory

@@ -6,9 +6,9 @@
 # both CSV (machine readable) and a Markdown table (human readable).
 #
 # Usage:
-#   Rscript scripts/audit/sass_histogram.R                    # writes docs/sass_histogram.{csv,md}
+#   Rscript scripts/audit/sass_histogram.R                    # writes data/sass_histogram.csv + docs/sass_histogram.md
 #   Rscript scripts/audit/sass_histogram.R --kernel HGEMM     # filter by name substring
-#   Rscript scripts/audit/sass_histogram.R --root phase3      # restrict scan to subtree
+#   Rscript scripts/audit/sass_histogram.R --root kernels/attention   # restrict scan to subtree
 #   Rscript scripts/audit/sass_histogram.R --quiet            # suppress per-cubin progress
 #
 # Categories: each instruction counted exactly once into the first
@@ -36,7 +36,7 @@ parse_args <- function(argv) {
   defaults <- list(
     root    = ".",
     kernel  = NULL,
-    csv_out = "docs/sass_histogram.csv",
+    csv_out = "data/sass_histogram.csv",
     md_out  = "docs/sass_histogram.md",
     fig_out = "docs/figures/sass_histogram.png",
     no_fig  = FALSE,

@@ -5,10 +5,10 @@
 #   make setup        — renv::restore() + install local cuasmR R package
 #   make verify       — environment check (CUDA, GPU, cuasmR)
 #   make all          — build all kernel cubins + benchmark executables
-#   make bench        — run benches vs docs/baselines.json
+#   make bench        — run benches vs data/baselines.json
 #   make cubins       — compile all .cu files to .cubin
 #   make benches      — compile all bench*.cu files to executables
-#   make phaseN       — build phase N only (N=1..5)
+
 #   make test         — run all benchmark executables (smoke test)
 #   make clean        — remove all generated artifacts
 #   make disasm       — disassemble all cubins to .sass
@@ -53,7 +53,7 @@ REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/de
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches phase1 phase2 phase3 phase4 phase5 test clean disasm help \
+.PHONY: all cubins benches test clean disasm help \
         setup verify bench bench-reference compare-reference reference-pipeline reproduce \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
 
@@ -123,14 +123,6 @@ memory_layout:  $(shell find kernels/memory_layout -name '*.cu' ! -name 'bench*.
 composition:    $(shell find kernels/composition   -name '*.cu' ! -name 'bench*.cu' 2>/dev/null | sed 's/\.cu/.$(SM_ARCH).cubin/') $(COMPOSITION_BENCH)
 reference:      $(REFERENCE_BENCH)
 
-# Legacy phaseN aliases forward to family targets for backward
-# compatibility with older invocations and external documentation.
-phase1: tutorial
-phase2: gemm reductions elementwise
-phase3: attention
-phase4: attention convolution reductions elementwise memory_layout
-phase5: composition
-
 # ------------------------------------------------------------------
 # Testing
 # ------------------------------------------------------------------
@@ -191,7 +183,7 @@ reproduce: setup verify all bench
 	@echo "  setup    -- R deps installed via renv"
 	@echo "  verify   -- toolchain + GPU detected"
 	@echo "  all      -- every cubin + bench compiled"
-	@echo "  bench    -- results compared to docs/baselines.json"
+	@echo "  bench    -- results compared to data/baselines.json"
 	@echo "================================================================"
 
 # ------------------------------------------------------------------
@@ -217,8 +209,8 @@ help:
 	@echo "  make reproduce — one-stop: setup + verify + build + bench"
 	@echo "  make setup     — renv::restore() + install cuasmR"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
-	@echo "  make bench     — run benches vs docs/baselines.json"
-	@echo "  make bench-reference — run local reference benches vs docs/reference_baselines.json"
+	@echo "  make bench     — run benches vs data/baselines.json"
+	@echo "  make bench-reference — run local reference benches vs data/reference_baselines.json"
 	@echo "  make compare-reference — compare project baselines to local reference baselines"
 	@echo "  make reference-pipeline — build + validate + compare local reference benches"
 	@echo ""
@@ -240,6 +232,5 @@ help:
 	@echo "  make memory_layout — cymatic"
 	@echo "  make composition   — attention_layer"
 	@echo "  make reference     — local reference-library benches"
-	@echo "  make phaseN        — alias → corresponding family targets"
 	@echo ""
 	@echo "  make help      — show this message"

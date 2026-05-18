@@ -532,7 +532,7 @@ The path to closing the gap: double-buffering K/V tiles and warp-specialization 
 
 ---
 
-## Phase 4: Diffusion Model Primitives
+## Diffusion model primitives
 
 ### GroupNorm: group_size must be divisible by WARP_SIZE
 
