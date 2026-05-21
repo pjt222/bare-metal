@@ -181,3 +181,8 @@ per-attempt `capture_gpu_state()` snapshots.
 This methodology is the design basis for the planned `make
 bench-all` target — see the benchmark-pipeline hardening issues on
 GitHub.
+
+For the concrete step-by-step procedure to re-record a suspect
+baseline (currently `hgemm` + `igemm_sparse`, recorded under a
+power-supply fault), see
+[`rebaseline_protocol.md`](rebaseline_protocol.md).
