@@ -42,8 +42,19 @@ peak (174 TFLOPS). Path:
 
 ### Open GitHub issues
 
-**None.** The issue tracker is empty as of the 2026-05-21 session
-(see below). All optimization and build-correctness work is shipped.
+All optimization and build-correctness work is shipped. The only open
+issues are the **benchmark-pipeline hardening roadmap** filed at the
+end of the 2026-05-21 session — no queued kernel work.
+
+| #   | Title                                                          |
+|-----|----------------------------------------------------------------|
+| 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
+| 125 | Clock-lock support for the benchmark pipeline (WSL probe gate) |
+| 126 | Record GPU mode (hybrid/dGPU) in benchmark metadata            |
+| 127 | Smoke-test coverage gap: flash_attn / conv2d not built by `make test` |
+| 128 | Overclocked single-kernel showcase mode (deferred)             |
+
+Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
 
 ## Latest session — documentation review + Hugging Face publication
 
@@ -76,9 +87,16 @@ Bugs found and fixed while exercising the full reproducible pipeline:
 `make all` now builds the whole corpus exit 0; the publish pipeline
 is reproducible end to end.
 
-## Latest session — issue-queue drain (2026-05-21)
+## Latest session — issue-queue drain + benchmark planning (2026-05-21)
 
-Goal: resolve every open GitHub issue. All four closed; tracker empty.
+Goal: resolve every open GitHub issue. All four closed. A follow-up
+planning pass on benchmark-pipeline reproducibility then filed five
+roadmap issues (#124-128, see "Open GitHub issues" above) and shipped
+their design basis — `docs/benchmark_methodology.md` and
+`scripts/probe/probe_gpu_power.R` + `probe_clock_lock.R` (commit
+`a149859`). Key finding: the GPU is pinned at its 150 W VBIOS power
+ceiling — no headroom; reproducible numbers need clock-locking or
+cooldown, not more power.
 
 | #   | Commit  | Resolution                                                       |
 |-----|---------|------------------------------------------------------------------|
@@ -96,18 +114,31 @@ Build-graph gap found and fixed while pushing the above:
 
 ## Next steps
 
-The optimization queue and issue tracker are both empty. No queued
-code work. Candidate directions if the project resumes:
+The kernel optimization queue is empty. Open work is the
+benchmark-pipeline hardening roadmap (#124-128):
 
-- **#32 polyhedral spring networks** was closed in an earlier session;
-  literature scoping lives in `docs/polyhedral_spring_networks.md`.
-  Re-open only if a kernel implementation is wanted.
-- Research-grade items only — see `gpu_reflections.md` for the
-  observation catalogue and any unexplored threads.
-- `flash_attn_br16_regpv` and `conv2d_implicit_gemm` benches are not
-  built by `make test` (not in the `GEMM/REDUCTIONS/ELEMENTWISE_BENCH`
-  groups), so `bench_regress.R` SKIPs them. Wire their bench exes into
-  a smoke group if regression coverage for them is wanted.
+1. **#127 — smoke coverage gap** (`good first issue`): wire the
+   `flash_attn` / `conv2d` bench exes into a smoke group so
+   `bench_regress.R` covers them instead of SKIPping. Small.
+2. **#125 — clock-lock probe**: run
+   `sudo Rscript scripts/probe/probe_clock_lock.R`; the verdict
+   decides whether clock-locking is a usable lever.
+3. **#126 — GPU-mode metadata**: decide the source of truth
+   (env var vs Windows-host query) and add the `gpu_mode` field.
+4. **#124 — `bench-all` runner** (epic): the big one — build it on
+   the architecture in `benchmark_methodology.md` once #125/#126
+   land.
+5. **#128 — OC showcase**: deferred.
+
+Pending hardware change: user switched hybrid → dGPU mode (needs a
+restart). After reboot, re-run `Rscript scripts/probe/probe_gpu_power.R`
+— if `Max Power Limit` rose above 150 W, the clock-lock plan shifts.
+
+Closed earlier, not in scope unless reopened:
+
+- **#32 polyhedral spring networks** — literature scoping lives in
+  `docs/polyhedral_spring_networks.md`. Re-open only if a kernel
+  implementation is wanted.
 
 ## Hardware constraint (recap)
 
