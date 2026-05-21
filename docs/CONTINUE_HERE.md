@@ -92,42 +92,71 @@ Build-graph gap found and fixed while pushing the above:
 ## Latest session — #127 build-graph fix (2026-05-21)
 
 Wired `flash_attn_br16_regpv` + `conv2d_implicit_gemm` benches into
-`make test` (#127). Three commits on `main`, **unpushed**:
+`make test` (#127). Four commits on `main`, **all unpushed — push is
+blocked, see below**:
 
 | Commit  | What                                                          |
 |---------|---------------------------------------------------------------|
 | 69cf1fb | `bench_br16_regpv.cu` loaded `flash_br16*.sm_86.cubin`; Makefile emits `flash_attn_br16*` — corrected. Latent bug exposed by #127. |
 | 7fe0b56 | `Makefile` `REGRESS_BENCH` group (2 baselined exes only); `make test` depends on it. `Closes #127`. |
-| b1f7c44 | `baselines.json` flash_attn `tolerance: 0.25` + note. The apparent 78% regression is a clock artifact — laptop GA104 caps at 1410 MHz (43 W, 50 °C, no throttle), never hits 1785 boost; `5600/7152 ≈ 1410/1785`. |
+| 5ae60c0 | `baselines.json` flash_attn `tolerance: 0.30` + note. The apparent 78% regression is a clock artifact — laptop GA104 caps at 1410 MHz (43 W, 50 °C, no throttle), never hits 1785 boost; `5600/7152 ≈ 1410/1785`. |
+| (this file) | Handoff update. |
+
+#127 itself is **done**: flash_attn + conv2d both report OK/regression
+(not SKIP) on a clean `make clean && make test` cold build — flash_attn
+OK ~76-80% within the 0.30 band, conv2d OK ~90-93%.
 
 Post-reboot power probe: still **150 W max, no headroom** — dGPU mode
 did not raise the ceiling, clock-lock plan (#125) unchanged.
 
-bench_regress full run: flash_attn OK 81.6%, conv2d OK 92.3% (both
-covered now). hgemm 2048³ + igemm 4096³ still red — pre-existing same
-clock artifact, untouched, #125 scope.
+### Push blocked — baselines.json is corrupt
+
+`git push` failed: the pre-push `bench_regress.R` flags 2 regressions
+in kernels **#127 never touched** — `hgemm 2048³` and
+`igemm_sparse 4096³`. Investigated instead of bypassing:
+
+- **hgemm 2048³** — 5-run spread 24674-27158 GFLOPS, uniformly
+  77-85 % of the 31875 baseline. Stable distribution.
+- **igemm_sparse 2048³** — every run 36800-39500 GFLOPS = **116-125 %
+  *above* the 31588 baseline**. Matches the entry note's "was 39674 on
+  CUDA 12.8". Baseline looks recorded low.
+- **igemm_sparse 4096³** — 5-run spread 15778-24412 GFLOPS, genuinely
+  **bimodal (1.55× min-max)**. Clearing the worst would need
+  tolerance ≥ 0.49 — that guts the regression check.
+
+**User report (decisive):** the 2026-05-10 baseline recording hit a
+**power-supply issue, fixed mid-first-kernel**. `baselines.json`'s
+first kernel is hgemm — so hgemm's baseline is suspect, and
+igemm 2048³ being uniformly *above* baseline fits "baseline recorded
+low under bad power". Conclusion: do not widen tolerances to paper
+over this — **re-baseline** hgemm + igemm. Decision: defer to next
+session.
 
 ## Next steps
 
-The kernel optimization queue is empty. Open work is the
-benchmark-pipeline hardening roadmap:
-
-1. **Push** the 3 unpushed `main` commits to fire `Closes #127`.
-2. **#129 — `valid_when` clock gate**: cold-clock runs should `SKIP`,
+1. **[USER] Re-baseline hgemm + igemm** — controlled measurement
+   session: on AC (verify PSU stable), GPU pre-warmed, several
+   samples per kernel, record the median to `data/baselines.json`.
+   Caveat: the 1410 MHz cold-clock cap (#125) still limits a short
+   bench_regress run — a true boost-clock baseline needs sustained
+   load or clock-locking. Decide the recording protocol first.
+2. **Push** the 4 unpushed `main` commits — pre-push hook should pass
+   once re-baselined; fires `Closes #127`.
+3. **#129 — `valid_when` clock gate**: cold-clock runs should `SKIP`,
    not false-`REGRESSION`. Needs `min_clock_sm` + bench-window clock
-   capture. Tightly coupled to #125.
-3. **#125 — clock-lock probe**: run
+   capture. Tightly coupled to #125 and to the re-baseline protocol.
+4. **#125 — clock-lock probe**: run
    `sudo Rscript scripts/probe/probe_clock_lock.R`; the verdict
    decides whether clock-locking is a usable lever. Resolving this
-   lets the #129 / igemm tolerance band-aids be narrowed.
-4. **#130 — smoke-loop cwd bug** (`good first issue`): `make test`
+   lets the #129 / flash_attn / igemm tolerance band-aids be narrowed.
+5. **#130 — smoke-loop cwd bug** (`good first issue`): `make test`
    benches run from repo root, fail to load cubins, swallowed by
    `|| true`. `cd` into each exe dir.
-5. **#126 — GPU-mode metadata**: decide source of truth (env var vs
+6. **#126 — GPU-mode metadata**: decide source of truth (env var vs
    Windows-host query) and add `gpu_mode`.
-6. **#124 — `bench-all` runner** (epic): build on
+7. **#124 — `bench-all` runner** (epic): build on
    `benchmark_methodology.md` once #125/#126 land.
-7. **#128 — OC showcase**: deferred.
+8. **#128 — OC showcase**: deferred.
 
 Closed earlier, not in scope unless reopened:
 
