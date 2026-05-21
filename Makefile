@@ -123,7 +123,12 @@ reference:      $(REFERENCE_BENCH)
 # Testing
 # ------------------------------------------------------------------
 # Smoke test: run all GEMM + reduction + elementwise benches at 512^3.
-test: $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH)
+# Depends on `cubins` so the benches have kernels to load — the benches
+# resolve their cubins at runtime via cuModuleLoad, so a bench executable
+# built without its cubin runs hollow ("No kernels found"). This also
+# leaves the cubins in place for scripts/bench/bench_regress.R, which the
+# pre-push hook runs straight after `make test`.
+test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH)
 	@echo "=== Running smoke tests ==="
 	@for exe in $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH); do \
 		if [ -f "$$exe" ]; then \
