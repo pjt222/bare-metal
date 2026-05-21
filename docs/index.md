@@ -60,6 +60,7 @@ prerequisite and 06 as synthesis.
 |--------------------------------------------------------------------------------------|--------------------------------------------------|
 | [`gpu_reflections.md`](gpu_reflections.md)                                           | Observation catalogue. The first-person voice is a deliberate stylistic experiment; see file preamble. |
 | [`fragment_shfl_reductions.md`](fragment_shfl_reductions.md)                         | Reusable Tensor Core reduction pattern           |
+| [`benchmark_methodology.md`](benchmark_methodology.md)                               | Throttle, the 150 W power cap, clock-lock vs cooldown, reproducibility |
 | [`cymatic_memory_mapping.md`](cymatic_memory_mapping.md)                             | Chladni-pattern memory layout: theory and bench  |
 | [`diffusion_primitives.md`](diffusion_primitives.md)                                 | UNet primitive inventory                         |
 | [`int8_sparse_4096_regression_analysis.md`](int8_sparse_4096_regression_analysis.md) | Companion to Observation HH                      |
