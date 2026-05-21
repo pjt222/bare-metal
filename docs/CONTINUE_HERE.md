@@ -57,10 +57,9 @@ end of the 2026-05-21 session — no queued kernel work.
 | 126 | Record GPU mode (hybrid/dGPU) in benchmark metadata            |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 129 | bench_regress `valid_when` too permissive — cold-clock false regressions |
-| 130 | `make test` smoke loop runs benches from repo root — cubins not found |
 
-#127 resolved this session (commits on `main`, unpushed — `Closes #127`
-fires on push). #129/#130 filed this session.
+#127 resolved earlier (commits on `main`, unpushed — `Closes #127`
+fires on push). #130 resolved 2026-05-21 (commit `11a8e6b`).
 
 Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
 
@@ -132,31 +131,46 @@ low under bad power". Conclusion: do not widen tolerances to paper
 over this — **re-baseline** hgemm + igemm. Decision: defer to next
 session.
 
+## Latest session — #130 fix + re-baseline protocol (2026-05-21)
+
+Two unpushed commits on `main` (join the queue — now 6 unpushed):
+
+| Commit  | What                                                          |
+|---------|---------------------------------------------------------------|
+| 11a8e6b | `make test` smoke loop ran each bench exe from the repo root; benches `cuModuleLoad` cubins by a cwd-relative path, so every bench loaded no kernels (swallowed by `\|\| true`). Now runs each bench from its own dir in a subshell. `Closes #130`. |
+| 009fd23 | `docs/rebaseline_protocol.md` — the step-by-step procedure for the [USER] re-baseline (next steps #1). Resolves the "decide the protocol first" caveat. Cross-linked from `benchmark_methodology.md`. |
+
+#129 investigated: the `min_clock_sm` gate is **already fully
+implemented** in `classify_meta` (`scripts/bench/bench_meta.R:266` —
+clock below floor → SKIPPED; clock captured pre+post in
+`run_benchmark`). #129 is *not* new code. The only missing piece is a
+`min_clock_sm` *value* in `baselines.json`, and that value is the
+recording clock minus a margin — unknowable until the re-baseline
+runs. So #129 is blocked on next-step #1, exactly as the issue text
+("Properly resolved by #125") says. Resolution path documented in
+`rebaseline_protocol.md` §"After re-baselining".
+
 ## Next steps
 
-1. **[USER] Re-baseline hgemm + igemm** — controlled measurement
-   session: on AC (verify PSU stable), GPU pre-warmed, several
-   samples per kernel, record the median to `data/baselines.json`.
-   Caveat: the 1410 MHz cold-clock cap (#125) still limits a short
-   bench_regress run — a true boost-clock baseline needs sustained
-   load or clock-locking. Decide the recording protocol first.
-2. **Push** the 4 unpushed `main` commits — pre-push hook should pass
+1. **[USER] Re-baseline hgemm + igemm** — follow
+   `docs/rebaseline_protocol.md`. Hard precondition: run the #125
+   clock-lock probe first (it picks branch A locked-clock vs branch B
+   cold-clock). Then AC-verified, pre-warmed, 7-sample median per
+   config → patch `data/baselines.json`.
+2. **Push** the 6 unpushed `main` commits — pre-push hook should pass
    once re-baselined; fires `Closes #127`.
-3. **#129 — `valid_when` clock gate**: cold-clock runs should `SKIP`,
-   not false-`REGRESSION`. Needs `min_clock_sm` + bench-window clock
-   capture. Tightly coupled to #125 and to the re-baseline protocol.
-4. **#125 — clock-lock probe**: run
-   `sudo Rscript scripts/probe/probe_clock_lock.R`; the verdict
-   decides whether clock-locking is a usable lever. Resolving this
-   lets the #129 / flash_attn / igemm tolerance band-aids be narrowed.
-5. **#130 — smoke-loop cwd bug** (`good first issue`): `make test`
-   benches run from repo root, fail to load cubins, swallowed by
-   `|| true`. `cd` into each exe dir.
-6. **#126 — GPU-mode metadata**: decide source of truth (env var vs
+3. **#129 — `valid_when` clock gate**: NOT code work. After the
+   re-baseline, add `min_clock_sm` (recording clock − margin) to
+   `default_valid_when` in `baselines.json`. See protocol doc step 1.
+4. **#125 — clock-lock probe**: `sudo Rscript
+   scripts/probe/probe_clock_lock.R`. Folded into the protocol as its
+   precondition gate.
+5. **#126 — GPU-mode metadata**: decide source of truth (env var vs
    Windows-host query) and add `gpu_mode`.
-7. **#124 — `bench-all` runner** (epic): build on
-   `benchmark_methodology.md` once #125/#126 land.
-8. **#128 — OC showcase**: deferred.
+6. **#124 — `bench-all` runner** (epic): build on
+   `benchmark_methodology.md` + `rebaseline_protocol.md` once
+   #125/#126 land.
+7. **#128 — OC showcase**: deferred.
 
 Closed earlier, not in scope unless reopened:
 
