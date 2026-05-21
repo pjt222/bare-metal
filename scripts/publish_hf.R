@@ -9,7 +9,7 @@
 # Stages (full run):
 #   1. verify    -- toolchain + GPU present (scripts/verify_setup.R)
 #   2. token     -- load HF_TOKEN from .env or the environment
-#   3. build     -- make clean && make all && make disasm
+#   3. build     -- make clean && make all && make sass
 #   4. manifest  -- assert every expected cubin/sass exists and is
 #                   current; cross-check coverage vs data/baselines.json
 #   5. checksums -- write SHA256SUMS over every cubin
@@ -419,12 +419,14 @@ print_dry_run <- function(manifest) {
 main <- function() {
   argv <- commandArgs(trailingOnly = TRUE)
   if (length(argv) && argv[1] %in% c("-h", "--help")) {
-    cat("Usage: publish_hf.R [--dry-run]\n")
-    cat("  (no args)   build the corpus and upload to Hugging Face\n")
-    cat("  --dry-run   print the resolved manifest + hf commands only\n")
+    cat("Usage: publish_hf.R [--dry-run] [--skip-build]\n")
+    cat("  (no args)    build the corpus and upload to Hugging Face\n")
+    cat("  --dry-run    print the resolved manifest + hf commands only\n")
+    cat("  --skip-build trust on-disk cubins; refresh SASS + upload only\n")
     quit(status = 0L)
   }
-  dry_run <- "--dry-run" %in% argv
+  dry_run    <- "--dry-run"    %in% argv
+  skip_build <- "--skip-build" %in% argv
 
   cat(strrep("=", 64), "\n")
   cat("  bare-metal -- publish kernel corpus to Hugging Face\n")
@@ -449,10 +451,18 @@ main <- function() {
   Sys.setenv(HF_TOKEN = token)
 
   # --- Stage 3: materialize the corpus -----------------------------
-  info("Stage 3/7: rebuilding the corpus (make clean && make all && make disasm) ...")
-  run_or_die(sprintf("make -C %s clean",  shQuote(REPO_ROOT)), "make clean")
-  run_or_die(sprintf("make -C %s all",    shQuote(REPO_ROOT)), "make all")
-  run_or_die(sprintf("make -C %s disasm", shQuote(REPO_ROOT)), "make disasm")
+  # `make sass` (fast cuobjdump dump) is used instead of `make disasm`
+  # (which spawns an R process per cubin) -- the corpus needs the raw
+  # .sass, not the .cuasm hand-edit format.
+  if (skip_build) {
+    info("Stage 3/7: --skip-build -- trusting on-disk cubins, refreshing SASS ...")
+    run_or_die(sprintf("make -C %s sass", shQuote(REPO_ROOT)), "make sass")
+  } else {
+    info("Stage 3/7: rebuilding the corpus (make clean && make all && make sass) ...")
+    run_or_die(sprintf("make -C %s clean", shQuote(REPO_ROOT)), "make clean")
+    run_or_die(sprintf("make -C %s all",   shQuote(REPO_ROOT)), "make all")
+    run_or_die(sprintf("make -C %s sass",  shQuote(REPO_ROOT)), "make sass")
+  }
   # `make clean` also wiped the tracked hand-tuned cubins; restore them.
   restore_handtuned_cubins()
 

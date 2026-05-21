@@ -53,7 +53,7 @@ REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/de
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches test clean disasm help \
+.PHONY: all cubins benches test clean disasm sass help \
         setup verify bench bench-reference compare-reference reference-pipeline reproduce figures \
         publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
@@ -144,6 +144,21 @@ disasm: cubins
 		fi; \
 	done
 	@echo "=== Disassembly complete ==="
+
+# Fast SASS dump: cuobjdump -sass per cubin, no R/cuasmR/renv overhead.
+# `make disasm` spawns an R process per cubin (renv activation ~15s
+# each) to also produce the .cuasm hand-edit format; `make sass` skips
+# all that and only writes the raw .sass. Used by scripts/publish_hf.R.
+# For the .cuasm hand-edit workflow, use `make disasm` or
+# `Rscript scripts/build.R disasm <cubin>` directly.
+sass: cubins
+	@echo "=== Dumping SASS (cuobjdump) ==="
+	@for cubin in $(KERNEL_CUBINS); do \
+		if [ -f "$$cubin" ]; then \
+			cuobjdump -sass "$$cubin" > "$${cubin%.cubin}.sass" 2>/dev/null || true; \
+		fi; \
+	done
+	@echo "=== SASS dump complete ==="
 
 # ------------------------------------------------------------------
 # Reproducibility entry points.
