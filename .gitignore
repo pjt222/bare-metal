@@ -37,6 +37,10 @@ phase4/conv2d/debug_implicit2
 # Stray temp file from prior session (zero-byte tool error artifact)
 , None:0,parameters
 
+# Hugging Face publish artifact: SHA256SUMS is regenerated at upload
+# time by scripts/publish_hf.R; never committed (see WS4, issue #109).
+SHA256SUMS
+
 # Python
 __pycache__/
 *.pyc
@@ -55,6 +59,10 @@ tools/CuAssembler/
 
 # Claude Code / context
 .claude/
+
+# Secrets / local environment (never commit real tokens; .env.example is the tracked template)
+.env
+!.env.example
 
 # IDE / Editor
 .vscode/

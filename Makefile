@@ -55,6 +55,7 @@ REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/de
 # ------------------------------------------------------------------
 .PHONY: all cubins benches test clean disasm help \
         setup verify bench bench-reference compare-reference reference-pipeline reproduce figures \
+        publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
 
 all: cubins benches
@@ -177,6 +178,12 @@ compare-reference:
 
 reference-pipeline: reference bench-reference compare-reference
 
+# Publish the kernel corpus to the Hugging Face dataset repo
+# pjt222/ga104-cuda-kernels. Rebuilds the corpus first (GPU required)
+# and needs HF_TOKEN in .env. Dry-run: make publish-hf ARGS=--dry-run
+publish-hf:
+	@$(RSCRIPT) scripts/publish_hf.R $(ARGS)
+
 reproduce: setup verify all bench figures
 	@echo ""
 	@echo "================================================================"
@@ -216,6 +223,10 @@ help:
 	@echo "  make bench-reference — run local reference benches vs data/reference_baselines.json"
 	@echo "  make compare-reference — compare project baselines to local reference baselines"
 	@echo "  make reference-pipeline — build + validate + compare local reference benches"
+	@echo ""
+	@echo "Publish:"
+	@echo "  make publish-hf — rebuild + upload kernel corpus to the HF dataset repo"
+	@echo "  make publish-hf ARGS=--dry-run — resolve the upload manifest only (no build/upload)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make all       — build all cubins + benches"

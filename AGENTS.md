@@ -68,6 +68,32 @@ The `.github/workflows/docs.yml` workflow covers only GPU-free checks: markdown
 link validation, version-string consistency, and Quarto doc rendering. Local
 `make reproduce` remains the only path for GPU verification.
 
+## Publishing the corpus to Hugging Face
+
+`make publish-hf` re-syncs the kernel corpus to the Hugging Face
+dataset repo `pjt222/ga104-cuda-kernels` (audience: SASS /
+optimization researchers). It is the single command behind WS4 of
+issue #109.
+
+The target runs `scripts/publish_hf.R`, which: verifies the toolchain
+and GPU, loads `HF_TOKEN`, rebuilds the corpus
+(`make clean && make all && make disasm` — **an Ampere GPU is
+required**), asserts every expected cubin/sass exists and is current
+and cross-checks coverage against `data/baselines.json`, writes
+`SHA256SUMS`, renders the dataset card from `hf/README.md`, and runs
+`hf repo create` + `hf upload`.
+
+`HF_TOKEN` (a write-scoped token) is read from the repo-root `.env`
+file, or from the environment if already set. Copy `.env.example` to
+`.env` and paste the token; `.env` is gitignored and must never be
+committed.
+
+Inspect the resolved upload manifest without building or uploading:
+
+```
+make publish-hf ARGS=--dry-run
+```
+
 ## R environment
 
 `renv.lock` pins R 4.6.0 and every script dependency. The
