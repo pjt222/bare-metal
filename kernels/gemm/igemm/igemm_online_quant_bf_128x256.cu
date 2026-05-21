@@ -11,7 +11,16 @@
  * has 2-way conflicts per load, but the uint32 write is conflict-free.
  * Net: ~6× reduction in bank-conflict overhead (192 → 32 extra passes per tile).
  *
- * Smem: unchanged (32 KB FP16 double-buffer + 8 KB epilogue = 40 KB)
+ * Smem layout (union, 48 KB total):
+ *   mainloop view: smem_a_fp16[2][BM*BK] = 16 KB  (FP16 double-buffer for A)
+ *                  smem_b_fp16[2][BK*BN] = 32 KB  (FP16 double-buffer for B)
+ *   epilogue view: epilogue_tile[NUM_WARPS][16*16] = 16 KB (overlays A+B space)
+ *
+ * The union is safe because epilogue_tile is written only after the mainloop has
+ * consumed all A/B tiles. A __syncthreads() at the epilogue entry guarantees no
+ * warp begins writing epilogue_tile[warp_id] while another warp is still reading
+ * from smem_a_fp16/smem_b_fp16. See "Epilogue barrier" comment below.
+ *
  * Expected: +10-15% over in-place baseline (which ran 16,646 GFLOPS at 4096³)
  *
  * Build:
@@ -253,13 +262,34 @@ void igemm_online_quant_bf_128x256(
     float        * __restrict__ matrix_c,   // M*N row-major (FP32)
     int M, int N, int K
 ) {
-    // FP16 double-buffer — INT8 written in-place to lower half
-    __shared__ __half smem_a_fp16[2][BM * BK];    // 2 * 128*32 = 16 KB
-    __shared__ __half smem_b_fp16[2][BK * BN];    // 2 * 32*128 = 16 KB
+    // Shared memory union: A/B double-buffers (mainloop) and epilogue tile share
+    // the same 48 KB. They are never simultaneously live — see "Epilogue barrier".
+    //
+    // mainloop view:
+    //   smem_a_fp16[2][BM*BK]            = 2 * 128*32 * 2B = 16 KB
+    //   smem_b_fp16[2][BK*BN]            = 2 * 32*256 * 2B = 32 KB
+    //   total mainloop                   =                   48 KB
+    //
+    // epilogue view:
+    //   epilogue_tile[NUM_WARPS][16*16]  = 16 * 256 * 4B   = 16 KB
+    //
+    // Union size = max(48 KB, 16 KB) = 48 KB. Stays below the 50 KB cliff.
+    union {
+        struct {
+            __half smem_a_fp16[2][BM * BK];    // 16 KB
+            __half smem_b_fp16[2][BK * BN];    // 32 KB
+        } ml;
+        float epilogue_tile[NUM_WARPS][WMMA_M * WMMA_N];  // 16 KB
+    } __shared__ smem;
 
-    // Epilogue + cross-warp reduction scratch
-    __shared__ float epilogue_tile[NUM_WARPS][WMMA_M * WMMA_N];  // 8 KB
-    float *reduce_max = epilogue_tile[0];
+    // Convenience aliases into the union.
+    __half (*smem_a_fp16)[BM * BK] = smem.ml.smem_a_fp16;
+    __half (*smem_b_fp16)[BK * BN] = smem.ml.smem_b_fp16;
+
+    // reduce_max aliases epilogue_tile[0], used during quantize (before mainloop).
+    // The quantize macros finish with __syncthreads() before any IMMA reads,
+    // so this never races with the epilogue writes.
+    float *reduce_max = smem.epilogue_tile[0];
 
     int tid     = threadIdx.x;
     int warp_id = tid / WARP_SIZE;
@@ -501,7 +531,14 @@ void igemm_online_quant_bf_128x256(
 
     // ====================================================================
     // Store FP32 running accumulators via smem epilogue
+    //
+    // Epilogue barrier: smem_a_fp16 / smem_b_fp16 are reachable by any warp
+    // until the last wmma::load_matrix_sync above. epilogue_tile overlays that
+    // storage via the union. A __syncthreads() here ensures all warps have
+    // finished reading the A/B tiles before any warp writes to epilogue_tile.
     // ====================================================================
+    __syncthreads();  // epilogue barrier: A/B reads done, epilogue writes safe
+
     #pragma unroll
     for (int wi = 0; wi < WARP_TILES_M; wi++) {
         #pragma unroll
@@ -517,7 +554,7 @@ void igemm_online_quant_bf_128x256(
                 out_frag.x[e] = running[wi][wj][e];
 
             wmma::store_matrix_sync(
-                epilogue_tile[warp_id],
+                smem.epilogue_tile[warp_id],
                 out_frag, WMMA_N, wmma::mem_row_major);
             __syncwarp();
 
@@ -525,7 +562,7 @@ void igemm_online_quant_bf_128x256(
                 int local_row = elem / WMMA_N;
                 int local_col = elem % WMMA_N;
                 matrix_c[(c_row + local_row) * N + (c_col + local_col)] =
-                    epilogue_tile[warp_id][elem];
+                    smem.epilogue_tile[warp_id][elem];
             }
             __syncwarp();
         }
