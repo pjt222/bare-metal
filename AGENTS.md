@@ -62,6 +62,12 @@ reference`.
 The pre-push gate is `scripts/install-hooks.sh`, which runs
 `make test`, a README link audit, and `scripts/bench/bench_regress.R`.
 
+**CI limitations.** GitHub-hosted runners have no Ampere GPU. Cubin builds,
+benchmark runs, and anything requiring `nvcc -arch=sm_86` cannot run in CI.
+The `.github/workflows/docs.yml` workflow covers only GPU-free checks: markdown
+link validation, version-string consistency, and Quarto doc rendering. Local
+`make reproduce` remains the only path for GPU verification.
+
 ## R environment
 
 `renv.lock` pins R 4.6.0 and every script dependency. The
