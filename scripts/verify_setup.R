@@ -80,7 +80,11 @@ check_cuasmR <- function() {
 }
 
 check_gpu_info <- function() {
-  r <- run_command("nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv,noheader")
+  # Clear LD_LIBRARY_PATH for the child: R inherits /usr/local/cuda/lib64,
+  # which makes the WSL nvidia-smi load the CUDA-toolkit libnvidia-ml.so
+  # instead of the /usr/lib/wsl/lib passthrough -- the version mismatch
+  # makes nvidia-smi exit 9 ("couldn't communicate with the NVIDIA driver").
+  r <- run_command("LD_LIBRARY_PATH= nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv,noheader")
   if (!r$success) {
     cat(sprintf("%s nvidia-smi -- GPU not detected or driver not installed\n", FAIL))
     return(FALSE)
