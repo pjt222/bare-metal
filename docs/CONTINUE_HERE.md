@@ -42,30 +42,8 @@ peak (174 TFLOPS). Path:
 
 ### Open GitHub issues
 
-| #   | State    | Title                                                                                        |
-|-----|----------|----------------------------------------------------------------------------------------------|
-| 32  | open     | Research: polyhedral spring networks (literature scoping shipped in `polyhedral_spring_networks.md`; outside core kernel scope) |
-| 103 | open     | Cross-attention regime dispatch helper: select v2 / v2_pad vs baseline by (seq_q × seq_kv) threshold |
-| 104 | tracking | Fragment-shfl reduction pattern — no current target kernel                                   |
-| 105 | tracking | Tracking: #96 sub-task C — non-Tensor-Core SASS hand-tunes (speculative, no target)         |
-| 122 | open     | `make clean` deletes tracked artifacts (handtuned `.cuasm`, experiment cubins/sass)          |
-
-All other issues are closed; see GitHub issue history.
-
-### Highest-EV remaining code change
-
-**#103 cross-attention regime dispatch helper.** Add at every
-cross-attention call site:
-
-```cpp
-if ((size_t)seq_kv * seq_q >= 200000) launch_v2(); else launch_baseline();
-```
-
-Measured threshold: above 200 K, v2 wins 1.43–1.62×; below 200 K
-(CLIP-77 regime), v2 loses 19 %. A 30-minute change, well-measured
-boundary.
-
-All other open items are research-grade or speculative.
+**None.** The issue tracker is empty as of the 2026-05-21 session
+(see below). All optimization and build-correctness work is shipped.
 
 ## Latest session — documentation review + Hugging Face publication
 
@@ -98,26 +76,38 @@ Bugs found and fixed while exercising the full reproducible pipeline:
 `make all` now builds the whole corpus exit 0; the publish pipeline
 is reproducible end to end.
 
+## Latest session — issue-queue drain (2026-05-21)
+
+Goal: resolve every open GitHub issue. All four closed; tracker empty.
+
+| #   | Commit  | Resolution                                                       |
+|-----|---------|------------------------------------------------------------------|
+| 122 | df1b4a1 | `make clean` scoped to untracked artifacts — every deletion candidate filtered through `git ls-files --error-unmatch`, so tracked handtuned `.cuasm` / experiment cubins/sass survive. |
+| 103 | cd4f34a | Cross-attention regime dispatch: `dispatch.h` (`cross_attn_pick` returns a `{cubin, symbol, smem}` descriptor — the variants are driver-API cubin kernels, not host wrappers), `bench_dispatch.cu` (9 checks pass), README section. |
+| 104 | —       | Closed not-planned: fragment-shfl tracking issue, no target kernel — every TC kernel with a per-row reduction already applies the pattern. |
+| 105 | —       | Closed not-planned: #96 sub-task C, speculative non-TC SASS hand-tunes, no measurement-backed target. |
+
+Build-graph gap found and fixed while pushing the above:
+
+| Commit  | Fix                                                              |
+|---------|------------------------------------------------------------------|
+| 82e726b | `.gitignore` pruned (stale `phase*/`, dead `tools/CuAssembler/`); deleted spent `scripts/fix_cuda_context.R` codemod. |
+| 8d94d5a | `make test` now depends on `cubins`. The `test` target built only bench executables; benches load cubins at runtime via `cuModuleLoad`, so post-`make clean` the smoke tests ran hollow ("No kernels found", swallowed by `|| true`) and the pre-push `bench_regress.R` reported every kernel as CRASH. Full `bench_regress.R` passes with 0 regressions once cubins are present. |
+
 ## Next steps
 
-In order of expected value:
+The optimization queue and issue tracker are both empty. No queued
+code work. Candidate directions if the project resumes:
 
-1. **#122 — `make clean` deletes tracked artifacts.** `make clean`'s
-   broad `find -delete` removes git-tracked files (handtuned
-   `.cuasm`, experiment cubins/sass). Scope it to generated output.
-
-2. **Land #103 cross-attention regime dispatch helper** (30 min).
-   Single concrete remaining performance change in the queue.
-
-3. **Refresh `.gitignore`**: stale `phase{1,2,4}/` entries, dead
-   `tools/CuAssembler/`, missing `viz/` entries.
-
-4. **Decide on `scripts/fix_cuda_context.R`**: one-shot codemod that
-   has run; delete it or move to `scripts/migrations/`.
-
-5. **#32 polyhedral spring networks**: literature scoping is done
-   (`docs/polyhedral_spring_networks.md`). Decide whether to pursue a
-   kernel implementation or close the issue.
+- **#32 polyhedral spring networks** was closed in an earlier session;
+  literature scoping lives in `docs/polyhedral_spring_networks.md`.
+  Re-open only if a kernel implementation is wanted.
+- Research-grade items only — see `gpu_reflections.md` for the
+  observation catalogue and any unexplored threads.
+- `flash_attn_br16_regpv` and `conv2d_implicit_gemm` benches are not
+  built by `make test` (not in the `GEMM/REDUCTIONS/ELEMENTWISE_BENCH`
+  groups), so `bench_regress.R` SKIPs them. Wire their bench exes into
+  a smoke group if regression coverage for them is wanted.
 
 ## Hardware constraint (recap)
 
