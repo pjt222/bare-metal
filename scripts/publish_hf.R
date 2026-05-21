@@ -348,7 +348,7 @@ render_card <- function(staging_dir) {
 # --------------------------------------------------------------------
 hf_commands <- function(staging_dir) {
   c(
-    sprintf("hf repo create datasets/%s --type dataset", DATASET_REPO),
+    sprintf("hf repo create %s --type dataset", DATASET_REPO),
     sprintf("hf upload %s %s --repo-type dataset",
             DATASET_REPO, shQuote(staging_dir))
   )
@@ -478,7 +478,9 @@ main <- function() {
   # --- Stage 7: create the repo + upload ---------------------------
   info("Stage 7/7: creating the dataset repo + uploading ...")
   # hf repo create is idempotent: tolerate an existing repo.
-  create_cmd <- sprintf("hf repo create datasets/%s --type dataset 2>&1",
+  # hf >= 1.x rejects a 'datasets/' prefix together with --type; pass
+  # the bare repo id and let --type select the dataset namespace.
+  create_cmd <- sprintf("hf repo create %s --type dataset 2>&1",
                         DATASET_REPO)
   create_out <- suppressWarnings(system(create_cmd, intern = TRUE))
   if (!is.null(attr(create_out, "status")) &&
