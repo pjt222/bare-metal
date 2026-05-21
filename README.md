@@ -33,6 +33,8 @@ paths).
 
 ## Headline performance
 
+<sub>**Toolchain provenance.** All benchmark tables in this README were measured on RTX 3070 Ti (GA104, sm_86, 46-SM laptop bin), CUDA 13.2 / nvcc V13.2.78, driver 595.97.</sub>
+
 ![Kernel performance overview](docs/figures/performance_overview.png)
 
 Measured GFLOPS across all completed kernels, grouped by precision class.
@@ -233,7 +235,7 @@ Most of this project's "tile size" decisions are dictated by this cliff.
 
 | Tool                   | Purpose                                              |
 |------------------------|------------------------------------------------------|
-| **`nvcc`**             | CUDA compiler (CUDA 12.x)                            |
+| **`nvcc`**             | CUDA compiler (CUDA 13.2)                            |
 | **`cuobjdump -sass`**  | disassemble cubin to SASS                            |
 | **`nvdisasm`**         | raw disassembly with control codes                   |
 | **`cuasmR`** (local R) | byte-level cubin patcher (replaces upstream CuAssembler) |
