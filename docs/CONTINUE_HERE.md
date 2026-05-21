@@ -1,5 +1,7 @@
 # Session handoff
 
+> Last updated: 2026-05-21 | Branch: main
+
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
 documentation lives elsewhere; this file records only what is true
@@ -13,6 +15,8 @@ documentation lives elsewhere; this file records only what is true
 - Structural changes and audit history: [`../CHANGELOG.md`](../CHANGELOG.md).
 - Documentation map: [`index.md`](index.md).
 - Open issues: [GitHub](https://github.com/pjt222/bare-metal/issues).
+- Published kernel corpus: [HF dataset `pjt222/ga104-cuda-kernels`](https://huggingface.co/datasets/pjt222/ga104-cuda-kernels)
+  — re-sync with `make publish-hf` (needs `HF_TOKEN` in `.env`).
 
 ## Current state
 
@@ -55,37 +59,6 @@ end of the 2026-05-21 session — no queued kernel work.
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 
 Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
-
-## Latest session — documentation review + Hugging Face publication
-
-Goal: bring the repo to scientific-paper standard, then publish the
-kernel corpus on Hugging Face. Tracked as epic #110 + four workstream
-issues; executed via the `bare-metal-docs` agent team.
-
-| WS | Issue | Commit  | Scope                                                          |
-|----|-------|---------|----------------------------------------------------------------|
-| 1  | #106  | ee94217 | Doc correctness: `README.md` "CUDA 12.x"→"13.2", toolchain-provenance footnotes, `verify_setup.R` driver-version capture, `Makefile` `figures` target. |
-| 2  | #107  | 3c33b40 | CI: `.github/workflows/docs.yml` — markdown link-check, version-consistency (`scripts/check_versions.R`), Quarto render. |
-| 3  | #108  | 2da9fbc | `README.md` restructured 367→86 lines as a paper-style abstract; showcase tables relocated to canonical homes (`inventory.md`, `AGENTS.md`, `index.md`). |
-| 4  | #109  | ae5c69a | HF publish tooling: `scripts/publish_hf.R`, `hf/README.md` dataset card, `make publish-hf` re-sync target. |
-
-Result: the kernel corpus is published as a Hugging Face **dataset**
-repo — **https://huggingface.co/datasets/pjt222/ga104-cuda-kernels**
-(356 entries, commit `5c3d532`). Re-sync with `make publish-hf`
-(needs `HF_TOKEN` in `.env`).
-
-Bugs found and fixed while exercising the full reproducible pipeline:
-
-| #   | Commit  | Fix                                                              |
-|-----|---------|------------------------------------------------------------------|
-| 117 | 84ca4b2 | `igemm_online_quant_bf_128x256` 64 KB static smem > sm_86 48 KB limit; unioned `epilogue_tile` over the A/B double-buffer → 48 KB. |
-| 116 | 0f3c198 | `verify_setup.R` nvidia-smi exit 9 — R's `LD_LIBRARY_PATH` shadowed the WSL `libnvidia-ml.so`; also renv upgraded 1.2.2→1.2.3. |
-| 119 | 7194e5d | `cross_attention` missing from `BENCH_VARIANT_DIRS` — broke `make all`. |
-| 120 | adc80d9 | `hf repo create` rejected `datasets/` prefix + `--type` together. |
-| 121 | cd06d0a | Fast `make sass` target (cuobjdump-only, ~60 s vs ~1 h `make disasm`); `publish_hf.R --skip-build`. |
-
-`make all` now builds the whole corpus exit 0; the publish pipeline
-is reproducible end to end.
 
 ## Latest session — issue-queue drain + benchmark planning (2026-05-21)
 
@@ -182,3 +155,4 @@ Notable prior session anchors, in chronological order:
 | 2026-05-10 | b18dc1b       | Kernel tree reorganized from `phaseN/` to family directories. |
 | 2026-05-10 | 6cf4161       | Dark-theme ggplot pass; figures re-rendered.                 |
 | 2026-05-12 | 82bc175       | Sprint-queue reconciliation against `gpu_reflections.md`.    |
+| 2026-05-21 | ae5c69a       | Docs review + HF publish (epic #110): README→abstract, docs CI, HF dataset published; build fixes #116/#117/#119/#120/#121. |
