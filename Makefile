@@ -139,6 +139,12 @@ reference:      $(REFERENCE_BENCH)
 # leaves the cubins in place for scripts/bench/bench_regress.R, which the
 # pre-push hook runs straight after `make test`.
 #
+# Each bench resolves its cubin by a path relative to cwd (e.g.
+# cuModuleLoad("hgemm.sm_86.cubin")), and the cubin sits beside the bench
+# source. Running the exe from the repo root therefore loads no kernels.
+# Run each bench from its own directory in a subshell so the cubin
+# resolves and the loop's cwd is unaffected (#130).
+#
 # $(REGRESS_BENCH) is a dependency but not in the smoke-run loop: those
 # benches take kernel-specific args (not N N N), so running them here
 # would add noise. They only need to be *built* for bench_regress.R.
@@ -147,7 +153,7 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 	@for exe in $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH); do \
 		if [ -f "$$exe" ]; then \
 			echo "--- $$exe ---"; \
-			"$$exe" 512 512 512 || true; \
+			( cd "$$(dirname "$$exe")" && "./$$(basename "$$exe")" 512 512 512 ) || true; \
 		fi; \
 	done
 	@echo "=== Smoke tests complete ==="
