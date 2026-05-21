@@ -162,25 +162,76 @@ cold-clock unconditionally; `min_clock_sm` floor pinned to ~1380.
 `benchmark_methodology.md` + `rebaseline_protocol.md` updated to
 drop the clock-lock branch.
 
+## Latest session — re-baseline measured (2026-05-21)
+
+Built `scripts/probe/rebaseline_measure.R` — a measurement driver
+(modular R: `here`/`fs`/`cli`/`data.table`; per-config warmup +
+N valid samples, gated on no-throttle AND SM clock ≥ 1300 MHz so
+cold-decayed samples are rejected; median reported, never writes
+`baselines.json`). Ran it; **3 of 4 configs measured cleanly**:
+
+| Config (kernel)          | Old 2026-05-10 (power-fault) | New median (cold-clock) | n | Clock      |
+|--------------------------|------------------------------|-------------------------|---|------------|
+| `hgemm_16warp` 2048³     | 31875 GFLOPS / 0.539 ms      | **25854 GFLOPS / 0.664 ms** | 7 | 1410-1485 MHz |
+| `hgemm_16warp` 4096³     | 31765 GFLOPS / 4.327 ms      | **29969 GFLOPS / 4.586 ms** | 7 | 1410-1785 MHz |
+| `igemm_sparse_tiled` 2048³ | 31588 dq-GFLOPS / 0.544 ms | **37333 dq-GFLOPS / 0.46 ms** | 7 | 1410 MHz |
+| `igemm_sparse_tiled` 4096³ | 30889 dq-GFLOPS / 4.449 ms | **see log — measurement throttling** | — | — |
+
+Confirms the power-fault diagnosis: hgemm reads ~19-6 % *below* the
+old baseline (recorded high under bad power), igemm 2048³ reads
+~18 % *above* (recorded low). The numbers are real now.
+
+**igemm 4096³ is the open item.** It heats up and `classify_meta`
+rejects every sample as `throttled` — the heaviest kernel hits the
+150 W `SwPowerCap` wall mid-run. This *is* the documented bimodality
+(`baselines.json` note: "3.85 ms boost vs 6.5 ms steady"). The
+script's `max_try = nvalid×4` cap means it will likely finish
+INCOMPLETE for this one config. The final number is in
+`scripts/probe/rebaseline_measure.log` (re-read it next session).
+
+**Uncommitted, deliberately:**
+- `scripts/probe/rebaseline_measure.R` — placement decision pending
+  (see Next steps #1 / cuasmR).
+- `renv.lock` + `renv/activate.R` — `data.table` 1.18.4 + `here`
+  1.0.2 added (snapshot used `force = TRUE`; `cuasmR` is recorded
+  `Source: unknown` and trips pre-flight validation every snapshot —
+  pre-existing, not introduced this session).
+- `scripts/probe/rebaseline_results.rds` — saved by the script on a
+  clean finish; holds the full per-sample data.tables.
+
 ## Next steps
 
-1. **[USER] Re-baseline hgemm + igemm** — follow
-   `docs/rebaseline_protocol.md`. Precondition #125 is now resolved:
-   no clock-lock, record at sustained ~1410 MHz cold-clock.
-   AC-verified, pre-warmed (~30 runs), 7-sample median per config →
-   patch `data/baselines.json`.
-2. **Push** the unpushed `main` commits — pre-push hook should pass
-   once re-baselined; fires `Closes #127`.
-3. **#129 — `valid_when` clock gate**: NOT code work. After the
-   re-baseline, add `min_clock_sm: 1380` to `default_valid_when` in
-   `baselines.json`. See `rebaseline_protocol.md` §"After
-   re-baselining" step 1.
-4. **#126 — GPU-mode metadata**: decide source of truth (env var vs
+1. **[USER decision] Where does the R tooling live?** User stated
+   `cuasmR` is the project's tooling suite and "should include our
+   complete R-based pipeline and tooling". `scripts/probe/*.R`
+   (`probe_clock_lock.R`, `probe_gpu_power.R`, `rebaseline_measure.R`)
+   currently sit loose in `scripts/`. Decide: migrate the probe +
+   measurement tooling into the `cuasmR` package, or keep loose.
+   This gates committing `rebaseline_measure.R`.
+2. **Finish igemm 4096³** — re-read `rebaseline_measure.log`. If the
+   run ended INCOMPLETE (throttle), the config needs a cooldown
+   between samples (the protocol's backstop lever) — add an adaptive
+   `Sys.sleep` + state poll to `collect_samples`, or record igemm
+   4096³ from a cooled-down manual run. The bimodality means its
+   `tolerance: 0.30` band-aid likely *stays*.
+3. **Patch `data/baselines.json`** — apply the 4 medians (table
+   above + igemm 4096³ once measured). Rewrite each `note`: date,
+   sample count, sustained cold-clock, supersedes the power-fault
+   2026-05-10 value. Update top-level `recorded_date` / `note`.
+   Procedure: `docs/rebaseline_protocol.md` §"Output".
+4. **#129 — add `min_clock_sm: 1380`** to `default_valid_when` in
+   `baselines.json`. Now unblocked — recording clock is known
+   (~1410 MHz). Review/narrow the `tolerance: 0.30` band-aids on
+   `flash_attn_br16_regpv` + `igemm_sparse_tiled` 4096³.
+5. **Push** the unpushed `main` commits (11 + whatever this session
+   adds) — pre-push `bench_regress.R` should pass once
+   `baselines.json` matches the hardware; fires `Closes #127`.
+6. **#126 — GPU-mode metadata**: decide source of truth (env var vs
    Windows-host query) and add `gpu_mode`.
-5. **#124 — `bench-all` runner** (epic): build on
+7. **#124 — `bench-all` runner** (epic): build on
    `benchmark_methodology.md` + `rebaseline_protocol.md` once #126
    lands.
-6. **#128 — OC showcase**: deferred.
+8. **#128 — OC showcase**: deferred.
 
 Closed earlier, not in scope unless reopened:
 
