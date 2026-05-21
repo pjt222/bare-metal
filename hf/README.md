@@ -106,7 +106,7 @@ supplement** rebuilt at publish time.
 |------------------|----------------------------------------------------------------|
 | `kernels/`       | Tracked `.cu` / `.cuh` kernel sources, grouped by family       |
 | `kernels/**/*_handtuned.sm_86.cubin` | Tracked hand-patched cubins (SASS hand-edits) |
-| `generated/`     | Rebuilt full `.sm_86.cubin` + `.sm_86.sass` set (build output) |
+| `generated/`     | Rebuilt `.sm_86.cubin` + `.sm_86.sass` set, build output (kernels of record only — test/probe binaries and negative-result experiment variants excluded) |
 | `data/`          | Regenerable CSV/JSON: baselines, register audit, SASS histogram|
 | `docs/`          | Researcher-facing analyses and references                      |
 | `AGENTS.md`      | Hardware constants, toolchain, conventions, the four laws      |
