@@ -4,6 +4,73 @@ The canonical kernel index for this repository, grouped by content
 and internal structure. Every directory under `kernels/<family>/` is
 a regular kernel; there are no speculative or second-class entries.
 
+## Headline performance
+
+<sub>**Toolchain provenance.** All benchmark tables in this file were
+measured on RTX 3070 Ti (GA104, sm_86, 46-SM laptop bin), CUDA 13.2 /
+nvcc V13.2.78, driver 595.97.</sub>
+
+![Kernel performance overview](figures/performance_overview.png)
+
+Measured GFLOPS across all completed kernels, grouped by precision
+class. Sparse 2:4 numbers are dense-equivalent (the multiply count the
+sparse pattern would do as dense work). Each bar is annotated with
+% of its precision-class peak (FP32 = 21.7 TFLOPS, FP16 TC = 174,
+INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
+
+### Top kernels (RTX 3070 Ti Laptop)
+
+| Kernel                  | Size    | Time      | GFLOPS              | % peak  |
+|-------------------------|---------|-----------|---------------------|---------|
+| **Sparse HGEMM 2:4**    | 2048³   | —         | **41,721** (eq)     | 24.0%   |
+| **Sparse INT8 mma.sp**  | 2048³   | —         | **39,674** (eq)     | 11.4%   |
+| **HGEMM 16-warp**       | 4096³   | —         | **31,910**          | 18.3%   |
+| **IGEMM 128×256**       | 4096³   | —         | **27,591**          | 7.9%    |
+| **Flash Attention v2**  | seq=1024 b=8 h=8 | **1.53 ms** | **11,453** | 6.6% |
+| **Conv2d implicit GEMM**| 64×64 320ch | **1.13 ms** | **6,687**       | 3.8%    |
+| **Online FP16→INT8**    | 4096³   | —         | **17,070**          | 9.6%    |
+
+### Phase progression — naive SGEMM to sparse INT8
+
+![Phase progression](figures/phase_progression.png)
+
+Each layer of amortization compounds:
+
+| step                       | mechanism                              | speedup vs naive |
+|----------------------------|----------------------------------------|------------------|
+| Naive SGEMM (Phase 1)      | one thread per output, FFMA in a loop  | 1.0×             |
+| Tiled SGEMM (Phase 2)      | block tile, smem buffer                | 2.2×             |
+| Register-blocked SGEMM     | each thread computes 8×8 outputs       | 10.9×            |
+| HGEMM (basic WMMA)         | switch to FP16 Tensor Cores            | 17.0×            |
+| HGEMM 16-warp 128×128      | 2 blocks/SM, double-buffered LDG       | **69.2×**        |
+| Sparse HGEMM 2:4           | mma.sp, 50% structured zeros           | **90.5×**        |
+
+Three orders of magnitude from a textbook GEMM. Each step is a single
+optimization with a clear mechanism — no autotuning, no library magic.
+
+### Flash Attention — 1.60× cumulative through three refactors
+
+![FA optimization waterfall](figures/fa_waterfall.png)
+
+The Flash Attention path peaked at ~7,154 GFLOPS for the original
+register-PV kernel (`flash_attn_br16_regpv.cu`). Three structural
+refactors brought it to **11,453 GFLOPS** = **1.60× cumulative**,
+plateauing at ~6.6% of FP16 Tensor Core peak:
+
+| step                        | technique                              | gain      |
+|-----------------------------|----------------------------------------|-----------|
+| `regpv` (baseline)          | register PV accumulation               | —         |
+| lean state                  | smaller per-warp state, fewer LDS      | +6%       |
+| Q reg cache                 | hold Q fragment in registers across K  | +16%      |
+| `v2` (smem_work eliminated) | replace smem reduce with on-frag shfl  | +14%      |
+| `v2_pipeline`               | cp.async double-buffer at 8 warps/SM   | +14%      |
+
+Two failed experiments are kept as counter-examples: the original
+synchronous pipeline at 4 warps/SM (cp.async loses), and Bc=128
+tile size (loses at seq < 4096, wins +1.6% at seq = 4096 only).
+Detailed walkthrough in
+[`tutorial/05-flash-attention.md`](tutorial/05-flash-attention.md).
+
 The classification is non-exclusive: a kernel that uses both HMMA
 and SHFL.BFLY appears in both section A and section B. Columns are:
 filesystem path, primary identity, peak measured number on

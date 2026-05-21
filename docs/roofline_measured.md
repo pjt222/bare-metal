@@ -36,3 +36,15 @@ Between DRAM and L2 ceiling: **bandwidth-bound** but L2 is helping.
 Above L2 ceiling: **compute-bound** (cannot be helped by more bandwidth).
 
 Total tensor-active kernels measured: **10**
+
+## Headline roofline
+
+![Roofline GA104](figures/roofline.png)
+
+Operational intensity vs achieved TFLOPS. The compute-bound kernels
+(HGEMM, sparse, FA v2, conv2d) sit at the right; the memory-bound
+kernel (GroupNorm) sits at the left tied to the DRAM bandwidth roof.
+HGEMM 16-warp and sparse HGEMM 2:4 are the closest to ceiling at
+~24% of FP16 Tensor Core peak. Pushing further would require deeper
+software pipelining (cp.async multi-stage), persistent grids, or
+cross-block work distribution beyond what this project explores.
