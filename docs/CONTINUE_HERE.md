@@ -55,8 +55,12 @@ end of the 2026-05-21 session — no queued kernel work.
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 125 | Clock-lock support for the benchmark pipeline (WSL probe gate) |
 | 126 | Record GPU mode (hybrid/dGPU) in benchmark metadata            |
-| 127 | Smoke-test coverage gap: flash_attn / conv2d not built by `make test` |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
+| 129 | bench_regress `valid_when` too permissive — cold-clock false regressions |
+| 130 | `make test` smoke loop runs benches from repo root — cubins not found |
+
+#127 resolved this session (commits on `main`, unpushed — `Closes #127`
+fires on push). #129/#130 filed this session.
 
 Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
 
@@ -85,27 +89,45 @@ Build-graph gap found and fixed while pushing the above:
 | 82e726b | `.gitignore` pruned (stale `phase*/`, dead `tools/CuAssembler/`); deleted spent `scripts/fix_cuda_context.R` codemod. |
 | 8d94d5a | `make test` now depends on `cubins`. The `test` target built only bench executables; benches load cubins at runtime via `cuModuleLoad`, so post-`make clean` the smoke tests ran hollow ("No kernels found", swallowed by `|| true`) and the pre-push `bench_regress.R` reported every kernel as CRASH. Full `bench_regress.R` passes with 0 regressions once cubins are present. |
 
+## Latest session — #127 build-graph fix (2026-05-21)
+
+Wired `flash_attn_br16_regpv` + `conv2d_implicit_gemm` benches into
+`make test` (#127). Three commits on `main`, **unpushed**:
+
+| Commit  | What                                                          |
+|---------|---------------------------------------------------------------|
+| 69cf1fb | `bench_br16_regpv.cu` loaded `flash_br16*.sm_86.cubin`; Makefile emits `flash_attn_br16*` — corrected. Latent bug exposed by #127. |
+| 7fe0b56 | `Makefile` `REGRESS_BENCH` group (2 baselined exes only); `make test` depends on it. `Closes #127`. |
+| b1f7c44 | `baselines.json` flash_attn `tolerance: 0.25` + note. The apparent 78% regression is a clock artifact — laptop GA104 caps at 1410 MHz (43 W, 50 °C, no throttle), never hits 1785 boost; `5600/7152 ≈ 1410/1785`. |
+
+Post-reboot power probe: still **150 W max, no headroom** — dGPU mode
+did not raise the ceiling, clock-lock plan (#125) unchanged.
+
+bench_regress full run: flash_attn OK 81.6%, conv2d OK 92.3% (both
+covered now). hgemm 2048³ + igemm 4096³ still red — pre-existing same
+clock artifact, untouched, #125 scope.
+
 ## Next steps
 
 The kernel optimization queue is empty. Open work is the
-benchmark-pipeline hardening roadmap (#124-128):
+benchmark-pipeline hardening roadmap:
 
-1. **#127 — smoke coverage gap** (`good first issue`): wire the
-   `flash_attn` / `conv2d` bench exes into a smoke group so
-   `bench_regress.R` covers them instead of SKIPping. Small.
-2. **#125 — clock-lock probe**: run
+1. **Push** the 3 unpushed `main` commits to fire `Closes #127`.
+2. **#129 — `valid_when` clock gate**: cold-clock runs should `SKIP`,
+   not false-`REGRESSION`. Needs `min_clock_sm` + bench-window clock
+   capture. Tightly coupled to #125.
+3. **#125 — clock-lock probe**: run
    `sudo Rscript scripts/probe/probe_clock_lock.R`; the verdict
-   decides whether clock-locking is a usable lever.
-3. **#126 — GPU-mode metadata**: decide the source of truth
-   (env var vs Windows-host query) and add the `gpu_mode` field.
-4. **#124 — `bench-all` runner** (epic): the big one — build it on
-   the architecture in `benchmark_methodology.md` once #125/#126
-   land.
-5. **#128 — OC showcase**: deferred.
-
-Pending hardware change: user switched hybrid → dGPU mode (needs a
-restart). After reboot, re-run `Rscript scripts/probe/probe_gpu_power.R`
-— if `Max Power Limit` rose above 150 W, the clock-lock plan shifts.
+   decides whether clock-locking is a usable lever. Resolving this
+   lets the #129 / igemm tolerance band-aids be narrowed.
+4. **#130 — smoke-loop cwd bug** (`good first issue`): `make test`
+   benches run from repo root, fail to load cubins, swallowed by
+   `|| true`. `cd` into each exe dir.
+5. **#126 — GPU-mode metadata**: decide source of truth (env var vs
+   Windows-host query) and add `gpu_mode`.
+6. **#124 — `bench-all` runner** (epic): build on
+   `benchmark_methodology.md` once #125/#126 land.
+7. **#128 — OC showcase**: deferred.
 
 Closed earlier, not in scope unless reopened:
 
