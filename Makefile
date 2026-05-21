@@ -215,13 +215,19 @@ reproduce: setup verify all bench figures
 # Cleanup
 # ------------------------------------------------------------------
 clean:
-	@echo "Cleaning generated files..."
-	@find . -path ./tools -prune -o -name '*.$(SM_ARCH).cubin' -exec rm -f {} +
-	@find . -path ./tools -prune -o -name '*.cuasm' -exec rm -f {} +
-	@find . -path ./tools -prune -o -name '*.sass' -exec rm -f {} +
-	@find . -path ./tools -prune -o -name '*.reassembled.cubin' -exec rm -f {} +
-	@for exe in $(BENCH_EXES); do rm -f $$exe 2>/dev/null || true; done
-	@rm -f kernels/tutorial/host 2>/dev/null || true
+	@echo "Cleaning generated files (git-tracked artifacts preserved)..."
+	@find . -path ./tools -prune -o -type f \
+	  \( -name '*.$(SM_ARCH).cubin' -o -name '*.cuasm' -o -name '*.sass' \
+	     -o -name '*.reassembled.cubin' \) -print | \
+	  while IFS= read -r f; do \
+	    git ls-files --error-unmatch "$$f" >/dev/null 2>&1 || rm -f "$$f"; \
+	  done
+	@for exe in $(BENCH_EXES); do \
+	  git ls-files --error-unmatch "$$exe" >/dev/null 2>&1 \
+	    || rm -f "$$exe" 2>/dev/null || true; \
+	done
+	@git ls-files --error-unmatch kernels/tutorial/host >/dev/null 2>&1 \
+	  || rm -f kernels/tutorial/host 2>/dev/null || true
 	@echo "Done."
 
 # ------------------------------------------------------------------
