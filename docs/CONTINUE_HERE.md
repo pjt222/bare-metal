@@ -53,13 +53,13 @@ end of the 2026-05-21 session — no queued kernel work.
 | #   | Title                                                          |
 |-----|----------------------------------------------------------------|
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
-| 125 | Clock-lock support for the benchmark pipeline (WSL probe gate) |
 | 126 | Record GPU mode (hybrid/dGPU) in benchmark metadata            |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 129 | bench_regress `valid_when` too permissive — cold-clock false regressions |
 
 #127 resolved earlier (commits on `main`, unpushed — `Closes #127`
 fires on push). #130 resolved 2026-05-21 (commit `11a8e6b`).
+#125 closed 2026-05-21 — clock-lock rejected by WSL passthrough.
 
 Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
 
@@ -131,14 +131,18 @@ low under bad power". Conclusion: do not widen tolerances to paper
 over this — **re-baseline** hgemm + igemm. Decision: defer to next
 session.
 
-## Latest session — #130 fix + re-baseline protocol (2026-05-21)
+## Latest session — #130 + #125 + re-baseline protocol (2026-05-21)
 
-Two unpushed commits on `main` (join the queue — now 6 unpushed):
+`main` is **~11 commits ahead of `origin/main`, all unpushed** — push
+stays blocked until the re-baseline (next steps #1). New this session:
 
 | Commit  | What                                                          |
 |---------|---------------------------------------------------------------|
 | 11a8e6b | `make test` smoke loop ran each bench exe from the repo root; benches `cuModuleLoad` cubins by a cwd-relative path, so every bench loaded no kernels (swallowed by `\|\| true`). Now runs each bench from its own dir in a subshell. `Closes #130`. |
-| 009fd23 | `docs/rebaseline_protocol.md` — the step-by-step procedure for the [USER] re-baseline (next steps #1). Resolves the "decide the protocol first" caveat. Cross-linked from `benchmark_methodology.md`. |
+| 009fd23 | `docs/rebaseline_protocol.md` — step-by-step procedure for the [USER] re-baseline. Cross-linked from `benchmark_methodology.md`. |
+| 221f50e | `probe_clock_lock.R` crashed before doing work: `attr(character(0), "status") <- 127L` is invalid R, and `nvidia-smi` is off the `sudo` secure_path. Fixed: named local, absolute nvidia-smi path, return-then-quit so `-rgc` reset is guaranteed, output tee'd to a log. |
+| d7e9492 | `#125` verdict recorded in both docs — clock-lock unavailable. |
+| 64d8610 | `.gitignore` probe run logs. |
 
 #129 investigated: the `min_clock_sm` gate is **already fully
 implemented** in `classify_meta` (`scripts/bench/bench_meta.R:266` —
@@ -150,27 +154,33 @@ runs. So #129 is blocked on next-step #1, exactly as the issue text
 ("Properly resolved by #125") says. Resolution path documented in
 `rebaseline_protocol.md` §"After re-baselining".
 
+#125 closed this session: `probe_clock_lock.R` ran (after a crash-fix
+— commit message below) → `nvidia-smi -lgc` rejected by WSL2
+passthrough, exit 255 "Unknown Error". Clock-locking is **not a
+usable lever**. Re-baseline records at the sustained ~1410 MHz
+cold-clock unconditionally; `min_clock_sm` floor pinned to ~1380.
+`benchmark_methodology.md` + `rebaseline_protocol.md` updated to
+drop the clock-lock branch.
+
 ## Next steps
 
 1. **[USER] Re-baseline hgemm + igemm** — follow
-   `docs/rebaseline_protocol.md`. Hard precondition: run the #125
-   clock-lock probe first (it picks branch A locked-clock vs branch B
-   cold-clock). Then AC-verified, pre-warmed, 7-sample median per
-   config → patch `data/baselines.json`.
-2. **Push** the 6 unpushed `main` commits — pre-push hook should pass
+   `docs/rebaseline_protocol.md`. Precondition #125 is now resolved:
+   no clock-lock, record at sustained ~1410 MHz cold-clock.
+   AC-verified, pre-warmed (~30 runs), 7-sample median per config →
+   patch `data/baselines.json`.
+2. **Push** the unpushed `main` commits — pre-push hook should pass
    once re-baselined; fires `Closes #127`.
 3. **#129 — `valid_when` clock gate**: NOT code work. After the
-   re-baseline, add `min_clock_sm` (recording clock − margin) to
-   `default_valid_when` in `baselines.json`. See protocol doc step 1.
-4. **#125 — clock-lock probe**: `sudo Rscript
-   scripts/probe/probe_clock_lock.R`. Folded into the protocol as its
-   precondition gate.
-5. **#126 — GPU-mode metadata**: decide source of truth (env var vs
+   re-baseline, add `min_clock_sm: 1380` to `default_valid_when` in
+   `baselines.json`. See `rebaseline_protocol.md` §"After
+   re-baselining" step 1.
+4. **#126 — GPU-mode metadata**: decide source of truth (env var vs
    Windows-host query) and add `gpu_mode`.
-6. **#124 — `bench-all` runner** (epic): build on
-   `benchmark_methodology.md` + `rebaseline_protocol.md` once
-   #125/#126 land.
-7. **#128 — OC showcase**: deferred.
+5. **#124 — `bench-all` runner** (epic): build on
+   `benchmark_methodology.md` + `rebaseline_protocol.md` once #126
+   lands.
+6. **#128 — OC showcase**: deferred.
 
 Closed earlier, not in scope unless reopened:
 
