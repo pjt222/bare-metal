@@ -76,32 +76,32 @@ or configured away on this machine.
 Since the power cap is fixed, comparable numbers come from removing
 *clock variance*, not from adding power.
 
-### Clock locking — primary lever
+### Clock locking — NOT available on this machine
 
 `nvidia-smi -lgc <min>,<max>` pins the graphics clock to a fixed
-range; `-lmc` does the same for memory clock; `-rgc` / `-rmc` reset.
+range; `-rgc` resets it. Locking the clock low enough that the
+heaviest kernel stays under 150 W would make `SwPowerCap` never fire
+and every bench run at an identical clock.
 
-Lock the clock *low enough that even the heaviest kernel stays under
-150 W*. Then `SwPowerCap` never fires, every bench runs at an
-identical clock, and results are fully reproducible.
+**On this machine it does not work.** `scripts/probe/probe_clock_lock.R`
+(verdict 2026-05-21) attempted to lock the SM clock and got:
 
-Caveats:
+```
+-lgc exit status : 255
+  Unable to set GPU locked clocks "(gpuClockMin 1095, gpuClockMax 1095)"
+  for GPU 00000000:01:00.0: Unknown Error
+```
 
-- **Trade-off:** a sustained-safe locked clock is below peak boost,
-  so absolute GFLOPS are lower than the boost-state numbers in
-  `data/baselines.json`. A clock-locked run is a *self-consistent*
-  set and needs its own baseline; it is not directly comparable to
-  the boost-state baselines.
-- **Privilege:** `-lgc` needs root.
-- **WSL2:** clock control may be rejected by the WSL passthrough
-  regardless of privilege. A probe that *sets* a clock and then
-  *reads it back* (`clocks.current.sm`) is required — WSL can accept
-  the command syntactically and silently no-op. See
-  `scripts/probe/`.
-- **Always reset** clocks on exit, including on crash (trap /
-  `on.exit`), or the GPU stays clamped after the run.
+The WSL2 GPU passthrough rejects clock control regardless of root
+privilege. `-lgc` is therefore **not a usable lever here** — cooldown
++ retry is the only one (see below). This closes issue #125.
 
-### Cooldown — backstop lever
+A bare exit code is not proof a lock took effect: WSL can accept the
+command syntactically and silently no-op. Any future re-probe must
+*set* a clock and *read it back* (`clocks.current.sm`) — which is
+what `probe_clock_lock.R` does.
+
+### Cooldown — the only available lever
 
 Insert an adaptive wait between benches: after a bench, poll
 `capture_gpu_state()` until temperature and power fall back toward
@@ -113,8 +113,13 @@ idle and no throttle is active, with a max-wait cap.
   *mid-run*; cooldown cannot fix that — the per-config retry loop
   handles it instead.
 
-Clock locking and cooldown are complementary: locking removes
-boost variance, cooldown removes heat accumulation between benches.
+Cooldown does not remove *boost variance* — only clock-locking
+could, and that is unavailable here. In practice the laptop GA104
+settles to a sustained ~1410 MHz cold-clock after warmup and never
+reaches the 1785 MHz boost bin in a short single-process run, so a
+warmed-up bench is already at a fairly stable clock. Baselines are
+recorded at that sustained cold-clock; see
+[`rebaseline_protocol.md`](rebaseline_protocol.md).
 
 ## GPU mode: hybrid vs dGPU
 
