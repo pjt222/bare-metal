@@ -14,7 +14,6 @@ bench_*
 !scripts/bench_*.py
 !tests/bench_regress/
 !tests/bench_regress/**
-phase1/host
 test_dense_manual
 test_mma_sp
 test_inplace_race
@@ -24,12 +23,6 @@ test_persistent_debug
 !test_*.cu
 verify_wmma_ab_layout
 verify_wmma_layout
-
-# Phase 4 conv2d debug binaries (sources are kept)
-phase4/conv2d/debug3
-phase4/conv2d/debug_implicit
-phase4/conv2d/debug_implicit2
-!phase4/conv2d/debug*.cu
 
 # Cubin backups
 *.cubin.baseline
@@ -46,10 +39,6 @@ __pycache__/
 *.pyc
 !scripts/bench_regress.py
 !scripts/bench_flash_all.py
-!phase2/common/bench_driver.h
-
-# Third-party tools (clone separately)
-tools/CuAssembler/
 
 # CuAssembler working artifacts
 *.cuasm.orig
@@ -84,8 +73,9 @@ cymatic_mapping.csv
 cymatic_mapping.rds
 cymatic_locality.csv
 
-# IMMA hand-tune experiment artifacts (#96 sub-task A, negative result; cubins
-# can be regenerated from scripts/handtune_imma_s04.R if needed).
+# IMMA hand-tune experiment artifacts (#96 sub-task A, negative result; the
+# generator script was removed after the negative result — recover from git
+# history if a rerun is ever needed).
 *.imma_s04.sm_86.cubin
 *.imma_s02.sm_86.cubin
 
