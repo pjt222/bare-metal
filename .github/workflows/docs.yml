@@ -1,0 +1,104 @@
+name: docs
+
+# NOTE: GPU-dependent work (cubin builds, benchmarks, nvcc compilation) CANNOT
+# run on GitHub-hosted runners — no Ampere GPU is available. The local
+# `make reproduce` path remains the sole GPU entry point. This workflow covers
+# only what hosted runners can check: markdown links, version string consistency,
+# and Quarto document render correctness.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Markdown link-check
+  # Lifts scripts/audit/check_links.R, which needs only {stringr}.
+  # Full renv::restore() is skipped in favour of a minimal install of the
+  # single package the script actually imports, keeping the job fast (~30s).
+  # ---------------------------------------------------------------------------
+  link-check:
+    name: Markdown link-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.0"
+
+      - name: Install stringr
+        shell: Rscript {0}
+        run: |
+          install.packages("stringr", repos = "https://cloud.r-project.org")
+
+      - name: Run link-check
+        shell: Rscript {0}
+        run: |
+          source("scripts/audit/check_links.R")
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Version-consistency check
+  # Runs scripts/check_versions.R, which uses {jsonlite} to parse renv.lock
+  # and regex-extracts CUDA / R version strings from README.md, AGENTS.md,
+  # SETUP.md. Exits non-zero on any mismatch.
+  # ---------------------------------------------------------------------------
+  version-consistency:
+    name: Version-consistency check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.0"
+
+      - name: Install jsonlite
+        shell: Rscript {0}
+        run: |
+          install.packages("jsonlite", repos = "https://cloud.r-project.org")
+
+      - name: Run version-consistency check
+        shell: Rscript {0}
+        run: |
+          source("scripts/check_versions.R")
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Quarto render dry-run
+  # Renders docs/analysis/kernel_architecture.qmd to HTML.
+  #
+  # Investigation finding: all data in kernel_architecture.qmd is inline
+  # (tibble::tribble / seq / expand_grid) — no GPU artifacts, no external CSVs,
+  # no cubin or NCU dependencies. The document will render correctly without a
+  # GPU. Execute mode is left on (the default); we render fully, not with
+  # execute:false.
+  #
+  # Packages required: ggplot2, dplyr, tidyr, scales (per AGENTS.md and renv.lock).
+  # ---------------------------------------------------------------------------
+  quarto-render:
+    name: Quarto render (kernel_architecture.qmd)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.0"
+
+      - name: Install R packages for QMD
+        shell: Rscript {0}
+        run: |
+          install.packages(
+            c("ggplot2", "dplyr", "tidyr", "scales", "tibble"),
+            repos = "https://cloud.r-project.org"
+          )
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Render kernel_architecture.qmd
+        run: |
+          quarto render docs/analysis/kernel_architecture.qmd --to html
