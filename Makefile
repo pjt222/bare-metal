@@ -85,6 +85,7 @@ kernels/tutorial/host: kernels/tutorial/host.cu
 # stem, so we generate one rule per directory via $(eval). To add a new
 # directory with bench variants, append it to BENCH_VARIANT_DIRS.
 BENCH_VARIANT_DIRS := \
+  kernels/attention/cross_attention \
   kernels/attention/flash_attention \
   kernels/convolution/conv2d \
   kernels/convolution/resblock \
