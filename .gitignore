@@ -2,6 +2,9 @@
 *.cubin
 !*_handtuned.sm_86.cubin
 
+# Probe run artifacts (regenerated each run)
+scripts/probe/*.log
+
 # Generated SASS disassembly (keep hand-tuned variants)
 *.cuasm
 !*_handtuned.cuasm
