@@ -5,8 +5,8 @@
  * flash_attn_br16 baseline (48 KB smem, smem PV).
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_regpv.sm_86.cubin flash_attn_br16_regpv.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16.sm_86.cubin flash_attn_br16.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_regpv.sm_86.cubin flash_attn_br16_regpv.cu
  *   nvcc -arch=sm_86 -O2 -o bench_br16_regpv bench_br16_regpv.cu -lcuda -I../../kernels/_common
  */
 
@@ -98,8 +98,8 @@ int main(int argc, char **argv) {
     driver.copy_h2d(dKh, hKh, ne * sizeof(__half));
     driver.copy_h2d(dVh, hVh, ne * sizeof(__half));
 
-    CUfunction fn_base  = driver.load_kernel("flash_br16.sm_86.cubin",       "flash_attn_br16");
-    CUfunction fn_regpv = driver.load_kernel("flash_br16_regpv.sm_86.cubin", "flash_attn_br16_regpv");
+    CUfunction fn_base  = driver.load_kernel("flash_attn_br16.sm_86.cubin",       "flash_attn_br16");
+    CUfunction fn_regpv = driver.load_kernel("flash_attn_br16_regpv.sm_86.cubin", "flash_attn_br16_regpv");
 
     size_t smem_base  = 2 * Bc * d * sizeof(__half) + Br_block * Bc * sizeof(float) + Br_block * d * sizeof(float);
     size_t smem_regpv = 2 * Bc * d * sizeof(__half) + Br_block * Bc * sizeof(float);
@@ -177,8 +177,8 @@ int main(int argc, char **argv) {
            ms_regpv < ms_base ? "faster" : "slower");
 
     printf("\nSASS:\n");
-    printf("  cuobjdump -sass flash_br16_regpv.sm_86.cubin | grep -c HMMA\n");
-    printf("  cuobjdump -sass flash_br16_regpv.sm_86.cubin | grep -c 'LDS\\|STS'\n");
+    printf("  cuobjdump -sass flash_attn_br16_regpv.sm_86.cubin | grep -c HMMA\n");
+    printf("  cuobjdump -sass flash_attn_br16_regpv.sm_86.cubin | grep -c 'LDS\\|STS'\n");
 
     return 0;
 }
