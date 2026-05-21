@@ -48,9 +48,9 @@ peak (174 TFLOPS). Path:
 | 103 | open     | Cross-attention regime dispatch helper: select v2 / v2_pad vs baseline by (seq_q × seq_kv) threshold |
 | 104 | tracking | Fragment-shfl reduction pattern — no current target kernel                                   |
 | 105 | tracking | Tracking: #96 sub-task C — non-Tensor-Core SASS hand-tunes (speculative, no target)         |
+| 122 | open     | `make clean` deletes tracked artifacts (handtuned `.cuasm`, experiment cubins/sass)          |
 
-All other issues (#1 through #102 minus the four above) are closed;
-see GitHub issue history.
+All other issues are closed; see GitHub issue history.
 
 ### Highest-EV remaining code change
 
@@ -67,65 +67,57 @@ boundary.
 
 All other open items are research-grade or speculative.
 
-## Latest session — documentation and structure review
+## Latest session — documentation review + Hugging Face publication
 
-Goal: lean, production-grade research project. Pristine code
-quality, neutral technical documentation, no decorative prose, all
-parts coherent.
+Goal: bring the repo to scientific-paper standard, then publish the
+kernel corpus on Hugging Face. Tracked as epic #110 + four workstream
+issues; executed via the `bare-metal-docs` agent team.
 
-Six work batches, six commits:
+| WS | Issue | Commit  | Scope                                                          |
+|----|-------|---------|----------------------------------------------------------------|
+| 1  | #106  | ee94217 | Doc correctness: `README.md` "CUDA 12.x"→"13.2", toolchain-provenance footnotes, `verify_setup.R` driver-version capture, `Makefile` `figures` target. |
+| 2  | #107  | 3c33b40 | CI: `.github/workflows/docs.yml` — markdown link-check, version-consistency (`scripts/check_versions.R`), Quarto render. |
+| 3  | #108  | 2da9fbc | `README.md` restructured 367→86 lines as a paper-style abstract; showcase tables relocated to canonical homes (`inventory.md`, `AGENTS.md`, `index.md`). |
+| 4  | #109  | ae5c69a | HF publish tooling: `scripts/publish_hf.R`, `hf/README.md` dataset card, `make publish-hf` re-sync target. |
 
-| Batch | Commit  | Scope                                                            |
-|-------|---------|------------------------------------------------------------------|
-| A     | bcdb751 | Delete 16 shipped `.github/issues/*.md` seed files + `scripts/create_issues.sh` + empty `tools/`. |
-| B     | adb138c | Add `AGENTS.md` canonical agent reference, `CHANGELOG.md`, `docs/index.md`. Rewrite `CLAUDE.md` and `.github/copilot-instructions.md` as thin pointers to `AGENTS.md`. Fold `.github/SESSION_INSIGHTS_2026-05-05.md` into the CHANGELOG. |
-| C     | 47c1311 | Cosmetic pass across 22 files: drop status emojis, remove "Tier N" jargon from user-facing docs, strip "this session" from tutorial chapters and `README.md`, add a framing preamble to `gpu_reflections.md` documenting the first-person voice as a deliberate experiment and the three-segment numbering scheme. Drop the stale "Reprioritization for next sprint" section from `ncu_metrics.md`. |
-| D     | a4cf2f4 | Move regenerable data to top-level `data/` (`baselines.json`, `reference_baselines.json`, `sass_histogram.csv`, `register_audit.csv`). Retire `docs/kernels.md`; rename `docs/kernels_by_family.md` → `docs/inventory.md`. De-phase per-kernel READMEs (`tutorial`, `flash_attention`, `igemm`) and the troubleshooting doc; drop `Makefile` `phase1..phase5` aliases. Trim `README.md` Documentation section to a short orientation pointing at `docs/index.md`. |
-| E     | 1c03879 | Collapse five identical per-family `bench_%.cu` Makefile rules into a single `$(eval)` loop over `BENCH_VARIANT_DIRS`. |
-| F     | (this)  | Rewrite this `CONTINUE_HERE.md` as a concise session-handoff document. Prior 677-line session log retired; durable content folded into the sections above. |
+Result: the kernel corpus is published as a Hugging Face **dataset**
+repo — **https://huggingface.co/datasets/pjt222/ga104-cuda-kernels**
+(356 entries, commit `5c3d532`). Re-sync with `make publish-hf`
+(needs `HF_TOKEN` in `.env`).
 
-Cumulative effect: agent-facing reference unified into `AGENTS.md`;
-data and documentation cleanly separated; kernel inventory has one
-canonical entry point; phase vocabulary deleted from on-disk
-artifacts; structural reorganization history captured in
-`CHANGELOG.md`; cosmetic noise removed without touching the
-deliberate first-person experiment in `gpu_reflections.md`.
+Bugs found and fixed while exercising the full reproducible pipeline:
 
-No source, kernel, baseline, or build behaviour changed. Verified
-that `Rscript scripts/bench/bench_regress.R --list` still reads the
-relocated baselines, and that all five collapsed bench-variant
-targets resolve under `make -n`.
+| #   | Commit  | Fix                                                              |
+|-----|---------|------------------------------------------------------------------|
+| 117 | 84ca4b2 | `igemm_online_quant_bf_128x256` 64 KB static smem > sm_86 48 KB limit; unioned `epilogue_tile` over the A/B double-buffer → 48 KB. |
+| 116 | 0f3c198 | `verify_setup.R` nvidia-smi exit 9 — R's `LD_LIBRARY_PATH` shadowed the WSL `libnvidia-ml.so`; also renv upgraded 1.2.2→1.2.3. |
+| 119 | 7194e5d | `cross_attention` missing from `BENCH_VARIANT_DIRS` — broke `make all`. |
+| 120 | adc80d9 | `hf repo create` rejected `datasets/` prefix + `--type` together. |
+| 121 | cd06d0a | Fast `make sass` target (cuobjdump-only, ~60 s vs ~1 h `make disasm`); `publish_hf.R --skip-build`. |
+
+`make all` now builds the whole corpus exit 0; the publish pipeline
+is reproducible end to end.
 
 ## Next steps
 
 In order of expected value:
 
-1. **Land #103 cross-attention regime dispatch helper** (30 min).
+1. **#122 — `make clean` deletes tracked artifacts.** `make clean`'s
+   broad `find -delete` removes git-tracked files (handtuned
+   `.cuasm`, experiment cubins/sass). Scope it to generated output.
+
+2. **Land #103 cross-attention regime dispatch helper** (30 min).
    Single concrete remaining performance change in the queue.
 
-2. **Run `Rscript scripts/audit/sass_histogram.R` and
-   `Rscript scripts/audit/reg_audit.R`** to repopulate
-   `data/sass_histogram.csv` and `data/register_audit.csv` from the
-   current cubin set, confirming the relocated output paths land in
-   `data/` not the old `docs/` location.
+3. **Refresh `.gitignore`**: stale `phase{1,2,4}/` entries, dead
+   `tools/CuAssembler/`, missing `viz/` entries.
 
-3. **Run `make reproduce` end-to-end** as a smoke test of the
-   restructured paths. The pre-push hook covers the bench regression
-   but does not exercise `make all` from scratch.
+4. **Decide on `scripts/fix_cuda_context.R`**: one-shot codemod that
+   has run; delete it or move to `scripts/migrations/`.
 
-4. **Refresh `.gitignore`**: stale `phase{1,2,4}/` entries, dead
-   `tools/CuAssembler/`, missing `viz/` entries. Local
-   `viz/.gitignore` already handles `dist/` and `node_modules/`, but
-   the root file is documented as load-bearing in the
-   2026-05-05 session insights (now in `CHANGELOG.md`).
-
-5. **Decide on `scripts/fix_cuda_context.R`**: it is a one-shot
-   codemod that has run; either delete it or move it to a
-   `scripts/migrations/` subdirectory.
-
-6. **#32 polyhedral spring networks**: literature scoping is done
-   (`docs/polyhedral_spring_networks.md`). Next decision is whether
-   to pursue a concrete kernel implementation or close the issue.
+5. **#32 polyhedral spring networks**: literature scoping is done
+   (`docs/polyhedral_spring_networks.md`). Decide whether to pursue a
+   kernel implementation or close the issue.
 
 ## Hardware constraint (recap)
 
