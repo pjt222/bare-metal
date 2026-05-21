@@ -175,19 +175,23 @@ cold-decayed samples are rejected; median reported, never writes
 | `hgemm_16warp` 2048³     | 31875 GFLOPS / 0.539 ms      | **25854 GFLOPS / 0.664 ms** | 7 | 1410-1485 MHz |
 | `hgemm_16warp` 4096³     | 31765 GFLOPS / 4.327 ms      | **29969 GFLOPS / 4.586 ms** | 7 | 1410-1785 MHz |
 | `igemm_sparse_tiled` 2048³ | 31588 dq-GFLOPS / 0.544 ms | **37333 dq-GFLOPS / 0.46 ms** | 7 | 1410 MHz |
-| `igemm_sparse_tiled` 4096³ | 30889 dq-GFLOPS / 4.449 ms | **see log — measurement throttling** | — | — |
+| `igemm_sparse_tiled` 4096³ | 30889 dq-GFLOPS / 4.449 ms | **un-measurable — 60/60 throttled** | 0 | — |
 
 Confirms the power-fault diagnosis: hgemm reads ~19-6 % *below* the
 old baseline (recorded high under bad power), igemm 2048³ reads
 ~18 % *above* (recorded low). The numbers are real now.
 
-**igemm 4096³ is the open item.** It heats up and `classify_meta`
-rejects every sample as `throttled` — the heaviest kernel hits the
-150 W `SwPowerCap` wall mid-run. This *is* the documented bimodality
-(`baselines.json` note: "3.85 ms boost vs 6.5 ms steady"). The
-script's `max_try = nvalid×4` cap means it will likely finish
-INCOMPLETE for this one config. The final number is in
-`scripts/probe/rebaseline_measure.log` (re-read it next session).
+**igemm 4096³ is un-measurable in a clean regime — 60/60 tries
+throttled, 0 valid.** The heaviest kernel hits the 150 W `SwPowerCap`
+wall *mid-run*, every run. This is not flaky: it is deterministic.
+Cooldown between samples cannot fix it — the kernel itself draws
+>150 W during its own iterations (`benchmark_methodology.md`:
+"a single long kernel can still throttle mid-run; cooldown cannot
+fix that"). Implication: igemm 4096³ has **no fair no-throttle
+baseline possible on this hardware** — its `tolerance: 0.30`
+band-aid is permanent, or the entry needs `valid_when` relaxed to
+*allow* `SwPowerCap` for this one config (accepting the throttled
+number as the only obtainable one). Decide next session.
 
 **Uncommitted, deliberately:**
 - `scripts/probe/rebaseline_measure.R` — placement decision pending
@@ -208,17 +212,19 @@ INCOMPLETE for this one config. The final number is in
    currently sit loose in `scripts/`. Decide: migrate the probe +
    measurement tooling into the `cuasmR` package, or keep loose.
    This gates committing `rebaseline_measure.R`.
-2. **Finish igemm 4096³** — re-read `rebaseline_measure.log`. If the
-   run ended INCOMPLETE (throttle), the config needs a cooldown
-   between samples (the protocol's backstop lever) — add an adaptive
-   `Sys.sleep` + state poll to `collect_samples`, or record igemm
-   4096³ from a cooled-down manual run. The bimodality means its
-   `tolerance: 0.30` band-aid likely *stays*.
-3. **Patch `data/baselines.json`** — apply the 4 medians (table
-   above + igemm 4096³ once measured). Rewrite each `note`: date,
-   sample count, sustained cold-clock, supersedes the power-fault
-   2026-05-10 value. Update top-level `recorded_date` / `note`.
-   Procedure: `docs/rebaseline_protocol.md` §"Output".
+2. **Decide igemm 4096³** — it throttles mid-run on every sample, so
+   no no-throttle baseline is obtainable. Two options: (a) keep the
+   old 30889 value with its permanent `tolerance: 0.30`; or (b) add
+   a per-kernel `valid_when` that *allows* `SwPowerCap` for this
+   config and record the throttled-steady number as the honest
+   baseline. (b) is more truthful — the throttled number is the only
+   number this hardware can produce for this kernel.
+3. **Patch `data/baselines.json`** — apply the 3 clean medians
+   (hgemm 2048³/4096³, igemm 2048³ — table above) plus the igemm
+   4096³ decision. Rewrite each `note`: date, sample count, sustained
+   cold-clock, supersedes the power-fault 2026-05-10 value. Update
+   top-level `recorded_date` / `note`. Procedure:
+   `docs/rebaseline_protocol.md` §"Output".
 4. **#129 — add `min_clock_sm: 1380`** to `default_valid_when` in
    `baselines.json`. Now unblocked — recording clock is known
    (~1410 MHz). Review/narrow the `tolerance: 0.30` band-aids on
