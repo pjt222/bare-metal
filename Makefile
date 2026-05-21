@@ -1,7 +1,7 @@
 # bare-metal GPU — Top-level Makefile
 #
 # Usage:
-#   make reproduce    — setup + verify + build + bench (full one-stop)
+#   make reproduce    — setup + verify + build + bench + figures (full one-stop)
 #   make setup        — renv::restore() + install local cuasmR R package
 #   make verify       — environment check (CUDA, GPU, cuasmR)
 #   make all          — build all kernel cubins + benchmark executables
@@ -54,7 +54,7 @@ REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/de
 # Default target
 # ------------------------------------------------------------------
 .PHONY: all cubins benches test clean disasm help \
-        setup verify bench bench-reference compare-reference reference-pipeline reproduce \
+        setup verify bench bench-reference compare-reference reference-pipeline reproduce figures \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
 
 all: cubins benches
@@ -162,6 +162,13 @@ verify:
 bench:
 	@$(RSCRIPT) scripts/bench/bench_regress.R
 
+figures:
+	@echo "=== Regenerating docs/figures ==="
+	@$(RSCRIPT) scripts/audit/generate_readme_figures.R
+	@$(RSCRIPT) scripts/profile/roofline_measured.R
+	@$(RSCRIPT) scripts/audit/sass_histogram.R
+	@$(RSCRIPT) scripts/cymatic/cymatic_visualize.R
+
 bench-reference: reference
 	@$(RSCRIPT) scripts/bench/bench_reference.R
 
@@ -170,7 +177,7 @@ compare-reference:
 
 reference-pipeline: reference bench-reference compare-reference
 
-reproduce: setup verify all bench
+reproduce: setup verify all bench figures
 	@echo ""
 	@echo "================================================================"
 	@echo "Full reproduction complete."
@@ -178,6 +185,7 @@ reproduce: setup verify all bench
 	@echo "  verify   -- toolchain + GPU detected"
 	@echo "  all      -- every cubin + bench compiled"
 	@echo "  bench    -- results compared to data/baselines.json"
+	@echo "  figures  -- docs/figures regenerated"
 	@echo "================================================================"
 
 # ------------------------------------------------------------------
@@ -200,10 +208,11 @@ help:
 	@echo "bare-metal GPU build system"
 	@echo ""
 	@echo "Reproducibility:"
-	@echo "  make reproduce — one-stop: setup + verify + build + bench"
+	@echo "  make reproduce — one-stop: setup + verify + build + bench + figures"
 	@echo "  make setup     — renv::restore() + install cuasmR"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
 	@echo "  make bench     — run benches vs data/baselines.json"
+	@echo "  make figures   — regenerate docs/figures via R scripts"
 	@echo "  make bench-reference — run local reference benches vs data/reference_baselines.json"
 	@echo "  make compare-reference — compare project baselines to local reference baselines"
 	@echo "  make reference-pipeline — build + validate + compare local reference benches"

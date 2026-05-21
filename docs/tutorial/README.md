@@ -37,7 +37,7 @@ The chapters can be read in two ways:
 
 ## Prerequisites
 
-- Working CUDA 12.x install with `nvcc`, `cuobjdump`, `nvdisasm` on PATH
+- Working CUDA 13.2 install with `nvcc`, `cuobjdump`, `nvdisasm` on PATH
 - An sm_86-class GPU (RTX 30-series, RTX A-series, etc.)
 - Familiarity with C++ and basic CUDA programming model (thread, block, warp, smem)
 - Linux or WSL2 environment

@@ -60,7 +60,7 @@ Rscript scripts/build.R roundtrip vector_add.cu               # all three, verif
 
 The roundtrip step is the toolchain smoke test. If it fails, your
 CUDA-CuAssembler version pairing is incompatible — fix that before
-anything else. With CUDA 12.x and the bundled `tools/CuAssembler/`,
+anything else. With CUDA 13.2 and the bundled `tools/CuAssembler/`,
 roundtrip should pass on a fresh checkout.
 
 ## Step 1 — Compile and disassemble

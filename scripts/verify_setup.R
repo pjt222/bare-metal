@@ -80,7 +80,7 @@ check_cuasmR <- function() {
 }
 
 check_gpu_info <- function() {
-  r <- run_command("nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv,noheader")
+  r <- run_command("nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv,noheader")
   if (!r$success) {
     cat(sprintf("%s nvidia-smi -- GPU not detected or driver not installed\n", FAIL))
     return(FALSE)
@@ -88,11 +88,12 @@ check_gpu_info <- function() {
   cat(sprintf("%s GPU detected:\n", PASS))
   for (ln in strsplit(r$output, "\n", fixed = TRUE)[[1]]) {
     parts <- trimws(strsplit(ln, ",", fixed = TRUE)[[1]])
-    if (length(parts) < 3) next
-    name <- parts[1]; cc <- parts[2]; mem <- parts[3]
+    if (length(parts) < 4) next
+    name <- parts[1]; cc <- parts[2]; mem <- parts[3]; driver <- parts[4]
     cat(sprintf("       Name:             %s\n", name))
     cat(sprintf("       Compute Cap:      sm_%s\n", gsub(".", "", cc, fixed = TRUE)))
     cat(sprintf("       Memory:           %s\n", mem))
+    cat(sprintf("       Driver Version:   %s\n", driver))
     if (!grepl("3070", name, fixed = TRUE) && !grepl("86", cc, fixed = TRUE)) {
       cat(sprintf("  %s Expected RTX 3070 Ti (sm_86) -- got %s (sm_%s)\n",
                   INFO, name, gsub(".", "", cc, fixed = TRUE)))
