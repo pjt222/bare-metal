@@ -132,9 +132,23 @@ handtuned_cubins <- function() {
              recursive = TRUE, full.names = TRUE)
 }
 
+# Build-output artifacts excluded from the published corpus -- they
+# are real output of tracked sources but are not kernels of record:
+#   - *.imma_s02/s04 cubins: negative-result hand-tune experiments
+#     (#96 sub-task A; also gitignored as such).
+#   - test_*/verify_* cubins/sass: correctness-test and layout-probe
+#     binaries, not kernels.
+# The matching .cu sources stay in the manifest (canonical source
+# tree); only their generated/ build artifacts are dropped.
+CORPUS_EXCLUDE <- c(
+  "\\.imma_s0[24]\\.sm_86\\.(cubin|sass)$",
+  "(^|/)(test|verify)_[^/]*\\.sm_86\\.(cubin|sass)$"
+)
+
 # Regenerated full cubin/sass set produced by `make all && make disasm`.
 # Hand-tuned cubins are excluded here -- they ship under their tracked
 # kernels/ path (their canonical home), not the generated/ supplement.
+# CORPUS_EXCLUDE artifacts are dropped from the published supplement.
 generated_artifacts <- function() {
   cubins <- list.files(file.path(REPO_ROOT, "kernels"),
                         pattern = "\\.sm_86\\.cubin$",
@@ -143,7 +157,9 @@ generated_artifacts <- function() {
   sass <- list.files(file.path(REPO_ROOT, "kernels"),
                      pattern = "\\.sm_86\\.sass$",
                      recursive = TRUE, full.names = TRUE)
-  c(cubins, sass)
+  arts <- c(cubins, sass)
+  for (pat in CORPUS_EXCLUDE) arts <- arts[!grepl(pat, arts)]
+  arts
 }
 
 # Tracked handtuned cubin paths, per git -- restored after `make clean`
