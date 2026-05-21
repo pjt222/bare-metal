@@ -50,6 +50,16 @@ MEMORY_LAYOUT_BENCH:= $(shell find kernels/memory_layout -name 'bench*.cu' 2>/de
 COMPOSITION_BENCH  := $(shell find kernels/composition   -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 REFERENCE_BENCH    := $(shell find kernels/reference     -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 
+# Regression-baselined attention/convolution benches. data/baselines.json
+# carries baselines for these two kernels, but their exes live outside the
+# GEMM/reductions/elementwise groups `make test` builds — so the pre-push
+# bench_regress.R SKIPped attention + convolution coverage. Listed
+# explicitly (not the whole ATTENTION_BENCH / CONVOLUTION_BENCH families)
+# to keep `make test` scope at exactly what regression coverage needs.
+REGRESS_BENCH := \
+  kernels/attention/flash_attention/bench_br16_regpv \
+  kernels/convolution/conv2d/bench_implicit_gemm
+
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
@@ -128,7 +138,11 @@ reference:      $(REFERENCE_BENCH)
 # built without its cubin runs hollow ("No kernels found"). This also
 # leaves the cubins in place for scripts/bench/bench_regress.R, which the
 # pre-push hook runs straight after `make test`.
-test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH)
+#
+# $(REGRESS_BENCH) is a dependency but not in the smoke-run loop: those
+# benches take kernel-specific args (not N N N), so running them here
+# would add noise. They only need to be *built* for bench_regress.R.
+test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BENCH)
 	@echo "=== Running smoke tests ==="
 	@for exe in $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH); do \
 		if [ -f "$$exe" ]; then \
