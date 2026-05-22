@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-22 (issue-queue drain + #131 plan) | Branch: main
+> Last updated: 2026-05-22 (#131 Phase 1 — lock-aware bench_regress) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -52,15 +52,17 @@ are benchmark-pipeline hardening — no queued kernel work.
 | #   | Title                                                          |
 |-----|----------------------------------------------------------------|
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
-| 125 | Clock-lock support for the benchmark pipeline (umbrella)       |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
-| 131 | Lock-aware `bench_regress` — gate power-bound kernels under a host-side clock lock |
 | 134 | Migrate probe/bench R tooling into cuasmR; make cuasmR CRAN-ready (epic) |
 
 Resolved 2026-05-22: #126 (GPU-mode metadata), #132 (docs CI Quarto
 render), #133 (cuasmR renv hygiene). #127/#129/#130 resolved earlier.
-#125 reopened 2026-05-22 — clock-lock IS available host-side (the
-2026-05-21 close was wrong; see below).
+
+**#131 + #125 — code-complete this session, NOT yet closed.** Commit
+`ecae5b7` (local, **unpushed**) implements lock-aware `bench_regress`.
+Its message carries `Closes #131, #125`, so the issues auto-close on
+push — but one verification path (real host-side lock → measures
+~50497) is still pending. See "Latest session" + Next steps #1.
 
 Design basis: [`benchmark_methodology.md`](benchmark_methodology.md).
 
@@ -267,102 +269,68 @@ rule; `d21cdd0`/`66e53b9` track the three files.
 wrong; it works host-side. New issue `#134` filed for the full
 CRAN-ready cuasmR migration (probe/bench scripts → package functions).
 
+## Latest session — #131 Phase 1, lock-aware bench_regress (2026-05-22)
+
+Implemented Phase 1 of the #131 plan (the plan that lived in this file
+last session — now executed, section removed). One commit, **`ecae5b7`,
+local and UNPUSHED**:
+
+| File                          | Change                                          |
+|-------------------------------|-------------------------------------------------|
+| `data/baselines.json`         | New optional per-config `clock_lock` field (int MHz), documented in the `schema` block. Re-added the `igemm_sparse_tiled` `4096_4096_4096` entry: `clock_lock: 1605`, 50497 dq-GFLOPS / 2.722 ms. |
+| `scripts/bench/bench_regress.R` | `--clock-locked <MHz>` CLI flag; `measure_clock_locked()` helper (warmup 20, median of 5 valid runs, two-sided clock-band check `clock_lock ± 30 MHz`); per-config dispatch in the main loop; `--list` annotation. |
+| `docs/benchmark_methodology.md` | Rewrote the stale "clock locking NOT available" section — host-side `nvidia-smi.exe -lgc` works. Documents the `--clock-locked` workflow. |
+
+**Behaviour.** A `clock_lock` config is SKIPPED unless `bench_regress.R`
+is run with `--clock-locked <MHz>` matching the entry. When it matches,
+the kernel is measured as a median of N valid runs; any sample whose
+observed SM clock leaves the band is rejected. Band check is two-sided
+— a clock far *above* `clock_lock` means the lock was never applied →
+`INSUFFICIENT`, not a bogus pass. The pre-push hook runs without the
+flag, so igemm 4096³ SKIPs there by design.
+
+**Verified (3 of 4 paths, all from WSL):**
+
+| Path                                                  | Result |
+|-------------------------------------------------------|--------|
+| No flag → igemm 4096³ SKIPPED                         | ✅ PASSED |
+| Mismatched `--clock-locked 1500` → SKIPPED            | ✅ |
+| `--clock-locked 1605`, GPU **not** locked → band rejects all 20 attempts (SwPowerCap + clock 1410 outside 1575-1635) → INSUFFICIENT, no false pass | ✅ |
+| Full unfiltered sweep (pre-push equivalent) → 7 configs, 0 regressions, PASSED | ✅ |
+| **Real host-side lock 1605 → measures ~50497**        | ⏳ **unrun** — needs an elevated Windows shell |
+
+The 4th path is the only gap. `ecae5b7`'s message says `Closes #131,
+#125`; do not push until that path is verified, or amend the message
+first. See Next steps #1.
+
 ## Next steps
 
-1. **#131 — lock-aware `bench_regress`** (substantial). Acquire a
-   host-side clock lock before measuring power-bound kernels; re-add
-   igemm 4096³ to `baselines.json` with `clock_lock: 1605` once it
-   lands. Blocker: CI/regress cannot elevate a Windows shell — needs
-   a pre-elevated helper or a documented manual lock-then-run mode.
-   Resolves #125.
-2. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
+1. **[USER] Verify #131 end-to-end, then push.** In an elevated Windows
+   shell: `nvidia-smi.exe -lgc 1605,1605`. In WSL:
+   `Rscript scripts/bench/bench_regress.R --kernel kernels/gemm/igemm/igemm_sparse_tiled.cu --clock-locked 1605`.
+   Then `nvidia-smi.exe -rgc` (elevated). Expect igemm 4096³ to report
+   OK within 10 % of 50497. If it passes, `git push` — `ecae5b7`
+   auto-closes #131 + #125. If it fails or you push before verifying,
+   amend `ecae5b7` to drop `Closes #131, #125` first.
+2. **#131 Phase 2 — schtasks automation bridge** (optional). Register
+   elevated Windows Scheduled Tasks for `-lgc`/`-rgc`; WSL triggers
+   them with `schtasks.exe /run`. Removes the manual lock step. Not
+   required to close #131 — Phase 1 closes it.
+3. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
    `scripts/probe/*.R` + `scripts/bench/*.R` into documented, tested
-   `cuasmR` functions; `R CMD check` clean.
-3. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
+   `cuasmR` functions; `R CMD check` clean. `measure_clock_locked()`
+   and the `rebaseline_measure.R` sampling loop are duplicate-by-design
+   for now — dedupe into the package here.
+4. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
    API (#134) once it exists.
-4. **#128 — OC showcase**: deferred. Note: this session's clock-lock
-   sweep is the groundwork — `-lgc` above native clock is exactly the
-   OC lever; #128 is now much closer to feasible.
-5. **#129** — was already resolved earlier (the `min_clock_sm` gate is
-   implemented; only the *value* was pending, now known: hgemm ~1770
-   boost, igemm 2048³ 1410, igemm 4096³ locked 1605).
+5. **#128 — OC showcase**: deferred. The clock-lock sweep is the
+   groundwork — `-lgc` above native clock is exactly the OC lever.
 
 Closed earlier, not in scope unless reopened:
 
 - **#32 polyhedral spring networks** — literature scoping lives in
   `docs/polyhedral_spring_networks.md`. Re-open only if a kernel
   implementation is wanted.
-
-Closed earlier, not in scope unless reopened:
-
-- **#32 polyhedral spring networks** — literature scoping lives in
-  `docs/polyhedral_spring_networks.md`. Re-open only if a kernel
-  implementation is wanted.
-
-## Next session — #131 implementation plan (lock-aware bench_regress)
-
-**Objective.** `igemm_sparse_tiled` 4096³ has a real baseline only at a
-locked clock (50497 dq-GFLOPS @ 1605 MHz — `docs/inventory.md`). It is
-currently *removed* from `data/baselines.json` because `bench_regress.R`
-re-measures at native boost, where the kernel is ~1.9× bimodal. #131
-makes the regress harness measure such kernels under a host-side clock
-lock, so the entry can be gated again.
-
-**Core blocker.** `nvidia-smi -lgc` needs an elevated Windows shell.
-The WSL `nvidia-smi` shim rejects it; WSL invoking `nvidia-smi.exe`
-runs non-elevated → fails. So the lock cannot be taken silently from
-inside a normal WSL `bench_regress` run.
-
-**Phase 1 — manual-lock mode + schema (ships first, always works).**
-
-1. `data/baselines.json` schema: add an optional per-config
-   `clock_lock` field (integer MHz). Document it in the `schema`
-   block. Re-add the `igemm_sparse_tiled` `4096_4096_4096` entry:
-   `{"ms": 2.722, "tops": 50497, "clock_lock": 1605,
-   "match": "igemm_sparse_tiled", "value_label": "dense-equiv GFLOPS",
-   "note": "..."}`.
-2. `bench_regress.R` CLI: add `--clock-locked <MHz>` — the operator
-   asserts they have locked the clock host-side (elevated PowerShell:
-   `nvidia-smi -lgc <MHz>,<MHz>`).
-3. Per-kernel logic in `bench_regress.R` (`for (kernel_path ...)` loop,
-   ~line 379) — for an entry with a `clock_lock` value:
-   - if `--clock-locked` is absent, or its value ≠ the entry's
-     `clock_lock` → **SKIP** that config (same path as the existing
-     `SwPowerCap` SKIP — no false regression).
-   - if present and matching → measure, and additionally verify the
-     observed SM clock stays within ±~30 MHz of `clock_lock` on every
-     sample (reuse `classify_meta`; the lock can sag — reject sagged
-     samples). Compare against the locked baseline value.
-4. Lock-required kernels need **median-of-N** in regress, not a single
-   shot — even locked, ~1/12 samples can be a power excursion (warmup
-   matters: `clock_lock_sweep.R` uses warmup 20, discard first). Lift
-   that sampling logic; do not single-shot a `clock_lock` kernel.
-5. The pre-push hook (`.git/hooks/pre-push` → `bench_regress.R`) runs
-   without `--clock-locked` → igemm 4096³ SKIPs there. That is correct:
-   the gate is opt-in, exercised during a deliberate re-baseline, not
-   on every push.
-
-**Phase 2 — schtasks automation bridge (optional, removes the manual step).**
-
-One-time elevated setup: register Windows Scheduled Tasks that run
-`nvidia-smi.exe -lgc`/`-rgc` with highest privileges. WSL triggers them
-with `schtasks.exe /run /tn <name>` — `/run` of an already-elevated
-task does **not** require the caller to be elevated. `bench_regress.R`
-then locks/unlocks around the measurement itself. Scheduled tasks take
-no easy runtime args, so register fixed-clock tasks (e.g.
-`bare-metal-lgc-1605`, `bare-metal-rgc`) or have the task read the
-target clock from a file. Document the one-time setup in
-`docs/benchmark_methodology.md`.
-
-**First concrete action next session:** Phase 1 step 1+2 — schema field
-+ `--clock-locked` flag. Re-derive the regress per-kernel loop first
-(`scripts/bench/bench_regress.R` ~line 379) before editing; confirm
-how SKIP is currently emitted for `SwPowerCap` and mirror it. Verify
-end-to-end: lock 1605 host-side, `Rscript bench_regress.R --clock-locked 1605`
-→ igemm 4096³ measured ~50497, within tolerance; run without the flag
-→ igemm 4096³ SKIPPED, no regression.
-
-**Closes:** #131, and #125 (its umbrella).
 
 ## Hardware constraint (recap)
 
