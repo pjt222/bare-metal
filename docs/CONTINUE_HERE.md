@@ -46,22 +46,23 @@ peak (174 TFLOPS). Path:
 
 ### Open GitHub issues
 
-All optimization and build-correctness work is shipped. The only open
-issues are the **benchmark-pipeline hardening roadmap** filed at the
-end of the 2026-05-21 session — no queued kernel work.
+All optimization and build-correctness work is shipped. Open issues
+are benchmark-pipeline hardening — no queued kernel work.
 
 | #   | Title                                                          |
 |-----|----------------------------------------------------------------|
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
-| 126 | Record GPU mode (hybrid/dGPU) in benchmark metadata            |
+| 125 | Clock-lock support for the benchmark pipeline (umbrella)       |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
-| 129 | bench_regress `valid_when` too permissive — cold-clock false regressions |
+| 131 | Lock-aware `bench_regress` — gate power-bound kernels under a host-side clock lock |
+| 134 | Migrate probe/bench R tooling into cuasmR; make cuasmR CRAN-ready (epic) |
 
-#127 resolved earlier (commits on `main`, unpushed — `Closes #127`
-fires on push). #130 resolved 2026-05-21 (commit `11a8e6b`).
-#125 closed 2026-05-21 — clock-lock rejected by WSL passthrough.
+Resolved 2026-05-22: #126 (GPU-mode metadata), #132 (docs CI Quarto
+render), #133 (cuasmR renv hygiene). #127/#129/#130 resolved earlier.
+#125 reopened 2026-05-22 — clock-lock IS available host-side (the
+2026-05-21 close was wrong; see below).
 
-Design basis for all five: [`benchmark_methodology.md`](benchmark_methodology.md).
+Design basis: [`benchmark_methodology.md`](benchmark_methodology.md).
 
 ## Latest session — issue-queue drain + benchmark planning (2026-05-21)
 
@@ -244,36 +245,53 @@ Pipeline fix: `clock_lock_sweep.R` warmup 8→20 (8 didn't settle the
 GPU at high clock — recurring slow first sample was a warmup
 artifact, confirmed gone at 20).
 
-**Uncommitted this session** (nothing committed — awaiting user):
-- `data/baselines.json` — 3 clean medians patched, igemm 4096³ entry
-  removed, top-level `recorded_date`/`note` updated.
-- `docs/inventory.md` — igemm 4096³ reference-value note added.
-- `scripts/probe/clock_lock_sweep.R` (new) + `clock_lock_sweep.rds`,
-  `clock_lock_sweep.log`.
-- `scripts/probe/rebaseline_measure.R` + `rebaseline_results.rds`
-  (still uncommitted from 2026-05-21 — placement decision below).
+All baseline + clock-lock work committed and pushed (`main` synced).
+
+## Latest session — issue-queue drain (2026-05-22)
+
+Resolved the cleanly-resolvable open issues; `main` synced with origin.
+
+| #   | Resolution                                                       |
+|-----|------------------------------------------------------------------|
+| 132 | docs CI Quarto render was red since 2026-05-21. Two causes: workflow omitted `knitr`/`rmarkdown` (`04514da`); then source `fs` failed to compile under renv. Fixed `25884aa` — disable renv autoloader for the job + `use-public-rspm` binary packages. First diagnosis (cuasmR aborting `renv::restore`) was wrong — the workflow never calls `restore`. |
+| 126 | GPU-mode metadata — `capture_gpu_state()` reads `BARE_METAL_GPU_MODE` env var → `$host$gpu_mode`; `unknown` if unset. `d21cdd0`. |
+| 133 | cuasmR renv hygiene — reinstalled via `renv::install("./R/cuasmR")`, recorded `Source: Local` (was `unknown`); `renv::snapshot()` no longer needs `force`; `renv::status()` clean. `588c773`/`c364f49`. |
+
+Build-graph gap found + fixed: `.gitignore` `bench`/`bench_*` rules
+swallowed the `scripts/bench/` R-source dir — `bench_meta.R`,
+`bench_reference.R`, `compare_reference.R` were **untracked** (fresh
+clone would break the pre-push hook + Makefile). `832201d` fixes the
+rule; `d21cdd0`/`66e53b9` track the three files.
+
+`#125` reopened — the 2026-05-21 close ("clock-lock unavailable") was
+wrong; it works host-side. New issue `#134` filed for the full
+CRAN-ready cuasmR migration (probe/bench scripts → package functions).
 
 ## Next steps
 
-1. **Commit this session's work.** `data/baselines.json` +
-   `docs/inventory.md` + `scripts/probe/clock_lock_sweep.R`. Then the
-   unpushed `main` commits (now ~13) can push — pre-push
-   `bench_regress.R` should pass (igemm 4096³ no longer gated;
-   hgemm/igemm 2048³ baselines now match hardware). Fires `Closes #127`.
-2. **[USER decision] Where does the R tooling live?** `cuasmR` is
-   meant to hold the complete R pipeline; `scripts/probe/*.R`
-   (`probe_clock_lock.R`, `probe_gpu_power.R`, `rebaseline_measure.R`,
-   `clock_lock_sweep.R`) sit loose. Migrate into `cuasmR` or keep loose.
-3. **#131 — lock-aware `bench_regress`.** Acquire a host-side clock
-   lock before measuring power-bound kernels; re-add igemm 4096³ to
-   `baselines.json` with `clock_lock: 1605` once it lands.
-4. **#129 — add `min_clock_sm`** to `default_valid_when`. Recording
-   clocks now known per kernel (hgemm ~1770 boost, igemm 2048³ 1410).
-   Review the `tolerance: 0.30` band-aid on `flash_attn_br16_regpv`.
-5. **#126 — GPU-mode metadata**: env var vs Windows-host query.
-6. **#124 — `bench-all` runner** (epic): after #126.
-7. **#128 — OC showcase**: deferred (note: the clock-lock sweep here
-   is the groundwork — `-lgc` above native is exactly the OC lever).
+1. **#131 — lock-aware `bench_regress`** (substantial). Acquire a
+   host-side clock lock before measuring power-bound kernels; re-add
+   igemm 4096³ to `baselines.json` with `clock_lock: 1605` once it
+   lands. Blocker: CI/regress cannot elevate a Windows shell — needs
+   a pre-elevated helper or a documented manual lock-then-run mode.
+   Resolves #125.
+2. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
+   `scripts/probe/*.R` + `scripts/bench/*.R` into documented, tested
+   `cuasmR` functions; `R CMD check` clean.
+3. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
+   API (#134) once it exists.
+4. **#128 — OC showcase**: deferred. Note: this session's clock-lock
+   sweep is the groundwork — `-lgc` above native clock is exactly the
+   OC lever; #128 is now much closer to feasible.
+5. **#129** — was already resolved earlier (the `min_clock_sm` gate is
+   implemented; only the *value* was pending, now known: hgemm ~1770
+   boost, igemm 2048³ 1410, igemm 4096³ locked 1605).
+
+Closed earlier, not in scope unless reopened:
+
+- **#32 polyhedral spring networks** — literature scoping lives in
+  `docs/polyhedral_spring_networks.md`. Re-open only if a kernel
+  implementation is wanted.
 
 Closed earlier, not in scope unless reopened:
 
