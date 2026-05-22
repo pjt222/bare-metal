@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-22 | Branch: main
+> Last updated: 2026-05-22 (issue-queue drain + #131 plan) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -298,6 +298,71 @@ Closed earlier, not in scope unless reopened:
 - **#32 polyhedral spring networks** — literature scoping lives in
   `docs/polyhedral_spring_networks.md`. Re-open only if a kernel
   implementation is wanted.
+
+## Next session — #131 implementation plan (lock-aware bench_regress)
+
+**Objective.** `igemm_sparse_tiled` 4096³ has a real baseline only at a
+locked clock (50497 dq-GFLOPS @ 1605 MHz — `docs/inventory.md`). It is
+currently *removed* from `data/baselines.json` because `bench_regress.R`
+re-measures at native boost, where the kernel is ~1.9× bimodal. #131
+makes the regress harness measure such kernels under a host-side clock
+lock, so the entry can be gated again.
+
+**Core blocker.** `nvidia-smi -lgc` needs an elevated Windows shell.
+The WSL `nvidia-smi` shim rejects it; WSL invoking `nvidia-smi.exe`
+runs non-elevated → fails. So the lock cannot be taken silently from
+inside a normal WSL `bench_regress` run.
+
+**Phase 1 — manual-lock mode + schema (ships first, always works).**
+
+1. `data/baselines.json` schema: add an optional per-config
+   `clock_lock` field (integer MHz). Document it in the `schema`
+   block. Re-add the `igemm_sparse_tiled` `4096_4096_4096` entry:
+   `{"ms": 2.722, "tops": 50497, "clock_lock": 1605,
+   "match": "igemm_sparse_tiled", "value_label": "dense-equiv GFLOPS",
+   "note": "..."}`.
+2. `bench_regress.R` CLI: add `--clock-locked <MHz>` — the operator
+   asserts they have locked the clock host-side (elevated PowerShell:
+   `nvidia-smi -lgc <MHz>,<MHz>`).
+3. Per-kernel logic in `bench_regress.R` (`for (kernel_path ...)` loop,
+   ~line 379) — for an entry with a `clock_lock` value:
+   - if `--clock-locked` is absent, or its value ≠ the entry's
+     `clock_lock` → **SKIP** that config (same path as the existing
+     `SwPowerCap` SKIP — no false regression).
+   - if present and matching → measure, and additionally verify the
+     observed SM clock stays within ±~30 MHz of `clock_lock` on every
+     sample (reuse `classify_meta`; the lock can sag — reject sagged
+     samples). Compare against the locked baseline value.
+4. Lock-required kernels need **median-of-N** in regress, not a single
+   shot — even locked, ~1/12 samples can be a power excursion (warmup
+   matters: `clock_lock_sweep.R` uses warmup 20, discard first). Lift
+   that sampling logic; do not single-shot a `clock_lock` kernel.
+5. The pre-push hook (`.git/hooks/pre-push` → `bench_regress.R`) runs
+   without `--clock-locked` → igemm 4096³ SKIPs there. That is correct:
+   the gate is opt-in, exercised during a deliberate re-baseline, not
+   on every push.
+
+**Phase 2 — schtasks automation bridge (optional, removes the manual step).**
+
+One-time elevated setup: register Windows Scheduled Tasks that run
+`nvidia-smi.exe -lgc`/`-rgc` with highest privileges. WSL triggers them
+with `schtasks.exe /run /tn <name>` — `/run` of an already-elevated
+task does **not** require the caller to be elevated. `bench_regress.R`
+then locks/unlocks around the measurement itself. Scheduled tasks take
+no easy runtime args, so register fixed-clock tasks (e.g.
+`bare-metal-lgc-1605`, `bare-metal-rgc`) or have the task read the
+target clock from a file. Document the one-time setup in
+`docs/benchmark_methodology.md`.
+
+**First concrete action next session:** Phase 1 step 1+2 — schema field
++ `--clock-locked` flag. Re-derive the regress per-kernel loop first
+(`scripts/bench/bench_regress.R` ~line 379) before editing; confirm
+how SKIP is currently emitted for `SwPowerCap` and mirror it. Verify
+end-to-end: lock 1605 host-side, `Rscript bench_regress.R --clock-locked 1605`
+→ igemm 4096³ measured ~50497, within tolerance; run without the flag
+→ igemm 4096³ SKIPPED, no regression.
+
+**Closes:** #131, and #125 (its umbrella).
 
 ## Hardware constraint (recap)
 
