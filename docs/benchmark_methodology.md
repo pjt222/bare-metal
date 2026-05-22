@@ -76,32 +76,72 @@ or configured away on this machine.
 Since the power cap is fixed, comparable numbers come from removing
 *clock variance*, not from adding power.
 
-### Clock locking — NOT available on this machine
+### Clock locking — host-side only
 
 `nvidia-smi -lgc <min>,<max>` pins the graphics clock to a fixed
 range; `-rgc` resets it. Locking the clock low enough that the
-heaviest kernel stays under 150 W would make `SwPowerCap` never fire
-and every bench run at an identical clock.
+heaviest kernel stays under 150 W makes `SwPowerCap` never fire and
+every bench run at an identical clock.
 
-**On this machine it does not work.** `scripts/probe/probe_clock_lock.R`
-(verdict 2026-05-21) attempted to lock the SM clock and got:
+**From inside WSL it does not work.** `scripts/probe/probe_clock_lock.R`
+(2026-05-21) attempted `-lgc` through the WSL `nvidia-smi` shim and got
+exit 255, `Unable to set GPU locked clocks ... Unknown Error` — the
+WSL2 GPU passthrough rejects clock control regardless of root
+privilege.
+
+**From the Windows host it works.** Running
+`nvidia-smi.exe -lgc <MHz>,<MHz>` in an *elevated* Windows shell
+(driver 595.97) locks the clock for the **whole GPU, including WSL
+CUDA workloads**. `-rgc` restores boost. This corrected the earlier
+"unavailable" verdict — issue #125 was reopened 2026-05-22. A
+host-side lock is what makes a fair baseline possible for a
+power-bound kernel that has none at native boost (see "Power-bound
+kernels", below).
+
+A bare exit code is not proof a lock took effect: always *set* a
+clock and *read it back* (`clocks.current.sm`). `bench_regress.R`
+enforces this — see the `--clock-locked` flow below.
+
+### Power-bound kernels and `--clock-locked`
+
+A kernel whose own iterations draw >150 W has **no fair native-boost
+baseline**: `SwPowerCap` throttles a varying fraction of the bench's
+averaged launches, producing a bimodal average. `igemm_sparse_tiled`
+4096³ is the standing example (~1.9× spread at native boost; stable
+within ±5 % locked at 1605 MHz — `scripts/probe/clock_lock_sweep.R`).
+
+Such a config carries a `clock_lock` field (integer MHz) in
+`data/baselines.json`. `bench_regress.R` handles it as follows:
+
+- **Without `--clock-locked`** (the default, incl. the pre-push hook):
+  the config is **SKIPPED** — no false regression. The gate is
+  opt-in, exercised during a deliberate re-baseline, not on every
+  push.
+- **With `--clock-locked <MHz>`** matching the entry: the operator is
+  asserting they have locked the clock host-side
+  (`nvidia-smi.exe -lgc <MHz>,<MHz>`, elevated). The harness then
+  takes a **median of several valid runs** (single-shot is unsafe —
+  even locked, the odd sample is a power excursion) and **rejects any
+  sample whose observed SM clock leaves the band `clock_lock ± 30 MHz`**.
+  The band check is two-sided: a clock far above `clock_lock` means
+  the lock was never actually applied, and the run SKIPs as
+  `INSUFFICIENT` rather than reporting a bogus pass.
+- A mismatched `--clock-locked` value SKIPs that config.
+
+Workflow to gate a power-bound kernel:
 
 ```
--lgc exit status : 255
-  Unable to set GPU locked clocks "(gpuClockMin 1095, gpuClockMax 1095)"
-  for GPU 00000000:01:00.0: Unknown Error
+# elevated Windows shell:
+nvidia-smi.exe -lgc 1605,1605
+# WSL:
+Rscript scripts/bench/bench_regress.R --clock-locked 1605
+# elevated Windows shell, after:
+nvidia-smi.exe -rgc
 ```
 
-The WSL2 GPU passthrough rejects clock control regardless of root
-privilege. `-lgc` is therefore **not a usable lever here** — cooldown
-+ retry is the only one (see below). This closes issue #125.
+See issue #131 for the lock-aware harness design.
 
-A bare exit code is not proof a lock took effect: WSL can accept the
-command syntactically and silently no-op. Any future re-probe must
-*set* a clock and *read it back* (`clocks.current.sm`) — which is
-what `probe_clock_lock.R` does.
-
-### Cooldown — the only available lever
+### Cooldown — the WSL-side lever
 
 Insert an adaptive wait between benches: after a bench, poll
 `capture_gpu_state()` until temperature and power fall back toward
@@ -113,12 +153,12 @@ idle and no throttle is active, with a max-wait cap.
   *mid-run*; cooldown cannot fix that — the per-config retry loop
   handles it instead.
 
-Cooldown does not remove *boost variance* — only clock-locking
-could, and that is unavailable here. In practice the laptop GA104
-settles to a sustained ~1410 MHz cold-clock after warmup and never
-reaches the 1785 MHz boost bin in a short single-process run, so a
-warmed-up bench is already at a fairly stable clock. Baselines are
-recorded at that sustained cold-clock; see
+Cooldown does not remove *boost variance* — only a host-side clock
+lock does (above). It stays the right lever for kernels that are not
+power-bound: the laptop GA104 settles to a fairly stable clock after
+warmup in a short single-process run, so a warmed-up, cooled-down
+bench is comparable run to run without a lock. Baselines for
+non-power-bound kernels are recorded that way; see
 [`rebaseline_protocol.md`](rebaseline_protocol.md).
 
 ## GPU mode: hybrid vs dGPU

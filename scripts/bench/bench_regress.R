@@ -64,18 +64,47 @@ BASELINES_PATH    <- file.path(REPO_ROOT, "data", "baselines.json")
 DEFAULT_TOLERANCE <- 0.10
 
 # ----------------------------------------------------------------------
+# Clock-lock measurement parameters (issue #131).
+#
+# A baseline config carrying a `clock_lock` field (integer MHz) is a
+# power-bound kernel: at native boost it throttles a varying fraction
+# of its averaged launches and has no fair baseline. Its baseline was
+# recorded under a host-side SM clock lock. bench_regress.R only gates
+# such a config when invoked with --clock-locked <MHz> matching the
+# entry; the operator is asserting they have locked the clock host-side
+# (elevated Windows shell: nvidia-smi.exe -lgc <MHz>,<MHz>).
+#
+# Even locked, ~1/12 samples can be a power excursion, so a clock-lock
+# config is measured as a median of N valid runs, never single-shot.
+# ----------------------------------------------------------------------
+CLOCK_LOCK_BAND_MHZ <- 30L   # observed SM clock must stay within ±this of clock_lock
+CLOCK_LOCK_WARMUP   <- 20L   # discarded runs to settle the GPU at the locked clock
+CLOCK_LOCK_SAMPLES  <- 5L    # valid samples required for the median
+CLOCK_LOCK_MAX_TRY  <- 20L   # attempt cap before declaring INSUFFICIENT
+
+# ----------------------------------------------------------------------
 # CLI parsing
 # ----------------------------------------------------------------------
 parse_args <- function(argv) {
-  out <- list(kernel = NULL, tolerance = DEFAULT_TOLERANCE, list_only = FALSE)
+  out <- list(kernel = NULL, tolerance = DEFAULT_TOLERANCE, list_only = FALSE,
+              clock_locked = NULL)
   i <- 1
   while (i <= length(argv)) {
     a <- argv[i]
     if      (a == "--kernel")    { out$kernel    <- argv[i+1];          i <- i + 2 }
     else if (a == "--tolerance") { out$tolerance <- as.numeric(argv[i+1]); i <- i + 2 }
     else if (a == "--list")      { out$list_only <- TRUE;               i <- i + 1 }
+    else if (a == "--clock-locked") {
+      # Operator asserts the SM clock is locked host-side at this MHz.
+      out$clock_locked <- as.integer(round(as.numeric(argv[i+1]))); i <- i + 2
+    }
     else if (a %in% c("-h", "--help")) {
-      cat("Usage: bench_regress.R [--kernel KCU] [--tolerance F] [--list]\n")
+      cat("Usage: bench_regress.R [--kernel KCU] [--tolerance F] [--list]",
+          "[--clock-locked MHZ]\n",
+          "  --clock-locked MHZ  measure clock_lock-tagged configs; assert the\n",
+          "                      SM clock is locked host-side at MHZ\n",
+          "                      (elevated Windows: nvidia-smi.exe -lgc MHZ,MHZ).\n",
+          sep = "")
       quit(status = 0)
     }
     else stop("unknown arg: ", a)
@@ -247,6 +276,90 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
 }
 
 # ----------------------------------------------------------------------
+# Clock-lock measurement (issue #131)
+#
+# Measure a power-bound, clock_lock-tagged config as a median of N
+# valid runs taken under a host-side SM clock lock. A run is valid
+# only if it did not crash, its output parsed, classify_meta passed
+# (no disallowed throttle — this drops the occasional SwPowerCap
+# excursion that still happens even under a lock), and the observed
+# SM clock stayed inside the locked band [clock_lock ± BAND]. The band
+# check is two-sided: a clock far *above* clock_lock means the operator
+# passed --clock-locked but never actually locked the GPU.
+#
+# Returns either
+#   list(status = "ok", current = <metrics list for check_regression>)
+# or
+#   list(status = "insufficient", msg = "...")
+# ----------------------------------------------------------------------
+measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
+                                 valid_when) {
+  lo <- clock_lock - CLOCK_LOCK_BAND_MHZ
+  hi <- clock_lock + CLOCK_LOCK_BAND_MHZ
+
+  # Warmup: settle the GPU at the locked clock; results discarded.
+  for (i in seq_len(CLOCK_LOCK_WARMUP)) {
+    run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
+  }
+
+  samples  <- list()        # valid metrics lists
+  attempt  <- 0L
+  rejected <- character(0)
+  while (length(samples) < CLOCK_LOCK_SAMPLES && attempt < CLOCK_LOCK_MAX_TRY) {
+    attempt <- attempt + 1L
+    m <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
+
+    if (!is.null(m$returncode) && m$returncode != 0L) {
+      rejected <- c(rejected, sprintf("crash(exit=%d)", m$returncode)); next
+    }
+    if (is.null(m$throughput)) {
+      rejected <- c(rejected, "parse-fail"); next
+    }
+    # Throttle / temp / ac check via the entry's valid_when.
+    if (exists("classify_meta", mode = "function")) {
+      cls <- classify_meta(m$meta_pre, m$meta_post, valid_when)
+      if (isFALSE(cls$ok)) {
+        rejected <- c(rejected, sprintf("unfair(%s)",
+                                        paste(cls$reasons, collapse = ";")))
+        next
+      }
+      if (is.na(cls$ok)) { rejected <- c(rejected, "no-gpu-meta"); next }
+    } else {
+      rejected <- c(rejected, "no-meta-module"); next
+    }
+    # Two-sided clock-band check: reject sag AND "lock never applied".
+    clk <- m$meta_post$gpu$clock_sm
+    if (is.null(clk) || is.na(clk) || clk < lo || clk > hi) {
+      rejected <- c(rejected,
+                    sprintf("clock %s MHz outside locked band %d-%d",
+                            if (is.null(clk)) "NA"
+                            else as.character(as.integer(clk)), lo, hi))
+      next
+    }
+    samples[[length(samples) + 1L]] <- m
+  }
+
+  if (length(samples) < CLOCK_LOCK_SAMPLES) {
+    return(list(status = "insufficient",
+                msg = sprintf(
+                  "INSUFFICIENT (%d/%d valid in %d tries; rejects: %s)",
+                  length(samples), CLOCK_LOCK_SAMPLES, attempt,
+                  paste(utils::head(rejected, 6L), collapse = ", "))))
+  }
+
+  tputs <- vapply(samples, function(s) s$throughput, numeric(1))
+  mss   <- vapply(samples,
+                  function(s) if (is.null(s$ms)) NA_real_ else s$ms,
+                  numeric(1))
+  # Representative sample (closest to the median) carries meta + unit
+  # + matched_line forward; throughput/ms are overwritten with medians.
+  current <- samples[[which.min(abs(tputs - stats::median(tputs)))]]
+  current$throughput <- stats::median(tputs)
+  current$ms         <- stats::median(mss, na.rm = TRUE)
+  list(status = "ok", current = current)
+}
+
+# ----------------------------------------------------------------------
 # Regression decision
 # ----------------------------------------------------------------------
 check_regression <- function(current, baseline, tolerance,
@@ -328,11 +441,14 @@ main <- function() {
         d <- entry[[cfg]]
         unit <- if (!is.null(d$gflops)) "GFLOPS" else "TOPS"
         val  <- if (unit == "GFLOPS") d$gflops else d$tops
-        cat(sprintf("  %s: %s ms, %s %s\n",
+        lock_note <- if (!is.null(d$clock_lock))
+                       sprintf("  [clock_lock %d MHz]", as.integer(d$clock_lock))
+                     else ""
+        cat(sprintf("  %s: %s ms, %s %s%s\n",
                     cfg,
                     if (!is.null(d$ms)) d$ms else "?",
                     if (!is.null(val)) val else "?",
-                    unit))
+                    unit, lock_note))
       }
     }
     quit(status = 0)
@@ -390,6 +506,52 @@ main <- function() {
       total <- total + 1L
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
       baseline_cfg <- entry[[cfg]]
+
+      # Clock-lock dispatch (#131): a config carrying a `clock_lock`
+      # field is power-bound — fair only under a matching host-side
+      # SM clock lock. Gated solely when --clock-locked matches;
+      # SKIPPED otherwise (the pre-push hook never locks, by design).
+      cl <- if (!is.null(baseline_cfg$clock_lock))
+              as.integer(round(as.numeric(baseline_cfg$clock_lock))) else NULL
+      if (!is.null(cl)) {
+        if (is.null(args$clock_locked)) {
+          cat(sprintf(paste0("\n%s [%s]\n  SKIPPED (clock_lock %d MHz; ",
+                             "rerun with --clock-locked %d after a ",
+                             "host-side lock)\n"),
+                      kernel_path, cfg, cl, cl))
+          skipped <- skipped + 1L
+          next
+        }
+        if (!identical(args$clock_locked, cl)) {
+          cat(sprintf(paste0("\n%s [%s]\n  SKIPPED (--clock-locked %d ",
+                             "!= entry clock_lock %d)\n"),
+                      kernel_path, cfg, args$clock_locked, cl))
+          skipped <- skipped + 1L
+          next
+        }
+        vw <- if (!is.null(baseline_cfg$valid_when)) baseline_cfg$valid_when
+              else .default_vw
+        ml <- measure_clock_locked(exe, cfg_args, baseline_cfg, cl, vw)
+        if (identical(ml$status, "insufficient")) {
+          cat(sprintf("\n%s [%s]\n  SKIPPED (%s)\n",
+                      kernel_path, cfg, ml$msg))
+          skipped <- skipped + 1L
+          next
+        }
+        eff_tol <- if (!is.null(baseline_cfg$tolerance))
+                     as.numeric(baseline_cfg$tolerance)
+                   else args$tolerance
+        verdict <- check_regression(ml$current, baseline_cfg, eff_tol,
+                                    default_valid_when = .default_vw)
+        cat(sprintf("\n%s [%s] (clock-locked %d MHz, median of %d)\n  %s\n",
+                    kernel_path, cfg, cl, CLOCK_LOCK_SAMPLES, verdict$msg))
+        if (isTRUE(verdict$skipped))      skipped <- skipped + 1L
+        else if (verdict$is_reg)          regressions <- regressions + 1L
+        else if (grepl("IMPROVED", verdict$msg, fixed = TRUE))
+                                          improvements <- improvements + 1L
+        next
+      }
+
       current <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
       # Per-config tolerance override: some
       # kernels are intrinsically noisy on this hardware (bimodal

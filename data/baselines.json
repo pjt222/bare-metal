@@ -14,7 +14,8 @@
     "section":     "(optional) substring of a section header; parser only considers lines after this header until the next header",
     "value_label": "(optional) text immediately following the throughput number on the matched line; required when the line has multiple numbers",
     "valid_when":  "(optional) GPU/host state requirement for a fair comparison; refuses to compare if violated. Fields: require_no_throttle (default TRUE), allow_throttle (default ['GpuIdle']), min_clock_sm (MHz), max_temp_c (degC), require_ac (laptop). Tier 10.",
-    "tolerance":   "(optional) per-config tolerance override (fraction). Default is the CLI --tolerance (0.10). Use for kernels that are intrinsically noisy on this hardware."
+    "tolerance":   "(optional) per-config tolerance override (fraction). Default is the CLI --tolerance (0.10). Use for kernels that are intrinsically noisy on this hardware.",
+    "clock_lock":  "(optional) integer MHz. Marks a power-bound kernel whose baseline is only fair under a host-side SM clock lock (Windows: nvidia-smi.exe -lgc MHz,MHz, elevated). bench_regress.R SKIPs such a config unless invoked with --clock-locked <MHz> matching this value; when measured it collects a median of CLOCK_LOCK_SAMPLES valid runs and rejects any sample whose observed SM clock leaves the locked band. See docs/benchmark_methodology.md and issue #131."
   },
   "kernels": {
     "kernels/gemm/hgemm/hgemm_16warp.cu": {
@@ -31,7 +32,11 @@
       "2048_2048_2048": {"ms": 0.466, "tops": 36892,
                          "match": "igemm_sparse_tiled",
                          "value_label": "dense-equiv GFLOPS",
-                         "note": "median of 7 valid samples, 2026-05-22, stable AC power, SM clock 1410 MHz (spread 34697-39575). 17% above the old 31588 — that 2026-05-10 value was recorded low (the power-supply fault, fixed mid-recording, depressed the early kernels). Approaches but does not match the CUDA-12.8 reading (0.433 / 39674; new value is 7% below it). Supersedes 0.544 / 31588."}
+                         "note": "median of 7 valid samples, 2026-05-22, stable AC power, SM clock 1410 MHz (spread 34697-39575). 17% above the old 31588 — that 2026-05-10 value was recorded low (the power-supply fault, fixed mid-recording, depressed the early kernels). Approaches but does not match the CUDA-12.8 reading (0.433 / 39674; new value is 7% below it). Supersedes 0.544 / 31588."},
+      "4096_4096_4096": {"ms": 2.722, "tops": 50497, "clock_lock": 1605,
+                         "match": "igemm_sparse_tiled",
+                         "value_label": "dense-equiv GFLOPS",
+                         "note": "Power-bound kernel: it draws >150 W mid-run, so at native boost a varying fraction of the bench's 50 averaged launches hits SwPowerCap, giving a ~1.9x bimodal average with no fair baseline. Measured under a host-side clock lock (Windows nvidia-smi.exe -lgc 1605,1605, elevated): median of 11 valid samples, 2026-05-22, spread 1.02x (within ±5%). 1605 MHz is the highest clock the lock holds cleanly — above it the kernel sags back under the 150 W cap (clock_lock_sweep.R: 1605->50.5k, 1710->50.9k, 1785->SwPowerCap). Gated only when bench_regress.R is run with --clock-locked 1605; SKIPPED otherwise (the pre-push hook does not lock, by design). Supersedes the removed 2026-05-10 power-fault entry (4.449 ms / 30889). See docs/inventory.md and issue #131."}
     },
     "kernels/gemm/igemm/igemm_pipelined_cpasync.cu": {
       "exe": "kernels/gemm/igemm/bench",
