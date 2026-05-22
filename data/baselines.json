@@ -1,8 +1,8 @@
 {
-  "recorded_date": "2026-05-10",
-  "previous_recorded_date": "2026-05-05",
+  "recorded_date": "2026-05-22",
+  "previous_recorded_date": "2026-05-10",
   "platform": "RTX 3070 Ti Laptop (GA104, sm_86, Ampere)",
-  "note": "Re-baselined under Tier 10 valid_when policy on CUDA 13.2 (median of 5 valid samples per kernel; SKIPPED samples discarded). Original 2026-05-05 baselines were CUDA 12.8 — most kernels match within 0.5%, two showed real measured improvement, igemm_sparse_tiled regressed per Obs HH (CUDA 13.2 IMMA stall behavior change).",
+  "note": "Re-baselined 2026-05-22 under stable AC power. The 2026-05-10 recording was contaminated: hgemm/igemm were re-measured this session (median of 7 valid samples each, driver 595.97 / CUDA 13.2) and corrected — hgemm_16warp 2048³ matches old, hgemm_16warp 4096³ is 4.3% below, igemm_sparse_tiled 2048³ is 17% above (old recorded low). igemm_sparse_tiled 4096³ is power-bound on this 150 W laptop and has no fair native-boost baseline (SwPowerCap throttles a varying fraction of the bench's 50 averaged launches); its entry is removed from the automated gate and recorded as a documented reference in docs/inventory.md (50497 dense-equiv GFLOPS at a host-side -lgc lock of 1605 MHz — see scripts/probe/clock_lock_sweep.R). Clock-lock IS available via the Windows-host nvidia-smi.exe (#125 verdict corrected).",
   "default_valid_when": {
     "require_no_throttle": true,
     "allow_throttle": ["GpuIdle"],
@@ -19,24 +19,19 @@
   "kernels": {
     "kernels/gemm/hgemm/hgemm_16warp.cu": {
       "exe": "kernels/gemm/hgemm/bench",
-      "2048_2048_2048": {"ms": 0.539, "gflops": 31875,
+      "2048_2048_2048": {"ms": 0.540, "gflops": 31789,
                          "match": "hgemm_16warp (128x128 2blk/SM)",
-                         "note": "median of 5 valid samples, 2026-05-10 (was 0.527 / 31910 on CUDA 12.8)"},
-      "4096_4096_4096": {"ms": 4.327, "gflops": 31765,
+                         "note": "median of 7 valid samples, 2026-05-22, stable AC power, SM clock 1740-1770 MHz boost (spread 30533-31873, ±4%). Matches the 2026-05-10 value (31875) within 0.3% — that recording was not contaminated for this config. Supersedes 0.539 / 31875."},
+      "4096_4096_4096": {"ms": 4.521, "gflops": 30397,
                          "match": "hgemm_16warp (128x128 2blk/SM)",
-                         "note": "median of 5 valid samples, 2026-05-10 (was 4.220 / 31910 on CUDA 12.8)"}
+                         "note": "median of 7 valid samples, 2026-05-22, stable AC power, SM clock 1770-1785 MHz boost (spread 30005-30569, ±2%). 4.3% below the old 31765 and 1.4% above the 2026-05-21 cold-clock re-measure (29969) — sits between the two. Clean tight measurement; the 4.3% gap is within laptop run-to-run + possible driver delta (595.97). Supersedes 4.327 / 31765."}
     },
     "kernels/gemm/igemm/igemm_sparse_tiled.cu": {
       "exe": "kernels/gemm/igemm/bench_sparse",
-      "2048_2048_2048": {"ms": 0.544, "tops": 31588,
+      "2048_2048_2048": {"ms": 0.466, "tops": 36892,
                          "match": "igemm_sparse_tiled",
                          "value_label": "dense-equiv GFLOPS",
-                         "note": "median of 5 valid samples, 2026-05-10. Was 0.433 / 39674 on CUDA 12.8; CUDA 13.2 reverts the metadata-preload IMMA gain (see Obs HH). Stable at this level on the new toolchain."},
-      "4096_4096_4096": {"ms": 4.449, "tops": 30889,
-                         "match": "igemm_sparse_tiled",
-                         "value_label": "dense-equiv GFLOPS",
-                         "tolerance": 0.30,
-                         "note": "median of 5 valid samples, 2026-05-10. Bimodal on this laptop: 3.85ms (boost) vs 6.5ms (steady) at the same clock and no throttle signal — likely DRAM cache state at launch. Wider tolerance accepts both modes; re-investigate when running on a desktop GPU."}
+                         "note": "median of 7 valid samples, 2026-05-22, stable AC power, SM clock 1410 MHz (spread 34697-39575). 17% above the old 31588 — that 2026-05-10 value was recorded low (the power-supply fault, fixed mid-recording, depressed the early kernels). Approaches but does not match the CUDA-12.8 reading (0.433 / 39674; new value is 7% below it). Supersedes 0.544 / 31588."}
     },
     "kernels/gemm/igemm/igemm_pipelined_cpasync.cu": {
       "exe": "kernels/gemm/igemm/bench",

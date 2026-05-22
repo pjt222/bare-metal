@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-21 | Branch: main
+> Last updated: 2026-05-22 | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -203,41 +203,77 @@ number as the only obtainable one). Decide next session.
 - `scripts/probe/rebaseline_results.rds` — saved by the script on a
   clean finish; holds the full per-sample data.tables.
 
+## Latest session — proper baseline under stable power + clock-lock (2026-05-22)
+
+Stable AC power restored. Re-ran `rebaseline_measure.R` — all 4
+configs measured at boost/native clock (the 2026-05-21 cold-clock run
+was itself done under unstable power). Then discovered clock-lock IS
+available and used it to crack the "un-measurable" igemm 4096³.
+
+**Final baseline set (patched into `data/baselines.json`):**
+
+| Config (kernel)            | Baseline                      | Clock regime        | Old 2026-05-10 |
+|----------------------------|-------------------------------|---------------------|----------------|
+| `hgemm_16warp` 2048³       | 31789 GFLOPS / 0.540 ms       | native boost 1740-1770 | 31875       |
+| `hgemm_16warp` 4096³       | 30397 GFLOPS / 4.521 ms       | native boost 1770-1785 | 31765       |
+| `igemm_sparse_tiled` 2048³ | 36892 dq-GFLOPS / 0.466 ms    | native 1410         | 31588          |
+| `igemm_sparse_tiled` 4096³ | **50497 dq-GFLOPS / 2.722 ms** | **locked 1605 MHz** | 30889          |
+
+**Clock-lock — #125 verdict was wrong, #125 reopened.** #125 closed
+"unavailable" on a WSL-side test only. The **Windows-host
+`nvidia-smi.exe -lgc MIN,MAX`** works (driver 595.97, elevated shell);
+a host-side lock applies to the whole GPU incl. WSL CUDA. `-rgc`
+restores boost.
+
+**igemm 4096³ was never un-measurable — it was throttle-contaminated.**
+The bench averages 50 launches; `SwPowerCap` hits a varying fraction
+mid-run → ~1.9× bimodal average. Locked at 1605 MHz it is stable
+(spread 1.02×, 11/11 within ±5%). Sweep (`scripts/probe/clock_lock_sweep.R`,
+results in `clock_lock_sweep.rds`): 1200→37k, 1410→44k, 1500→47k,
+1605→50.5k, 1710→50.9k, 1785→52k-but-SwPowerCap-active. Above ~1605
+the kernel is on a **power-bound plateau** — more clock just sags back
+under the cap. 1605 is the highest clock the lock holds cleanly.
+
+**igemm 4096³ removed from the automated gate.** A locked-1605 value
+can't be regression-checked by `bench_regress.R` (re-measures at
+native boost → false alarms). Recorded as a documented reference in
+`docs/inventory.md`; gating it needs a lock-aware harness — **filed
+as #131**.
+
+Pipeline fix: `clock_lock_sweep.R` warmup 8→20 (8 didn't settle the
+GPU at high clock — recurring slow first sample was a warmup
+artifact, confirmed gone at 20).
+
+**Uncommitted this session** (nothing committed — awaiting user):
+- `data/baselines.json` — 3 clean medians patched, igemm 4096³ entry
+  removed, top-level `recorded_date`/`note` updated.
+- `docs/inventory.md` — igemm 4096³ reference-value note added.
+- `scripts/probe/clock_lock_sweep.R` (new) + `clock_lock_sweep.rds`,
+  `clock_lock_sweep.log`.
+- `scripts/probe/rebaseline_measure.R` + `rebaseline_results.rds`
+  (still uncommitted from 2026-05-21 — placement decision below).
+
 ## Next steps
 
-1. **[USER decision] Where does the R tooling live?** User stated
-   `cuasmR` is the project's tooling suite and "should include our
-   complete R-based pipeline and tooling". `scripts/probe/*.R`
-   (`probe_clock_lock.R`, `probe_gpu_power.R`, `rebaseline_measure.R`)
-   currently sit loose in `scripts/`. Decide: migrate the probe +
-   measurement tooling into the `cuasmR` package, or keep loose.
-   This gates committing `rebaseline_measure.R`.
-2. **Decide igemm 4096³** — it throttles mid-run on every sample, so
-   no no-throttle baseline is obtainable. Two options: (a) keep the
-   old 30889 value with its permanent `tolerance: 0.30`; or (b) add
-   a per-kernel `valid_when` that *allows* `SwPowerCap` for this
-   config and record the throttled-steady number as the honest
-   baseline. (b) is more truthful — the throttled number is the only
-   number this hardware can produce for this kernel.
-3. **Patch `data/baselines.json`** — apply the 3 clean medians
-   (hgemm 2048³/4096³, igemm 2048³ — table above) plus the igemm
-   4096³ decision. Rewrite each `note`: date, sample count, sustained
-   cold-clock, supersedes the power-fault 2026-05-10 value. Update
-   top-level `recorded_date` / `note`. Procedure:
-   `docs/rebaseline_protocol.md` §"Output".
-4. **#129 — add `min_clock_sm: 1380`** to `default_valid_when` in
-   `baselines.json`. Now unblocked — recording clock is known
-   (~1410 MHz). Review/narrow the `tolerance: 0.30` band-aids on
-   `flash_attn_br16_regpv` + `igemm_sparse_tiled` 4096³.
-5. **Push** the unpushed `main` commits (11 + whatever this session
-   adds) — pre-push `bench_regress.R` should pass once
-   `baselines.json` matches the hardware; fires `Closes #127`.
-6. **#126 — GPU-mode metadata**: decide source of truth (env var vs
-   Windows-host query) and add `gpu_mode`.
-7. **#124 — `bench-all` runner** (epic): build on
-   `benchmark_methodology.md` + `rebaseline_protocol.md` once #126
-   lands.
-8. **#128 — OC showcase**: deferred.
+1. **Commit this session's work.** `data/baselines.json` +
+   `docs/inventory.md` + `scripts/probe/clock_lock_sweep.R`. Then the
+   unpushed `main` commits (now ~13) can push — pre-push
+   `bench_regress.R` should pass (igemm 4096³ no longer gated;
+   hgemm/igemm 2048³ baselines now match hardware). Fires `Closes #127`.
+2. **[USER decision] Where does the R tooling live?** `cuasmR` is
+   meant to hold the complete R pipeline; `scripts/probe/*.R`
+   (`probe_clock_lock.R`, `probe_gpu_power.R`, `rebaseline_measure.R`,
+   `clock_lock_sweep.R`) sit loose. Migrate into `cuasmR` or keep loose.
+3. **#131 — lock-aware `bench_regress`.** Acquire a host-side clock
+   lock before measuring power-bound kernels; re-add igemm 4096³ to
+   `baselines.json` with `clock_lock: 1605` once it lands.
+4. **#129 — add `min_clock_sm`** to `default_valid_when`. Recording
+   clocks now known per kernel (hgemm ~1770 boost, igemm 2048³ 1410).
+   Review the `tolerance: 0.30` band-aid on `flash_attn_br16_regpv`.
+5. **#126 — GPU-mode metadata**: env var vs Windows-host query.
+6. **#124 — `bench-all` runner** (epic): after #126.
+7. **#128 — OC showcase**: deferred (note: the clock-lock sweep here
+   is the groundwork — `-lgc` above native is exactly the OC lever).
 
 Closed earlier, not in scope unless reopened:
 

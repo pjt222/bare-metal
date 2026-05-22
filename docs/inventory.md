@@ -30,6 +30,25 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 | **Conv2d implicit GEMM**| 64×64 320ch | **1.13 ms** | **6,687**       | 3.8%    |
 | **Online FP16→INT8**    | 4096³   | —         | **17,070**          | 9.6%    |
 
+> **`igemm_sparse_tiled` 4096³ — documented reference, not a regression-gated baseline.**
+> Measured 2026-05-22: **50,497 dense-equiv GFLOPS / 2.722 ms** at a
+> host-side clock lock of 1605 MHz (median of 11 clean samples,
+> spread 1.02×). This kernel is power-bound on the 150 W laptop —
+> its bench averages 50 kernel launches and `SwPowerCap` throttles a
+> varying fraction of them mid-run, so at native boost the averaged
+> number is ~1.9× bimodal and there is no fair no-throttle baseline.
+> Locking the SM clock (`nvidia-smi.exe -lgc 1605,1605`, Windows host,
+> elevated) keeps every launch under the power budget and the number
+> is stable. Above ~1605 MHz the kernel is on a power-bound plateau:
+> 1710 MHz and 1785 MHz deliver the same ~50-53k throughput while the
+> clock sags back below the lock. The old 2026-05-10 baseline (30,889)
+> and the 2026-05-21 gated re-baseline (27,170) were both
+> throttle-contaminated — the real figure is ~63% higher. Because
+> `bench_regress.R` re-measures at native boost, this entry is removed
+> from `data/baselines.json`; gating it needs a lock-aware harness.
+> Sweep data: `scripts/probe/clock_lock_sweep.R` /
+> `scripts/probe/clock_lock_sweep.rds`.
+
 ### Phase progression — naive SGEMM to sparse INT8
 
 ![Phase progression](figures/phase_progression.png)
