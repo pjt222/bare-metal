@@ -15,6 +15,12 @@ bench_*
 !bench_*.cu
 !scripts/bench_*.R
 !scripts/bench_*.py
+# The `bench` / `bench_*` rules above are for compiled binaries, but
+# they also swallow the scripts/bench/ R-source directory. Re-include
+# it and its R sources (the compiled kernel `bench` executables live
+# under kernels/, not here, so they stay ignored).
+!scripts/bench/
+!scripts/bench/*.R
 !tests/bench_regress/
 !tests/bench_regress/**
 test_dense_manual
