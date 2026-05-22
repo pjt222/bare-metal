@@ -76,7 +76,9 @@ jobs:
   # GPU. Execute mode is left on (the default); we render fully, not with
   # execute:false.
   #
-  # Packages required: ggplot2, dplyr, tidyr, scales (per AGENTS.md and renv.lock).
+  # Packages required: ggplot2, dplyr, tidyr, scales, tibble (the qmd's R
+  # chunks) plus knitr + rmarkdown — the qmd declares `engine: knitr`, and
+  # Quarto's knitr engine cannot render without them.
   # ---------------------------------------------------------------------------
   quarto-render:
     name: Quarto render (kernel_architecture.qmd)
@@ -93,7 +95,8 @@ jobs:
         shell: Rscript {0}
         run: |
           install.packages(
-            c("ggplot2", "dplyr", "tidyr", "scales", "tibble"),
+            c("ggplot2", "dplyr", "tidyr", "scales", "tibble",
+              "knitr", "rmarkdown"),
             repos = "https://cloud.r-project.org"
           )
 
