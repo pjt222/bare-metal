@@ -137,9 +137,24 @@ directly to the dGPU.
   reports `Display Active: Disabled` / `Display Attached: No` in
   *both* modes, because the dGPU never has a guest-side display in
   the WSL VM. `GPU Operation Mode` is empty (a Tesla-only field).
-  GPU mode therefore cannot be auto-detected from inside WSL — it
-  must be supplied from the Windows host or recorded manually as a
-  run parameter. Tracked for the metadata schema as a future issue.
+  GPU mode therefore cannot be auto-detected from inside WSL.
+
+### Recording GPU mode (issue #126)
+
+Because the mode cannot be auto-detected, it is supplied explicitly.
+Set the `BARE_METAL_GPU_MODE` environment variable before a benchmark
+run:
+
+```bash
+export BARE_METAL_GPU_MODE=dgpu     # or: hybrid
+```
+
+`scripts/bench/bench_meta.R` (`capture_gpu_state()`) records it as
+`$host$gpu_mode` in every run's metadata, and the one-line GPU-state
+header printed by `bench_regress.R` shows `gpu_mode=...`. Accepted
+values are `hybrid` and `dgpu`; anything else, including unset,
+records as `unknown`. The value is **never** guessed from
+`display_active` — that field is identical in both modes under WSL.
 
 ## Overclocking — deferred
 
