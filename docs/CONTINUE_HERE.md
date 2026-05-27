@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-27 (#131/#125 closed; #135 grid-sweep tool filed) | Branch: main
+> Last updated: 2026-05-27 (#135 grid-sweep tool feature-complete; P2-5 single-Ctrl+C re-test pending) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -333,24 +333,60 @@ output, Ctrl+C-safe `-rgc` via `[Console]::CancelKeyPress`,
 `-Resume` after crash, and `-DryRun` validation. Full design in the
 issue body — implement in a dedicated session.
 
+## Latest session — #135 grid sweep tool, Phases 1+2+4+5 (2026-05-27)
+
+Implemented the grid-sweep tool end-to-end in 5 commits. `main`
+synced; pre-push hook PASSED each time (7 configs, 0 regressions).
+
+| Commit  | What                                                          |
+|---------|---------------------------------------------------------------|
+| 7bd55b4 | Phase 1 — Ctrl+C-safe orchestrator skeleton. Lock-state sentinel at `eval_logs/.LOCK_HELD`; C# `Add-Type` cancel handler (PS script-block handlers crash with "no Runspace available" — the .NET cancel event fires on a worker thread with no PS Runspace, T2 in Phase 1 testing proved this). Dummy `Start-Sleep` inner. Manual T1, T2, T2-clean, T4, T4b all PASSED. |
+| 02b2831 | Phase 2 — YAML spec + R planner/measurer + full orchestrator. `scripts/probe/grid_sweep.yml` declarative spec (6 kernel × N regimes = 28 cells). `scripts/probe/grid_measure.R` with `--mode plan` (writes cell list to `--out` JSON file; renv NOTEs on stdout would otherwise pollute pipe-capture) and `--mode measure` (per-cell, two-sided clock-band check, JSONL append per sample). `run_grid_sweep.ps1` consumes plan, groups by clock, locks per group, restores between groups. C# ChildPid tracking + explicit `wsl.exe -e pkill -f grid_measure.R` because `Process.Kill(tree=true)` only walks Windows tree — WSL2 Linux processes survive otherwise. `-OnlyCellId`, `-DryRun`, `-Resume`, `-NoLock`, `-ForceClearSentinel` switches. |
+| 8903337 | Phase 4 + 5 — `scripts/probe/grid_collect.R` materialiser (tolerant JSONL→RDS reader, `--print` summary with per-(cell,clock) median + reject-reason histogram). `docs/grid_sweep_methodology.md` documents architecture rationale (JSONL-not-RDS for atomicity; C# handler for Runspace problem; WSL pkill for tree-kill gap), canonical resume key `(git_head, clock_target_mhz, cell_id)`, regime-selection guidance, failure-mode → diagnostic table, six invariants. |
+| 4865710 | Fix from P2-5 elevated test — user reported "skip, not stop". Ctrl+C reached the foreground child (wsl→Rscript) before pwsh's C# CancelKeyPress handler. R died with exit 1; orchestrator's per-cell try/catch treated as recoverable, applied NEXT group's lock, continued. Two-sided fix: R traps `interrupt` → exits 130 distinct from generic 1; PS sweep loop checks `cellExit == 130` and breaks both loops via `:groupLoop` label. |
+| 246c961 | Fix from P2-5 re-test — user reported "works, but needed three Ctrl+C". Each press only killed the current sample's bench child (which exits 130 = 128 + SIGINT); R didn't see the signal itself (consumed by child) and proceeded to next sample. Fix: per-sample loop checks `r$rc == 130L` immediately after `run_one_sample` and propagates as cancel. Single press should now suffice. **Re-test pending in next session.** |
+
+#135 acceptance criteria status:
+- [x] `grid_sweep.yml` with the 6 baselined kernels
+- [x] `grid_measure.R` standalone, unit-smoke (smoke-002) passes headless
+- [x] `run_grid_sweep.ps1` runs the full spec under elevated pwsh
+- [x] Resume verified (Step 1: 28 cells measured 3 → Step 2: 25 pending)
+- [~] Ctrl+C verified — partially. C# handler PASSED Phase 1 T2; mid-measure abort verified at exit 130 path, single-press fix unverified.
+- [x] `docs/grid_sweep_methodology.md` written
+- [x] `run_locked_eval.ps1` UNCHANGED (separation preserved)
+
+Field-validated cell measurements from the partial P2-5 run
+(igemm_sparse_4096 plateau, elevated 1605 NOT in this run because
+that's the cancelled cell — but 1200/1410/1500 measured cleanly):
+- 1200 MHz: median 36293 dq-GFLOPS (spread 31673-37876)
+- 1410 MHz: median 42108 dq-GFLOPS (spread 41584-45771)
+- 1500 MHz: median 47019 dq-GFLOPS (spread 32414-48595 — one sample dropped to 32k, possible mid-lock blip)
+
+These match the clock_lock_sweep.R numbers (1410→44k, 1500→47k)
+within run-to-run variance. Sanity-check passes.
+
 ## Next steps
 
-1. **#135 — grid sweep tool**. Implement per the design in the issue:
-   YAML spec at `scripts/probe/grid_sweep.yml`, `grid_measure.R`
-   inner, `run_grid_sweep.ps1` orchestrator. Includes Ctrl+C-safe
-   cleanup, lock-state sentinel, resume support, schema validation
-   before lock. New session.
-2. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
-   `scripts/probe/*.R` + `scripts/bench/*.R` into documented, tested
-   `cuasmR` functions; `R CMD check` clean. `measure_clock_locked()`,
-   the `rebaseline_measure.R` sampling loop, and (when shipped) the
-   #135 `grid_measure.R` function are duplicate-by-design for now —
-   dedupe into the package here.
-3. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
-   API (#134) once it exists.
-4. **#128 — OC showcase**: deferred. The clock-lock sweep is the
-   groundwork — `-lgc` above native clock is exactly the OC lever.
-   Likely consumes #135's grid_sweep output.
+1. **[USER] Re-test P2-5 with `246c961`.** In elevated pwsh:
+   `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096`.
+   Wait for first sample line of any group, press Ctrl+C **once**.
+   Expect: `Bench exited 130 (SIGINT)` → `Cell cancelled by user`
+   → cleanup → exit. Verify no orphans:
+   `Get-Process Rscript -ErrorAction SilentlyContinue; wsl -- pgrep -f grid_measure.R`.
+   If single press still requires multiple, investigate further.
+2. **P2-6 — full elevated sweep (~1 h).** Once P2-5 re-test is green,
+   run the full plan:
+   `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1`.
+   Then materialise: `wsl -- Rscript scripts/probe/grid_collect.R --print`.
+   Inspect `grid_sweep_results.rds` for the full plateau map. Close #135.
+3. **#134 — cuasmR CRAN-ready migration** (epic). `grid_measure.R`
+   is now the canonical measurement function and joins
+   `measure_clock_locked()` + the `rebaseline_measure.R` sampling
+   loop as duplicate-by-design code to dedupe into cuasmR.
+4. **#124 — `bench-all` runner** (epic). Build on the packaged
+   cuasmR API (#134) once it exists.
+5. **#128 — OC showcase**: deferred. The grid_sweep above-native-
+   clock data will be its data source.
 
 Closed earlier, not in scope unless reopened:
 
