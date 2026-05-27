@@ -314,6 +314,19 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
 
   for (i in seq_len(n_samples)) {
     r <- run_one_sample(exe_abs, args)
+
+    # Ctrl+C while R is blocked in system2 sends SIGINT to every
+    # process attached to the console: the bench child catches it and
+    # exits 130 (128 + SIGINT). R's own SIGINT handler may not fire
+    # (the signal was consumed by the child), so R continues to the
+    # next iteration. Detect bench rc==130 and propagate as cancel —
+    # otherwise the user has to press Ctrl+C once per remaining
+    # sample to actually stop. (Field report: needed three presses.)
+    if (identical(r$rc, 130L)) {
+      message("Bench exited 130 (SIGINT) — treating as user cancel")
+      quit(save = "no", status = 130L)
+    }
+
     parsed <- parse_bench_line(r$out, cell$match,
                                cell$value_label, cell$section)
     thr <- throttle_str(r$post)
