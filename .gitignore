@@ -4,6 +4,8 @@
 
 # Probe run artifacts (regenerated each run)
 scripts/probe/*.log
+scripts/probe/*.rds
+scripts/probe/eval_logs/
 
 # Generated SASS disassembly (keep hand-tuned variants)
 *.cuasm
