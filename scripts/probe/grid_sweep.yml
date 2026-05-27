@@ -1,0 +1,92 @@
+# grid_sweep.yml — declarative spec for multi-kernel × clock grid
+# sweep (#135). Consumed by scripts/probe/grid_measure.R; the
+# PowerShell orchestrator (run_grid_sweep.ps1) never reads this
+# file directly — it asks R for a planned cell list.
+#
+# Schema:
+#   defaults     : per-cell defaults, overridable per kernel.
+#     n_samples  : number of valid samples to collect per cell.
+#     warmup     : warmup launches before the first measured sample
+#                  (drives the GPU to the steady clock the lock
+#                   permits).
+#     band_mhz   : two-sided clock-band tolerance for sample
+#                  rejection under a clock lock.
+#   clocks       : default candidate locked clocks for cells whose
+#                  `regimes` is unspecified. Special value `native`
+#                  means no host-side lock — measure at whatever
+#                  boost the GPU picks.
+#   kernels      : list of cells. Each cell:
+#     id              : unique slug, used in resume-key
+#                        (git_head, clock_target, id).
+#     exe             : path (repo-relative) to the bench binary.
+#     args            : positional args passed to the bench.
+#     match           : substring of the bench-output line that
+#                        carries this kernel's number.
+#     section         : optional; substring of a section header.
+#                        Parser only considers lines after this
+#                        header until the next header.
+#     value_label     : optional; text after the throughput number
+#                        on the matched line (required when the
+#                        line carries multiple numbers).
+#     regimes         : list of clock targets meaningful for this
+#                        kernel. Each entry is an int (MHz) or the
+#                        string `native`. Defaults to top-level
+#                        `clocks` if omitted.
+#     n_samples       : optional per-cell override.
+#     warmup          : optional per-cell override.
+
+defaults:
+  n_samples: 7
+  warmup: 20
+  band_mhz: 30
+
+clocks: [1200, 1410, 1500, 1605, 1710, native]
+
+kernels:
+  - id: hgemm_16warp_2048
+    exe: kernels/gemm/hgemm/bench
+    args: [2048, 2048, 2048]
+    match: "hgemm_16warp (128x128 2blk/SM)"
+    regimes: [native, 1605, 1710]
+
+  - id: hgemm_16warp_4096
+    exe: kernels/gemm/hgemm/bench
+    args: [4096, 4096, 4096]
+    match: "hgemm_16warp (128x128 2blk/SM)"
+    regimes: [native, 1605, 1710]
+
+  - id: igemm_sparse_2048
+    exe: kernels/gemm/igemm/bench_sparse
+    args: [2048, 2048, 2048]
+    match: igemm_sparse_tiled
+    value_label: dense-equiv GFLOPS
+    regimes: [1200, 1410, 1500, 1605, 1710, native]
+
+  - id: igemm_sparse_4096
+    exe: kernels/gemm/igemm/bench_sparse
+    args: [4096, 4096, 4096]
+    match: igemm_sparse_tiled
+    value_label: dense-equiv GFLOPS
+    regimes: [1200, 1410, 1500, 1605, 1710]
+    # Native intentionally omitted: power-bound at native boost, all
+    # samples throttle. Use scripts/probe/run_locked_eval.ps1 for
+    # the single-cell verified path; this grid maps the plateau.
+
+  - id: igemm_cpasync_4096
+    exe: kernels/gemm/igemm/bench
+    args: [4096, 4096, 4096]
+    match: igemm_cpasync
+    regimes: [1200, 1410, 1500, 1605, 1710, native]
+
+  - id: flash_attn_br16_regpv_1024
+    exe: kernels/attention/flash_attention/bench_br16_regpv
+    args: [1024, 8, 8]
+    match: flash_attn_br16_regpv
+    regimes: [native, 1605, 1710]
+
+  - id: conv2d_implicit_gemm_sd64
+    exe: kernels/convolution/conv2d/bench_implicit_gemm
+    args: []
+    match: "Implicit (single kern)"
+    section: "SD 64"
+    regimes: [native, 1605]
