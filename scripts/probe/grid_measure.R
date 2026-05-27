@@ -425,4 +425,15 @@ main <- function() {
   stop(sprintf("unknown mode: %s", args$mode))
 }
 
-if (sys.nframe() == 0L) main()
+if (sys.nframe() == 0L) {
+  # Trap Ctrl+C so the exit code distinguishes "user cancelled" (130)
+  # from "real failure" (1). PowerShell orchestrator checks for 130
+  # to abort the sweep instead of continuing to the next cell.
+  tryCatch(
+    main(),
+    interrupt = function(c) {
+      message("Interrupted by user (SIGINT)")
+      quit(save = "no", status = 130)
+    }
+  )
+}

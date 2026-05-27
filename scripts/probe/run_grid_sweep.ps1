@@ -273,7 +273,9 @@ function New-WslRscriptArgs([string[]]$RscriptArgs) {
 }
 
 # Run a child wsl.exe with PID tracking + console streaming.
-# Throws on non-zero exit code.
+# Returns the child exit code. Caller decides how to respond — the
+# distinction between 130 (R-side SIGINT) and other non-zero codes
+# matters for cancel-vs-failure handling in the sweep loop.
 function Invoke-WslChild([string[]]$WslArgs, [string]$Label) {
   Write-Host "[$Label] wsl $($WslArgs -join ' ')" -ForegroundColor DarkGray
   $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -288,9 +290,7 @@ function Invoke-WslChild([string[]]$WslArgs, [string]$Label) {
   } finally {
     [GridSweepCleanup]::ChildPid = 0
   }
-  if ($proc.ExitCode -ne 0) {
-    throw "[$Label] child exited $($proc.ExitCode)"
-  }
+  return $proc.ExitCode
 }
 
 # Capture child stdout (used for planner JSON parse).
@@ -374,7 +374,10 @@ try {
   if ($Resume) {
     $planArgs += @("--resume-jsonl", $JsonlWsl)
   }
-  Invoke-WslChild (New-WslRscriptArgs $planArgs) "plan"
+  $planExit = Invoke-WslChild (New-WslRscriptArgs $planArgs) "plan"
+  if ($planExit -ne 0) {
+    throw "Planner exited $planExit"
+  }
   if (-not (Test-Path $planFile)) {
     throw "Planner did not produce $planFile"
   }
@@ -421,7 +424,9 @@ try {
   # Iterate
   # ---------------------------------------------------------------------
   $cellIdx = 0
-  foreach ($g in $groups) {
+  $cancelled = $false
+  :groupLoop foreach ($g in $groups) {
+    if ($cancelled) { break }
     $clockLabel = $g.Name
     $needsLock  = ($clockLabel -ne "native") -and (-not $NoLock)
     Write-Host ""
@@ -444,18 +449,30 @@ try {
         "--jsonl", $JsonlWsl,
         "--run-id", $RunId
       )
-      try {
-        Invoke-WslChild (New-WslRscriptArgs $measureArgs) "measure"
-      } catch {
-        # One cell failing should not abort the sweep — the JSONL still
-        # has partial data and the operator can investigate per-cell.
-        Write-Warning "Cell failed: $_"
+      $cellExit = Invoke-WslChild (New-WslRscriptArgs $measureArgs) "measure"
+
+      if ($cellExit -eq 130) {
+        # R-side SIGINT trap. User pressed Ctrl+C; the console signal
+        # reached the foreground child (wsl/R) before pwsh's C# handler.
+        # Abort the sweep cleanly — do NOT continue to the next cell.
+        Write-Warning "Cell cancelled by user (R exit 130). Aborting sweep."
+        $cancelled = $true
+        break groupLoop
+      }
+      if ($cellExit -ne 0) {
+        # A real cell failure: log + continue. The JSONL still has
+        # partial data for this cell; the operator can investigate.
+        Write-Warning "Cell failed (exit $cellExit). Continuing sweep."
       }
     }
 
     if ($needsLock) {
       Release-Lock
     }
+  }
+  if ($cancelled) {
+    Write-Host ""
+    Write-Host "Sweep aborted on user cancel." -ForegroundColor Yellow
   }
 }
 finally {
