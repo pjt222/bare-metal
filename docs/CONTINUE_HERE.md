@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-22 (#131 Phase 1 — lock-aware bench_regress) | Branch: main
+> Last updated: 2026-05-27 (#131/#125 closed; #135 grid-sweep tool filed) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -54,15 +54,13 @@ are benchmark-pipeline hardening — no queued kernel work.
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 134 | Migrate probe/bench R tooling into cuasmR; make cuasmR CRAN-ready (epic) |
+| 135 | Multi-kernel × clock grid sweep tool (filed 2026-05-27)        |
 
-Resolved 2026-05-22: #126 (GPU-mode metadata), #132 (docs CI Quarto
-render), #133 (cuasmR renv hygiene). #127/#129/#130 resolved earlier.
-
-**#131 + #125 — code-complete this session, NOT yet closed.** Commit
-`ecae5b7` (local, **unpushed**) implements lock-aware `bench_regress`.
-Its message carries `Closes #131, #125`, so the issues auto-close on
-push — but one verification path (real host-side lock → measures
-~50497) is still pending. See "Latest session" + Next steps #1.
+Resolved 2026-05-27: **#131** (lock-aware bench_regress — Phase 1
+end-to-end verified, `ecae5b7` + `7bfc307` pushed) and **#125**
+(clock-lock IS available host-side; closed with verification log
+reference). Resolved 2026-05-22: #126/#132/#133. #127/#129/#130
+resolved earlier.
 
 Design basis: [`benchmark_methodology.md`](benchmark_methodology.md).
 
@@ -303,28 +301,56 @@ The 4th path is the only gap. `ecae5b7`'s message says `Closes #131,
 #125`; do not push until that path is verified, or amend the message
 first. See Next steps #1.
 
+## Latest session — #131 verify + close, grid-sweep tool filed (2026-05-27)
+
+Closed the #131 verification gap and packaged the elevated workflow as
+a reusable script. `main` synced with origin (3 commits pushed:
+`ecae5b7`, `6da2a20`, `7bfc307`).
+
+| Commit  | What                                                          |
+|---------|---------------------------------------------------------------|
+| 7bfc307 | `scripts/probe/run_locked_eval.ps1` — elevated-pwsh driver. Asserts Administrator, locks SM clock via `nvidia-smi.exe -lgc`, calls `wsl.exe ... Rscript bench_regress.R --clock-locked`, restores via `-rgc` in `finally`. Captures pre/during/post GPU snapshots; logs full bench stdout to `scripts/probe/eval_logs/<stamp>_<kernel>_<mhz>.log` + structured JSONL row to `eval_logs/results.jsonl`. PS 5.1 + PS 7 compatible. `.gitignore`: `*.rds` + `eval_logs/`. |
+
+**Path 4 verified end-to-end** (the 2026-05-22 gap):
+
+| Path                                                            | Result |
+|-----------------------------------------------------------------|--------|
+| Real host-side lock 1605 (`nvidia-smi.exe -lgc 1605,1605`) → igemm 4096³ measures **50297 dq-GFLOPS = 99.6% of 50497 baseline, OK** | ✅ |
+| Pre-push hook: 7 configs, 0 regressions, igemm 4096³ SKIPPED as designed | ✅ |
+| `-rgc` restored boost (P0, 1770 MHz, 48 W)                       | ✅ |
+
+#131 auto-closed by `ecae5b7` trailer. #125 was NOT auto-closed (the
+`Closes #131, #125` form with a comma trips GitHub's parser — the
+second issue needs its own `Closes` keyword); closed manually with a
+reference to the verification log. Lesson: use one `Closes` per issue
+in trailers.
+
+**#135 filed** — multi-kernel × clock grid sweep tool. Deliberately
+scoped as a separate orchestrator (not an extension of
+`run_locked_eval.ps1`), with declarative YAML spec, pure R inner
+measurement function (destined for cuasmR per #134), structured rds
+output, Ctrl+C-safe `-rgc` via `[Console]::CancelKeyPress`,
+`-Resume` after crash, and `-DryRun` validation. Full design in the
+issue body — implement in a dedicated session.
+
 ## Next steps
 
-1. **[USER] Verify #131 end-to-end, then push.** In an elevated Windows
-   shell: `nvidia-smi.exe -lgc 1605,1605`. In WSL:
-   `Rscript scripts/bench/bench_regress.R --kernel kernels/gemm/igemm/igemm_sparse_tiled.cu --clock-locked 1605`.
-   Then `nvidia-smi.exe -rgc` (elevated). Expect igemm 4096³ to report
-   OK within 10 % of 50497. If it passes, `git push` — `ecae5b7`
-   auto-closes #131 + #125. If it fails or you push before verifying,
-   amend `ecae5b7` to drop `Closes #131, #125` first.
-2. **#131 Phase 2 — schtasks automation bridge** (optional). Register
-   elevated Windows Scheduled Tasks for `-lgc`/`-rgc`; WSL triggers
-   them with `schtasks.exe /run`. Removes the manual lock step. Not
-   required to close #131 — Phase 1 closes it.
-3. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
+1. **#135 — grid sweep tool**. Implement per the design in the issue:
+   YAML spec at `scripts/probe/grid_sweep.yml`, `grid_measure.R`
+   inner, `run_grid_sweep.ps1` orchestrator. Includes Ctrl+C-safe
+   cleanup, lock-state sentinel, resume support, schema validation
+   before lock. New session.
+2. **#134 — cuasmR CRAN-ready migration** (epic). Refactor loose
    `scripts/probe/*.R` + `scripts/bench/*.R` into documented, tested
-   `cuasmR` functions; `R CMD check` clean. `measure_clock_locked()`
-   and the `rebaseline_measure.R` sampling loop are duplicate-by-design
-   for now — dedupe into the package here.
-4. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
+   `cuasmR` functions; `R CMD check` clean. `measure_clock_locked()`,
+   the `rebaseline_measure.R` sampling loop, and (when shipped) the
+   #135 `grid_measure.R` function are duplicate-by-design for now —
+   dedupe into the package here.
+3. **#124 — `bench-all` runner** (epic). Build on the packaged cuasmR
    API (#134) once it exists.
-5. **#128 — OC showcase**: deferred. The clock-lock sweep is the
+4. **#128 — OC showcase**: deferred. The clock-lock sweep is the
    groundwork — `-lgc` above native clock is exactly the OC lever.
+   Likely consumes #135's grid_sweep output.
 
 Closed earlier, not in scope unless reopened:
 
