@@ -23,6 +23,10 @@ bench_*
 # under kernels/, not here, so they stay ignored).
 !scripts/bench/
 !scripts/bench/*.R
+# The cuasmR package R/ sources include bench_*.R files (issue #134
+# measurement migration); re-include them — they are library code, not
+# compiled bench artifacts.
+!R/cuasmR/R/bench_*.R
 !tests/bench_regress/
 !tests/bench_regress/**
 test_dense_manual

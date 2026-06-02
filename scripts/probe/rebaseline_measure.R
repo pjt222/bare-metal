@@ -39,7 +39,9 @@ local({
   }
 })
 
-source(here("scripts", "bench", "bench_meta.R"))
+# GPU/host state capture now lives in the cuasmR package (issue #134;
+# was source("scripts/bench/bench_meta.R")).
+suppressMessages(library(cuasmR))
 
 # ---- Parameters ------------------------------------------------------
 

@@ -13,20 +13,10 @@
 
 library(jsonlite)
 
-# GPU + host state pre/post each bench. Sourced here so other modules
-# can rely on bench_regress.R + meta together.
-.bench_meta_path <- {
-  candidates <- c(
-    file.path(dirname(sub("^--file=", "",
-                          grep("^--file=", commandArgs(trailingOnly = FALSE),
-                               value = TRUE)[1])),
-              "bench_meta.R"),
-    "scripts/bench/bench_meta.R"
-  )
-  ok <- candidates[file.exists(candidates)]
-  if (length(ok)) ok[[1]] else NA_character_
-}
-if (!is.na(.bench_meta_path)) source(.bench_meta_path)
+# GPU + host state pre/post each bench, now from the cuasmR package
+# (issue #134; was source("scripts/bench/bench_meta.R")). capture_gpu_state,
+# classify_meta, decode_throttle, summarise_meta are exported by cuasmR.
+suppressMessages(library(cuasmR))
 
 # WSL CUDA libpath (R subprocesses can't see GPU otherwise).
 .WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
