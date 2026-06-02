@@ -80,31 +80,16 @@ configs <- list(
 # run_bench() (run + GPU-state capture) now lives in cuasmR (issue #134);
 # the caller still chdir's into the exe dir first.
 
-#' Extract `ms` and the throughput number immediately preceding
-#' `label` from the bench-output line for this kernel. A bench prints
-#' both a PASS/verification line and a perf line for the same kernel
-#' name, so candidate lines are filtered to those that actually carry
-#' a throughput reading (the label) and a timing (`ms`).
-parse_bench_line <- function(out, match, label) {
-  cand <- grep(match, out, fixed = TRUE, value = TRUE)
-  cand <- cand[grepl(label, cand, fixed = TRUE) &
-               grepl("ms",  cand, fixed = TRUE)]
-  if (length(cand) == 0L) return(list(ms = NA_real_, tput = NA_real_))
-  line <- cand[[length(cand)]]
-  label_rx <- gsub("([().])", "\\\\\\1", label)
-  list(
-    ms   = suppressWarnings(as.numeric(
-             sub(".*?([0-9.]+)\\s*ms.*", "\\1", line))),
-    tput = suppressWarnings(as.numeric(
-             sub(sprintf(".*?([0-9.]+)\\s*%s.*", label_rx), "\\1", line)))
-  )
-}
+# Throughput parsing now lives in cuasmR::parse_throughput (issue #134).
+# `cfg$label` maps to the unified value_label arg; pick = "last" (the
+# perf line is the last match-bearing line). The parser returns
+# `$throughput` (was `$tput` in the old local parse_bench_line).
 
 #' Classify one run against the cold-clock recording regime.
 #' Returns "valid" or a rejection reason.
 classify_sample <- function(run, parsed, cfg) {
   if (run$rc != 0L) return("crash")
-  if (is.na(parsed$tput)) return("parse-fail")
+  if (is.na(parsed$throughput)) return("parse-fail")
   meta <- classify_meta(run$pre, run$post,
                         list(require_no_throttle = TRUE,
                              allow_throttle = c("GpuIdle")))
@@ -138,15 +123,16 @@ collect_samples <- function(cfg, exe_abs) {
   while (n_valid < cfg$nvalid && attempt < max_try) {
     attempt <- attempt + 1L
     run     <- run_bench(exe_abs, cfg$args)
-    parsed  <- parse_bench_line(run$out, cfg$match, cfg$label)
+    parsed  <- parse_throughput(run$out, match = cfg$match,
+                                value_label = cfg$label, pick = "last")
     verdict <- classify_sample(run, parsed, cfg)
     clk     <- run$post$gpu$clock_sm
     if (verdict == "valid") {
       n_valid <- n_valid + 1L
       rows[[n_valid]] <- data.table(
-        tput = parsed$tput, ms = parsed$ms, clk = as.integer(clk))
+        tput = parsed$throughput, ms = parsed$ms, clk = as.integer(clk))
       cli_alert_success(paste0(
-        "try {attempt}: {round(parsed$tput, 1)} {cfg$label}  ",
+        "try {attempt}: {round(parsed$throughput, 1)} {cfg$label}  ",
         "{round(parsed$ms, 3)} ms  clk {clk} MHz  ",
         "[{n_valid}/{cfg$nvalid}]"))
     } else {

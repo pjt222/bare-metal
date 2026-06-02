@@ -196,53 +196,8 @@ build_plan <- function(spec, resume_jsonl) {
 # ----------------------------------------------------------------------
 # Measure
 # ----------------------------------------------------------------------
-parse_bench_line <- function(out, match, value_label, section) {
-  lines <- out
-  if (!is.null(section) && nzchar(section)) {
-    in_sec <- FALSE
-    keep <- logical(length(lines))
-    for (i in seq_along(lines)) {
-      s <- trimws(lines[[i]])
-      is_hdr <- grepl("^(===|---)", s, perl = TRUE)
-      if (is_hdr) {
-        in_sec <- grepl(section, lines[[i]], fixed = TRUE)
-        next
-      }
-      keep[[i]] <- in_sec
-    }
-    lines <- lines[keep]
-  }
-  cand <- grep(match, lines, fixed = TRUE, value = TRUE)
-  cand <- cand[grepl("ms", cand, fixed = TRUE)]
-  if (!is.null(value_label) && nzchar(value_label))
-    cand <- cand[grepl(value_label, cand, fixed = TRUE)]
-  if (length(cand) == 0L)
-    return(list(ms = NA_real_, throughput = NA_real_, unit = NA_character_))
-
-  line <- cand[[length(cand)]]
-  ms <- suppressWarnings(as.numeric(
-    sub(".*?([0-9.]+)\\s*ms.*", "\\1", line)))
-
-  if (!is.null(value_label) && nzchar(value_label)) {
-    rx <- gsub("([().])", "\\\\\\1", value_label)
-    tp <- suppressWarnings(as.numeric(
-      sub(sprintf(".*?([0-9.]+)\\s*%s.*", rx), "\\1", line)))
-    unit <- if (grepl("TOPS", value_label, ignore.case = TRUE))
-              "TOPS" else "GFLOPS"
-  } else {
-    m <- regmatches(line,
-                    regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                            line, perl = TRUE, ignore.case = TRUE))[[1]]
-    if (length(m) >= 3L) {
-      tp <- as.numeric(gsub(",", "", m[[2]], fixed = TRUE))
-      unit <- toupper(m[[3]])
-    } else {
-      tp <- NA_real_
-      unit <- NA_character_
-    }
-  }
-  list(ms = ms, throughput = tp, unit = unit)
-}
+# Throughput parsing now lives in cuasmR::parse_throughput (issue #134).
+# grid uses pick = "last" (the perf line is the last match-bearing line).
 
 throttle_str <- function(post) {
   reasons <- setdiff(post$gpu$throttle, "GpuIdle")
@@ -321,8 +276,10 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
       quit(save = "no", status = 130L)
     }
 
-    parsed <- parse_bench_line(r$out, cell$match,
-                               cell$value_label, cell$section)
+    parsed <- parse_throughput(r$out, match = cell$match,
+                               section = cell$section,
+                               value_label = cell$value_label,
+                               pick = "last")
     thr <- throttle_str(r$post)
     clk_obs <- as.integer(r$post$gpu$clock_sm %||% NA_integer_)
 

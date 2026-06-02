@@ -121,92 +121,12 @@ find_executable <- function(kernel_path) {
 #
 # Bench stdout typically holds multiple `<X> ms ... <Y> (GFLOPS|TOPS)`
 # lines, one per kernel variant. The baseline entry tells us which one
-# is *this* kernel's number via three optional fields:
-#
-#   match        substring of the line containing the kernel's label
-#   section      substring of an earlier section header (only consider
-#                lines after this header until the next header)
-#   value_label  text immediately following the throughput number on
-#                the matched line; required when the line has multiple
-#                numbers (e.g. 'eff GFLOPS' vs 'dense-equiv GFLOPS')
-#
-# Without `match`, falls back to first-ms-GFLOPS-line legacy behavior.
+# is *this* kernel's number via three optional fields (match / section /
+# value_label) passed through to cuasmR::parse_throughput. The line
+# selection + number extraction live there now (issue #134); a
+# characterization test in the package (test-parse_throughput.R) pins
+# them to the original .pick_line/.parse_line behaviour on real output.
 # ----------------------------------------------------------------------
-
-# Heuristic: a section header is a line whose stripped form starts
-# with `===` or `---` or contains '---' immediately after the trim.
-# Used by the `section` filter to bracket the search.
-.is_section_header <- function(line) {
-  s <- trimws(line)
-  grepl("^(===|---)", s, perl = TRUE)
-}
-
-# Filter raw output (a character vector of lines) to the lines inside
-# the requested section. If section_match is NULL, returns lines as-is.
-.filter_section <- function(lines, section_match) {
-  if (is.null(section_match) || !nzchar(section_match)) return(lines)
-  in_section <- FALSE
-  keep <- logical(length(lines))
-  for (i in seq_along(lines)) {
-    is_hdr <- .is_section_header(lines[[i]])
-    if (is_hdr) {
-      in_section <- grepl(section_match, lines[[i]], fixed = TRUE)
-      next  # drop the header itself
-    }
-    keep[[i]] <- in_section
-  }
-  lines[keep]
-}
-
-# Parse a single line into ms + throughput, honoring value_label when
-# given so the right column is picked out of multi-number lines.
-.parse_line <- function(line, value_label = NULL) {
-  out <- list()
-  m_ms <- regmatches(line,
-                     regexec("([0-9.]+)\\s*ms", line, perl = TRUE))[[1]]
-  if (length(m_ms) >= 2) out$ms <- as.numeric(m_ms[2])
-
-  if (!is.null(value_label) && nzchar(value_label)) {
-    # Number followed by literal value_label (e.g. 'dense-equiv GFLOPS').
-    pat <- sprintf("([0-9][0-9,.]*)\\s*%s",
-                   gsub("([][}{()|.+*?^$\\\\])", "\\\\\\1", value_label, perl = TRUE))
-    m <- regmatches(line, regexec(pat, line, perl = TRUE,
-                                  ignore.case = TRUE))[[1]]
-    if (length(m) >= 2) {
-      out$throughput <- as.numeric(gsub(",", "", m[2], fixed = TRUE))
-      # Unit: take the trailing GFLOPS/TOPS word from value_label if
-      # present, else default to GFLOPS.
-      u <- regmatches(value_label,
-                      regexec("(GFLOPS|TOPS)\\b", value_label,
-                              perl = TRUE, ignore.case = TRUE))[[1]]
-      out$unit <- if (length(u) >= 2) toupper(u[2]) else "GFLOPS"
-    }
-  } else {
-    m_tp <- regmatches(line,
-                       regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                               line, perl = TRUE, ignore.case = TRUE))[[1]]
-    if (length(m_tp) >= 3) {
-      out$throughput <- as.numeric(gsub(",", "", m_tp[2], fixed = TRUE))
-      out$unit <- toupper(m_tp[3])
-    }
-  }
-  out
-}
-
-# Pick the right line out of bench output, given a baseline-config's
-# match/section directives. Returns the chosen line (string) or NULL.
-.pick_line <- function(output_lines, match_str = NULL, section_str = NULL) {
-  candidates <- .filter_section(output_lines, section_str)
-  has_metrics <- grepl("ms", candidates) &
-                 grepl("GFLOPS|TOPS", candidates, ignore.case = TRUE)
-  candidates <- candidates[has_metrics]
-  if (!length(candidates)) return(NULL)
-  if (is.null(match_str) || !nzchar(match_str)) {
-    return(candidates[[1]])  # legacy: first metric-bearing line
-  }
-  hits <- candidates[grepl(match_str, candidates, fixed = TRUE)]
-  if (length(hits)) hits[[1]] else NULL
-}
 
 # ----------------------------------------------------------------------
 # Benchmark runner
@@ -238,16 +158,21 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   section_str <- if (!is.null(baseline_cfg)) baseline_cfg$section     else NULL
   value_label <- if (!is.null(baseline_cfg)) baseline_cfg$value_label else NULL
 
-  picked <- .pick_line(out, match_str = match_str, section_str = section_str)
-  if (is.null(picked)) {
-    # Nothing matched our hints; fall back to whole-output scan as before.
-    picked <- output
+  # Throughput parse via cuasmR::parse_throughput (issue #134). pick =
+  # "first" reproduces the legacy .pick_line (first match-bearing line);
+  # a characterization test (cuasmR test-parse_throughput.R) proves
+  # identical ms/throughput/unit on real bench output for every config.
+  parsed <- parse_throughput(out, match = match_str, section = section_str,
+                             value_label = value_label, pick = "first")
+  if (is.na(parsed$throughput)) {
+    # Hints matched nothing; fall back to a whole-output scan (first
+    # ms + GFLOPS/TOPS line anywhere), as the old .pick_line NULL path did.
+    parsed <- parse_throughput(out, value_label = value_label, pick = "first")
   }
-  parsed <- .parse_line(picked, value_label = value_label)
-  metrics$ms         <- parsed$ms
-  metrics$throughput <- parsed$throughput
-  metrics$unit       <- parsed$unit
-  metrics$matched_line <- picked
+  metrics$ms           <- parsed$ms
+  metrics$throughput   <- parsed$throughput
+  metrics$unit         <- parsed$unit
+  metrics$matched_line <- if (is.na(parsed$line)) output else parsed$line
   metrics
 }
 

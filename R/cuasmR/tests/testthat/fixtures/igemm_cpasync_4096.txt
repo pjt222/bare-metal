@@ -1,0 +1,62 @@
+=== IGEMM Benchmark — INT8 Tensor Cores (sm_86) ===
+Matrix: C[4096×4096] = A[4096×4096] * B[4096×4096]  (INT8 in, INT32 accum, FP32 out)
+
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU
+
+IGEMM kernels loaded: naive + tiled + register-blocked + handtuned + pipelined + cpasync + cpasync_bk64 + perchannel + 8warp + 8warp256 + tribuf + persistent + online-quant + inplace + bankfree + warpspec + hgemm + hgemm_tiled + hgemm_16w.
+
+Quantization: scale_a=0.007874  scale_b=0.007874
+CPU reference skipped (matrix too large — use M<=512 for correctness check)
+
+Performance (avg of 50 runs, 5 warmup):
+  igemm_wmma  (naive)                  13.549 ms   10144.14 TOPS
+  igemm_tiled (64x64)                   9.664 ms   14221.11 TOPS
+  igemm_regblk (128x128)               11.377 ms   12080.00 TOPS
+  igemm_handtuned (S04->S02)            9.692 ms   14180.40 TOPS
+  igemm_pipelined (LDG dbuf)            8.369 ms   16423.22 TOPS
+  igemm_cpasync (LDGSTS dbuf)           7.115 ms   19317.91 TOPS
+  igemm_8warp (128x128 cp.async)        5.902 ms   23286.57 TOPS
+  igemm_8warp_256 (128x256 cp.async)    5.292 ms   25973.44 TOPS
+  igemm_8warp_256x256 (256x256)        12.451 ms   11038.11 TOPS
+  igemm_tribuf (128x128 3-buf)          5.953 ms   23086.06 TOPS
+  igemm_persistent (128x256 L2)         5.321 ms   25827.49 TOPS
+  igemm_online_quant (FP16→INT8)     11.431 ms   12023.77 GFLOPS  (FP16 in)
+  igemm_inplace (FP16→INT8)           8.952 ms   15353.28 GFLOPS  (FP16 in, in-place)
+  igemm_bankfree (FP16→INT8)          8.678 ms   15837.46 GFLOPS  (FP16 in, bank-free)
+  igemm_warpspec (FP16→INT8)          9.213 ms   14917.39 GFLOPS  (FP16 in, warp-spec)
+  hgemm_wmma (FP16)                    19.032 ms    7221.29 GFLOPS  (FP16 baseline)
+  hgemm_tiled (128x128)                 8.757 ms   15695.41 GFLOPS  (FP16 tiled)
+  hgemm_16warp (2blk/SM)                4.683 ms   29348.38 GFLOPS  (FP16 16-warp)
+  igemm_cpasync_bk64 (LDGSTS BK=64)     7.389 ms   18601.51 TOPS
+  igemm_perchannel (asym dequant)       7.091 ms   19381.63 TOPS
+  INT8 Tensor Core peak                    --        696000 TOPS  (theoretical)
+  FP16 Tensor Core peak                    --        174000 GFLOPS  (theoretical)
+
+  Best: 3.7% of INT8 peak, 0.1× vs FP16 peak
+  Tiled vs naive: 1.40×
+  RegBlk vs naive: 1.19×   RegBlk vs tiled: 0.85×
+  Handtuned vs tiled: 0.9971×  (-0.29%)
+  Pipelined vs handtuned: 1.1582×  (+15.82%)
+  cp.async vs handtuned: 1.3623×  (+36.23%)
+  Pipelined vs cp.async: 0.8502×  (-14.98%)
+  BK=64 vs BK=32 cp.async: 0.9629×  (-3.71%)
+  Per-channel vs symmetric: 1.0033×  (+0.33%)
+  8-warp 128x128 vs 4-warp 64x64: 1.2054×  (+20.54%)
+  128x256 vs 128x128: 1.1154×  (+11.54%)
+  256x256 vs 128x256: 0.4250×  (-57.50%)
+  Triple-buf vs double-buf (128x128): 0.9914×  (-0.86%)
+  Persistent vs grid-launch (128x256): 0.9944×  (-0.56%)
+  Online-quant IMMA vs HGEMM (FP16→FP16): 1.6650×  (+66.50%)
+  Bank-free vs in-place: 1.0315×  (+3.15%)
+  Bank-free IMMA vs HGEMM (FP16→FP16): 2.1932×  (+119.32%)
+  Warp-spec vs in-place: 0.9716×  (-2.84%)
+  Warp-spec IMMA vs HGEMM (FP16→FP16): 2.0658×  (+106.58%)
+  Tiled HGEMM vs naive HGEMM: 2.1735×  (+117.35%)
+  Tiled HGEMM vs bank-free online-quant: 0.9910×  (-0.90%)
+  16-warp HGEMM vs bank-free online-quant: 1.8531×  (+85.31%)
+  16-warp vs 8-warp HGEMM: 1.8699×  (+86.99%)
+
+SASS inspection:
+  cuobjdump -sass igemm.sm_86.cubin | grep IMMA                      # naive
+  cuobjdump -sass igemm_tiled.sm_86.cubin | grep IMMA                # tiled
+  cuobjdump -sass igemm_register_blocked.sm_86.cubin | grep IMMA     # regblk

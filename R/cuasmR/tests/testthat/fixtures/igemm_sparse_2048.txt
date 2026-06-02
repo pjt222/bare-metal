@@ -1,0 +1,7 @@
+=== Sparse INT8 GEMM Benchmark (BenchDriver refactor) ===
+M=2048  N=2048  K=2048
+
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU
+
+  igemm_sparse_tiled (INT8)      PASS  (max_abs=0.00e+00  max_rel=0.00e+00)
+  igemm_sparse_tiled                     0.440 ms     19531 eff GFLOPS     39062 dense-equiv GFLOPS
