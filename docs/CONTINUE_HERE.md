@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-27 (#135 grid-sweep tool feature-complete; P2-5 single-Ctrl+C re-test pending) | Branch: main
+> Last updated: 2026-06-02 (#134 PR-A cuasmR measurement migration feature-complete, Phases 1–5; push initiated, PR not yet opened) | Branch: feat/134-cuasmr-measurement-migration
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -370,9 +370,15 @@ within run-to-run variance. Sanity-check passes.
 The #134 cuasmR measurement-migration runs as **two PRs** (decided with
 user): PR-A = the dedupe (Phases 1–5), PR-B = CRAN polish (Phase 6 —
 roxygen/`man/` + `R CMD check --as-cran`). **PR-A is feature-complete**
-on branch **`feat/134-cuasmr-measurement-migration`** — 8 commits on
-`53d7671`, **unmerged + unpushed** (awaiting user OK to push + open the
-PR). Each phase kept the pre-push gate green; incremental, never big-bang.
+on branch **`feat/134-cuasmr-measurement-migration`** (~10 commits on
+`53d7671`). **Push initiated** end of session (user approved push + PR);
+the pre-push hook runs `make test` (builds + smoke-runs all benches —
+several minutes of GPU work) + `check_links.R` + `bench_regress`, so the
+push is slow. **First confirm the branch actually landed on origin**
+(`git ls-remote --heads origin feat/134-cuasmr-measurement-migration`):
+if yes → `gh pr create` (PR not yet opened); if not → re-push (the hook
+may have been interrupted; the gate itself passes — verified). Each phase
+kept the pre-push gate green; incremental, never big-bang.
 
 Plan file: `~/.claude/plans/hey-there-how-tender-fern.md`.
 
@@ -429,30 +435,37 @@ report_median_metrics → check_regression`, plus `append_jsonl_row` /
 
 ## Next steps
 
-1. **[USER] Push + open PR-A.** Branch `feat/134-cuasmr-measurement-migration`
-   (8 commits) is feature-complete + verified but **unpushed** — needs the
-   user's OK for the outward-facing push + `gh pr create`. Then **PR-B =
-   Phase 6**: `roxygen2::roxygenise()` (generate `man/`, regenerate
-   NAMESPACE), `.Rbuildignore`, testthat for the pure logic (the PR-A
-   differential tests already cover most), `R CMD check --as-cran` clean
-   (document NOTEs: nvdisasm SystemRequirements, GPU tests skipped on CI).
-   Optional cleanup: migrate `bench_flash_all.R`'s `run_bench` (the one
-   deferred dup).
-2. **[USER] Re-test P2-5 with `246c961`** (separate from #134). In elevated pwsh:
+1. **Confirm PR-A push, then open the PR.** Push was initiated end of last
+   session (user-approved). Check `git ls-remote --heads origin
+   feat/134-cuasmr-measurement-migration`: landed → `gh pr create --base
+   main` (title "#134 PR-A: cuasmR measurement API (Phases 1–5)", body =
+   the phase table + verification + the bench_flash_all defer; **do NOT
+   `Closes #134`** — PR-B/Phase 6 still owes the CRAN work, so reference it
+   only). Not landed → re-push (`git push -u origin
+   feat/134-cuasmr-measurement-migration`; the gate passes — slowness is
+   just the GPU `make test` in the hook; `--no-verify` only if the hook is
+   the blocker and you've already confirmed the gate green).
+2. **PR-B = Phase 6** (CRAN polish, same branch or a new one off it):
+   `roxygen2::roxygenise()` (generate `man/`, regenerate NAMESPACE),
+   `.Rbuildignore`, testthat for the pure logic (the PR-A differential
+   tests already cover most), `R CMD check --as-cran` clean (document NOTEs:
+   nvdisasm SystemRequirements, GPU tests skipped on CI). Optional cleanup:
+   migrate `bench_flash_all.R`'s `run_bench` (the one deferred dup).
+3. **[USER] Re-test P2-5 with `246c961`** (separate from #134). In elevated pwsh:
    `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096`.
    Wait for first sample line of any group, press Ctrl+C **once**.
    Expect: `Bench exited 130 (SIGINT)` → `Cell cancelled by user`
    → cleanup → exit. Verify no orphans:
    `Get-Process Rscript -ErrorAction SilentlyContinue; wsl -- pgrep -f grid_measure.R`.
    If single press still requires multiple, investigate further.
-3. **P2-6 — full elevated sweep (~1 h).** Once P2-5 re-test is green,
+4. **P2-6 — full elevated sweep (~1 h).** Once P2-5 re-test is green,
    run the full plan:
    `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1`.
    Then materialise: `wsl -- Rscript scripts/probe/grid_collect.R --print`.
    Inspect `grid_sweep_results.rds` for the full plateau map. Close #135.
-4. **#124 — `bench-all` runner** (epic). Build on the packaged
+5. **#124 — `bench-all` runner** (epic). Build on the packaged
    cuasmR API (#134) once it exists.
-5. **#128 — OC showcase**: deferred. The grid_sweep above-native-
+6. **#128 — OC showcase**: deferred. The grid_sweep above-native-
    clock data will be its data source.
 
 Closed earlier, not in scope unless reopened:
