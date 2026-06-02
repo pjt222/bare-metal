@@ -390,7 +390,7 @@
     },
     "cuasmR": {
       "Package": "cuasmR",
-      "Version": "0.1.0",
+      "Version": "0.2.0",
       "Source": "Local",
       "Type": "Package",
       "Title": "R-Native SASS Disassembler and Patcher for NVIDIA sm_8x cubins",
