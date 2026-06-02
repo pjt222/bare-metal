@@ -269,11 +269,16 @@ classify_meta <- function(pre, post, valid_when = list()) {
     }
   }
   if (!is.null(cfg$min_clock_sm)) {
-    # Use post-run clock — the one the kernel actually saw at the end.
-    if (post$gpu$clock_sm < cfg$min_clock_sm) {
+    # Use post-run clock — the one the kernel actually saw at the end. An
+    # NA clock (nvidia-smi parse miss) is treated as below the floor:
+    # we could not confirm the kernel ran at speed, so the sample is
+    # unfair. NA-safe — a bare `NA < x` would error in `if`.
+    clk_v <- post$gpu$clock_sm
+    if (is.na(clk_v) || clk_v < cfg$min_clock_sm) {
       reasons <- c(reasons,
-        sprintf("clock_sm=%d MHz < required %d MHz",
-                as.integer(post$gpu$clock_sm), as.integer(cfg$min_clock_sm)))
+        sprintf("clock_sm=%s MHz < required %d MHz",
+                if (is.na(clk_v)) "NA" else as.character(as.integer(clk_v)),
+                as.integer(cfg$min_clock_sm)))
     }
   }
   if (!is.null(cfg$max_temp_c)) {

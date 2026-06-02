@@ -203,60 +203,37 @@ measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
     run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
   }
 
-  samples  <- list()        # valid metrics lists
-  attempt  <- 0L
-  rejected <- character(0)
-  while (length(samples) < CLOCK_LOCK_SAMPLES && attempt < CLOCK_LOCK_MAX_TRY) {
-    attempt <- attempt + 1L
-    m <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
+  # Collect N valid samples. run_benchmark produces a full metrics list
+  # (run+capture+parse); cuasmR::validate_sample is the per-sample verdict
+  # (rc / parse / classify_meta(valid_when) / two-sided locked band). The
+  # loop returns FULL metrics lists so the representative sample below can
+  # carry meta_pre/meta_post/matched_line/unit forward (issue #134).
+  res <- collect_valid_samples(
+    sample_fn = function() run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg),
+    validate_fn = function(m) validate_sample(
+      m$returncode, m$throughput, m$meta_pre, m$meta_post,
+      valid_when = valid_when, clock_band = c(lo, hi)),
+    n_valid = CLOCK_LOCK_SAMPLES, max_attempts = CLOCK_LOCK_MAX_TRY)
 
-    if (!is.null(m$returncode) && m$returncode != 0L) {
-      rejected <- c(rejected, sprintf("crash(exit=%d)", m$returncode)); next
-    }
-    if (is.null(m$throughput)) {
-      rejected <- c(rejected, "parse-fail"); next
-    }
-    # Throttle / temp / ac check via the entry's valid_when.
-    if (exists("classify_meta", mode = "function")) {
-      cls <- classify_meta(m$meta_pre, m$meta_post, valid_when)
-      if (isFALSE(cls$ok)) {
-        rejected <- c(rejected, sprintf("unfair(%s)",
-                                        paste(cls$reasons, collapse = ";")))
-        next
-      }
-      if (is.na(cls$ok)) { rejected <- c(rejected, "no-gpu-meta"); next }
-    } else {
-      rejected <- c(rejected, "no-meta-module"); next
-    }
-    # Two-sided clock-band check: reject sag AND "lock never applied".
-    clk <- m$meta_post$gpu$clock_sm
-    if (is.null(clk) || is.na(clk) || clk < lo || clk > hi) {
-      rejected <- c(rejected,
-                    sprintf("clock %s MHz outside locked band %d-%d",
-                            if (is.null(clk)) "NA"
-                            else as.character(as.integer(clk)), lo, hi))
-      next
-    }
-    samples[[length(samples) + 1L]] <- m
-  }
-
-  if (length(samples) < CLOCK_LOCK_SAMPLES) {
+  if (!res$complete) {
     return(list(status = "insufficient",
                 msg = sprintf(
                   "INSUFFICIENT (%d/%d valid in %d tries; rejects: %s)",
-                  length(samples), CLOCK_LOCK_SAMPLES, attempt,
-                  paste(utils::head(rejected, 6L), collapse = ", "))))
+                  length(res$samples), CLOCK_LOCK_SAMPLES, res$attempts,
+                  paste(utils::head(res$rejected, 6L), collapse = ", "))))
   }
 
+  samples <- res$samples
   tputs <- vapply(samples, function(s) s$throughput, numeric(1))
   mss   <- vapply(samples,
                   function(s) if (is.null(s$ms)) NA_real_ else s$ms,
                   numeric(1))
+  med <- report_median_metrics(tputs, mss)
   # Representative sample (closest to the median) carries meta + unit
   # + matched_line forward; throughput/ms are overwritten with medians.
-  current <- samples[[which.min(abs(tputs - stats::median(tputs)))]]
-  current$throughput <- stats::median(tputs)
-  current$ms         <- stats::median(mss, na.rm = TRUE)
+  current <- samples[[which.min(abs(tputs - med$median_throughput))]]
+  current$throughput <- med$median_throughput
+  current$ms         <- med$median_ms
   list(status = "ok", current = current)
 }
 

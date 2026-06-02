@@ -283,20 +283,18 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
     thr <- throttle_str(r$post)
     clk_obs <- as.integer(r$post$gpu$clock_sm %||% NA_integer_)
 
-    valid <- TRUE
-    reject <- NA_character_
-    if (r$rc != 0L) { valid <- FALSE; reject <- sprintf("rc=%d", r$rc) }
-    else if (is.na(parsed$throughput)) {
-      valid <- FALSE; reject <- "parse_failed"
-    } else if (thr != "none") {
-      valid <- FALSE; reject <- sprintf("throttle:%s", thr)
-    } else if (!is.null(clk_tgt) && !is.na(clk_obs)) {
-      if (clk_obs < clk_lo || clk_obs > clk_hi) {
-        valid <- FALSE
-        reject <- sprintf("clock_out_of_band:%d not in [%d,%d]",
-                          clk_obs, clk_lo, clk_hi)
-      }
-    }
+    # Per-sample verdict via cuasmR::validate_sample (issue #134). grid
+    # validates on the POST snapshot only (its throttle_str(post)
+    # semantics), so pass r$post as both pre and post. The two-sided
+    # clock band applies only in a locked regime with an observed clock —
+    # matching grid's original `!is.null(clk_tgt) && !is.na(clk_obs)`
+    # guard (an NA clock skips the band, as before).
+    vr <- validate_sample(r$rc, parsed$throughput, r$post, r$post,
+                          valid_when = list(allow_throttle = c("GpuIdle")),
+                          clock_band = if (!is.null(clk_tgt) && !is.na(clk_obs))
+                                         c(clk_lo, clk_hi) else NULL)
+    valid  <- vr$ok
+    reject <- vr$reason
 
     row <- list(
       run_id           = run_id,

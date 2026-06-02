@@ -85,20 +85,9 @@ configs <- list(
 # perf line is the last match-bearing line). The parser returns
 # `$throughput` (was `$tput` in the old local parse_bench_line).
 
-#' Classify one run against the cold-clock recording regime.
-#' Returns "valid" or a rejection reason.
-classify_sample <- function(run, parsed, cfg) {
-  if (run$rc != 0L) return("crash")
-  if (is.na(parsed$throughput)) return("parse-fail")
-  meta <- classify_meta(run$pre, run$post,
-                        list(require_no_throttle = TRUE,
-                             allow_throttle = c("GpuIdle")))
-  if (isFALSE(meta$ok)) return("throttled")
-  clk <- run$post$gpu$clock_sm
-  if (is.na(clk) || clk < params$min_clk)
-    return(sprintf("cold-clock %d MHz", as.integer(clk)))
-  "valid"
-}
+# Per-sample validity now decided by cuasmR::validate_sample (issue #134):
+# rc/parse + classify_meta(allow GpuIdle) + the min_clk cold-clock floor,
+# all via valid_when = list(allow_throttle = "GpuIdle", min_clock_sm = params$min_clk).
 
 # ---- Per-config measurement -----------------------------------------
 
@@ -114,35 +103,41 @@ warm_gpu <- function(exe_abs, args, n) {
 }
 
 #' Collect `cfg$nvalid` valid samples for one config. Returns a
-#' data.table of valid samples (tput, ms, clk).
+#' data.table of valid samples (tput, ms, clk). The retry-until-N-valid
+#' loop is cuasmR::collect_valid_samples; per-sample validity is
+#' cuasmR::validate_sample (issue #134).
 collect_samples <- function(cfg, exe_abs) {
   max_try <- cfg$nvalid * params$max_try_factor
-  rows    <- vector("list", max_try)
-  n_valid <- 0L
-  attempt <- 0L
-  while (n_valid < cfg$nvalid && attempt < max_try) {
-    attempt <- attempt + 1L
-    run     <- run_bench(exe_abs, cfg$args)
-    parsed  <- parse_throughput(run$out, match = cfg$match,
-                                value_label = cfg$label, pick = "last")
-    verdict <- classify_sample(run, parsed, cfg)
-    clk     <- run$post$gpu$clock_sm
-    if (verdict == "valid") {
-      n_valid <- n_valid + 1L
-      rows[[n_valid]] <- data.table(
-        tput = parsed$throughput, ms = parsed$ms, clk = as.integer(clk))
+  n_seen  <- 0L
+  on_sample <- function(attempt, ok, s, reason) {
+    if (ok) {
+      n_seen <<- n_seen + 1L
       cli_alert_success(paste0(
-        "try {attempt}: {round(parsed$throughput, 1)} {cfg$label}  ",
-        "{round(parsed$ms, 3)} ms  clk {clk} MHz  ",
-        "[{n_valid}/{cfg$nvalid}]"))
+        "try {attempt}: {round(s$parsed$throughput, 1)} {cfg$label}  ",
+        "{round(s$parsed$ms, 3)} ms  clk {s$run$post$gpu$clock_sm} MHz  ",
+        "[{n_seen}/{cfg$nvalid}]"))
     } else {
-      cli_alert_warning("try {attempt}: rejected -- {verdict}")
+      cli_alert_warning("try {attempt}: rejected -- {reason}")
     }
   }
-  if (n_valid < cfg$nvalid)
+  res <- collect_valid_samples(
+    sample_fn = function() {
+      run    <- run_bench(exe_abs, cfg$args)
+      parsed <- parse_throughput(run$out, match = cfg$match,
+                                 value_label = cfg$label, pick = "last")
+      list(run = run, parsed = parsed)
+    },
+    validate_fn = function(s) validate_sample(
+      s$run$rc, s$parsed$throughput, s$run$pre, s$run$post,
+      valid_when = list(allow_throttle = c("GpuIdle"),
+                        min_clock_sm = params$min_clk)),
+    n_valid = cfg$nvalid, max_attempts = max_try, on_sample = on_sample)
+  if (!res$complete)
     cli_alert_danger(
-      "INCOMPLETE: {n_valid}/{cfg$nvalid} valid after {attempt} tries")
-  rbindlist(rows[seq_len(n_valid)])
+      "INCOMPLETE: {length(res$samples)}/{cfg$nvalid} valid after {res$attempts} tries")
+  rbindlist(lapply(res$samples, function(s) data.table(
+    tput = s$parsed$throughput, ms = s$parsed$ms,
+    clk  = as.integer(s$run$post$gpu$clock_sm))))
 }
 
 #' Measure one config end to end. chdir into the exe directory so the
@@ -170,13 +165,14 @@ measure_config <- function(cfg) {
       clk_lo = NA_integer_, clk_hi = NA_integer_))
   }
 
+  m <- report_median_metrics(samples$tput, samples$ms, samples$clk)
   summary <- list(
     id = cfg$id, kernel = cfg$kernel, cfgkey = cfg$cfgkey,
-    label = cfg$label, n = nrow(samples),
-    median_tput = stats::median(samples$tput),
-    median_ms   = stats::median(samples$ms),
-    tput_lo = min(samples$tput), tput_hi = max(samples$tput),
-    clk_lo  = min(samples$clk),  clk_hi  = max(samples$clk))
+    label = cfg$label, n = m$n,
+    median_tput = m$median_throughput,
+    median_ms   = m$median_ms,
+    tput_lo = m$tput_lo, tput_hi = m$tput_hi,
+    clk_lo  = m$clk_lo,  clk_hi  = m$clk_hi)
   cli_alert_info(paste0(
     "median {round(summary$median_tput, 1)} {cfg$label} ",
     "({round(summary$tput_lo,1)}-{round(summary$tput_hi,1)}), ",
