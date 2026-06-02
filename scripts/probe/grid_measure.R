@@ -122,15 +122,12 @@ normalise_clock <- function(c) {
 # ----------------------------------------------------------------------
 # Plan
 # ----------------------------------------------------------------------
+# Resume keys = the (git_head, clock_target, cell_id) of every already-
+# recorded sample. The tolerant JSONL read is cuasmR::read_jsonl (issue
+# #134); the key construction stays here (grid's schema).
 load_jsonl_keys <- function(path) {
-  if (is.null(path) || !file_exists(path)) return(character(0))
-  lines <- readLines(path, warn = FALSE)
-  if (length(lines) == 0L) return(character(0))
-  rows <- lapply(lines, function(l) {
-    tryCatch(fromJSON(l, simplifyVector = FALSE),
-             error = function(e) NULL)
-  })
-  rows <- Filter(Negate(is.null), rows)
+  rows <- read_jsonl(path, simplify = FALSE)$rows
+  if (length(rows) == 0L) return(character(0))
   keys <- vapply(rows, function(r) {
     clk <- if (is.null(r$clock_target_mhz) || is.na(r$clock_target_mhz))
              "native" else as.character(as.integer(r$clock_target_mhz))
@@ -223,16 +220,8 @@ static_gpu_info <- function() {
 # Per-sample run + GPU-state capture now lives in cuasmR::run_bench
 # (issue #134). The caller still chdir's into the exe dir first.
 
-# Append one row as a single JSONL line. `cat(..., append = TRUE)`
-# is atomic at line boundaries on POSIX (and on Windows for short
-# writes < PIPE_BUF / page size) — a Ctrl+C between rows leaves
-# previous rows intact; a Ctrl+C mid-row leaves at most one
-# truncated final line that the reader drops.
-append_jsonl_row <- function(jsonl_path, row) {
-  json <- toJSON(row, auto_unbox = TRUE, na = "null", null = "null",
-                 digits = NA)
-  cat(json, "\n", sep = "", file = jsonl_path, append = TRUE)
-}
+# JSONL append (atomic per line) now lives in cuasmR::append_jsonl_row
+# (issue #134).
 
 measure_cell <- function(cell, jsonl_path, run_id, gh) {
   exe_abs <- path_abs(here(cell$exe))

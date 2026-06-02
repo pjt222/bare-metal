@@ -26,6 +26,7 @@ suppressPackageStartupMessages({
   library(cli)
   library(data.table)
   library(jsonlite)
+  library(cuasmR)   # tolerant JSONL reader (issue #134)
 })
 
 parse_args <- function(argv) {
@@ -49,36 +50,25 @@ parse_args <- function(argv) {
   out
 }
 
-read_jsonl <- function(path) {
+# Load the JSONL sample store into a data.table. The tolerant per-line
+# parse (drop a truncated tail) is cuasmR::read_jsonl (issue #134); the
+# missing/empty diagnostics and rbindlist stay here.
+load_samples_dt <- function(path) {
   if (!file_exists(path)) {
     cli_abort("JSONL not found: {.path {path}}")
   }
-  lines <- readLines(path, warn = FALSE)
-  if (length(lines) == 0L) {
+  r <- cuasmR::read_jsonl(path, simplify = TRUE)
+  if (r$n_total == 0L) {
     cli_alert_warning("JSONL is empty: {.path {path}}")
     return(data.table())
   }
-
-  # Tolerant parser: a partially-written final line from a hard kill
-  # is the documented failure mode. Drop unparseable rows; report
-  # how many were dropped.
-  parsed <- lapply(lines, function(l) {
-    tryCatch(fromJSON(l, simplifyVector = TRUE),
-             error = function(e) NULL)
-  })
-  ok <- !vapply(parsed, is.null, logical(1))
-  n_bad <- sum(!ok)
-  if (n_bad > 0L) {
+  if (r$n_bad > 0L) {
     cli_alert_warning(
-      "{n_bad}/{length(lines)} JSONL line(s) failed to parse (truncated tail?)")
+      "{r$n_bad}/{r$n_total} JSONL line(s) failed to parse (truncated tail?)")
   }
-  rows <- parsed[ok]
-
   # Each fromJSON list -> single-row data.table. rbindlist with
   # fill=TRUE handles schema additions over time.
-  dt <- rbindlist(lapply(rows, function(r) as.data.table(r)),
-                  fill = TRUE)
-  dt
+  rbindlist(lapply(r$rows, function(x) as.data.table(x)), fill = TRUE)
 }
 
 summarise <- function(dt) {
@@ -132,7 +122,7 @@ summarise <- function(dt) {
 
 main <- function() {
   args <- parse_args(commandArgs(trailingOnly = TRUE))
-  dt <- read_jsonl(args$jsonl)
+  dt <- load_samples_dt(args$jsonl)
   if (nrow(dt) == 0L) {
     cli_alert_warning("No rows materialised. Not writing RDS.")
     return(invisible())
