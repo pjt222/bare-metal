@@ -78,15 +78,8 @@ log_file     <- here("scripts", "probe", "clock_lock_sweep.log")
 
 # ---- Bench execution (shared shape with rebaseline_measure.R) --------
 
-run_bench <- function(exe_abs, args) {
-  pre  <- capture_gpu_state()
-  out  <- suppressWarnings(
-    system2(exe_abs, args, stdout = TRUE, stderr = TRUE))
-  post <- capture_gpu_state()
-  status <- attr(out, "status")
-  list(out = out, pre = pre, post = post,
-       rc = if (is.null(status)) 0L else as.integer(status))
-}
+# run_bench() (run + GPU-state capture) now lives in cuasmR (issue #134);
+# the caller still chdir's into the exe dir first.
 
 parse_bench_line <- function(out, match, label) {
   cand <- grep(match, out, fixed = TRUE, value = TRUE)

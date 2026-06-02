@@ -222,31 +222,17 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   setwd(exe_dir)
   on.exit(setwd(prev_wd), add = TRUE)
 
-  # Snapshot GPU + host state around the bench launch so we
-  # can refuse to compare against baseline if the GPU was thermally
-  # throttled, on battery, etc. capture_gpu_state() is a no-op (NULL)
-  # if bench_meta.R didn't load (e.g. running on a CI box without nvidia-smi).
-  pre_meta <- if (exists("capture_gpu_state", mode = "function"))
-                capture_gpu_state() else NULL
-
-  out <- tryCatch(
-    suppressWarnings(system2(abs_exe, args, stdout = TRUE, stderr = TRUE,
-                             timeout = 120)),
-    error = function(e) {
-      attr(character(0), "status") <- 1L
-      character(0)
-    }
-  )
-
-  post_meta <- if (exists("capture_gpu_state", mode = "function"))
-                 capture_gpu_state() else NULL
-
-  status <- attr(out, "status")
-  rc <- if (is.null(status)) 0L else as.integer(status)
+  # Run + GPU-state capture via the cuasmR core (issue #134). run_bench
+  # snapshots capture_gpu_state() pre/post (NULL on a CI box without
+  # nvidia-smi) and returns the stdout+stderr line vector. The 120s
+  # timeout and error->rc=1 fallback live in run_bench.
+  r <- run_bench(abs_exe, args, timeout = 120)
+  out <- r$out
+  rc  <- r$rc
   output <- paste(out, collapse = "\n")
 
   metrics <- list(raw_output = output, returncode = rc,
-                  meta_pre = pre_meta, meta_post = post_meta)
+                  meta_pre = r$pre, meta_post = r$post)
 
   match_str   <- if (!is.null(baseline_cfg)) baseline_cfg$match       else NULL
   section_str <- if (!is.null(baseline_cfg)) baseline_cfg$section     else NULL

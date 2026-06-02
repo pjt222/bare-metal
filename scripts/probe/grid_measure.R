@@ -265,16 +265,8 @@ static_gpu_info <- function() {
   )
 }
 
-run_one_sample <- function(exe_abs, args) {
-  pre  <- capture_gpu_state()
-  out  <- suppressWarnings(
-    system2(exe_abs, as.character(args),
-            stdout = TRUE, stderr = TRUE))
-  post <- capture_gpu_state()
-  st   <- attr(out, "status")
-  list(out = out, pre = pre, post = post,
-       rc = if (is.null(st)) 0L else as.integer(st))
-}
+# Per-sample run + GPU-state capture now lives in cuasmR::run_bench
+# (issue #134). The caller still chdir's into the exe dir first.
 
 # Append one row as a single JSONL line. `cat(..., append = TRUE)`
 # is atomic at line boundaries on POSIX (and on Windows for short
@@ -311,11 +303,11 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
   setwd(path_dir(exe_abs))
 
   for (i in seq_len(warmup_n)) {
-    run_one_sample(exe_abs, args)
+    run_bench(exe_abs, args)
   }
 
   for (i in seq_len(n_samples)) {
-    r <- run_one_sample(exe_abs, args)
+    r <- run_bench(exe_abs, args)
 
     # Ctrl+C while R is blocked in system2 sends SIGINT to every
     # process attached to the console: the bench child catches it and
