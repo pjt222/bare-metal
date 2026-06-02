@@ -237,60 +237,8 @@ measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
   list(status = "ok", current = current)
 }
 
-# ----------------------------------------------------------------------
-# Regression decision
-# ----------------------------------------------------------------------
-check_regression <- function(current, baseline, tolerance,
-                             default_valid_when = list()) {
-  if (!is.null(current$returncode) && current$returncode != 0L) {
-    return(list(is_reg = TRUE,
-                msg = sprintf("CRASH (exit=%d)", current$returncode)))
-  }
-
-  # Refuse to compare if the GPU was in an unfair state
-  # during the run (thermal throttle, sw power cap, etc). Reported as
-  # SKIPPED, not REGRESSION — the measurement isn't comparable to
-  # baseline regardless of what the number says.
-  if (exists("classify_meta", mode = "function") &&
-      !is.null(current$meta_pre) && !is.null(current$meta_post)) {
-    valid_when <- if (!is.null(baseline$valid_when)) baseline$valid_when
-                  else default_valid_when
-    cls <- classify_meta(current$meta_pre, current$meta_post, valid_when)
-    if (isFALSE(cls$ok)) {
-      return(list(is_reg = FALSE, skipped = TRUE,
-                  msg = sprintf("SKIPPED (%s) [%s]",
-                                paste(cls$reasons, collapse = "; "),
-                                cls$summary)))
-    }
-  }
-
-  unit <- if (!is.null(current$unit)) current$unit else "GFLOPS"
-  baseline_val <- baseline[[tolower(unit)]]
-  if (is.null(baseline_val)) baseline_val <- baseline$gflops
-  if (is.null(baseline_val)) baseline_val <- baseline$tops
-  if (is.null(baseline_val)) baseline_val <- 0
-  current_val <- if (!is.null(current$throughput)) current$throughput else 0
-
-  if (baseline_val == 0 || current_val == 0) {
-    return(list(is_reg = TRUE,
-                msg = sprintf("NO_DATA (baseline=%g, current=%g)",
-                              baseline_val, current_val)))
-  }
-  ratio <- current_val / baseline_val
-  if (ratio < (1.0 - tolerance)) {
-    list(is_reg = TRUE,
-         msg = sprintf("REGRESSION %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  } else if (ratio > (1.0 + tolerance)) {
-    list(is_reg = FALSE,
-         msg = sprintf("IMPROVED %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  } else {
-    list(is_reg = FALSE,
-         msg = sprintf("OK %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  }
-}
+# Regression decision now lives in cuasmR::check_regression (issue #134):
+# CRASH / SKIPPED (unfair GPU state) / NO_DATA / REGRESSION / OK / IMPROVED.
 
 # ----------------------------------------------------------------------
 # main

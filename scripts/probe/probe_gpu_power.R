@@ -28,6 +28,9 @@ if (dir.exists(.WSL_CUDA_LIB) &&
                                 else .WSL_CUDA_LIB)
 }
 
+# decode_throttle() now comes from cuasmR (issue #134).
+suppressMessages(library(cuasmR))
+
 # Run nvidia-smi, return stdout lines or NULL on failure.
 .smi <- function(args) {
   res <- tryCatch(
@@ -84,16 +87,7 @@ probe_state <- function() {
   out
 }
 
-# Decode throttle bitmask -> reason names (subset; see bench_meta.R).
-.throttle_bits <- c(GpuIdle = 0x1, ApplicationsClocksSet = 0x2,
-                    SwPowerCap = 0x4, HwSlowdown = 0x8, SyncBoost = 0x10,
-                    SwThermalSlowdown = 0x20, HwThermalSlowdown = 0x40,
-                    HwPowerBrakeSlowdown = 0x80, DisplayClocksSetting = 0x100)
-decode_throttle <- function(hex_str) {
-  v <- suppressWarnings(strtoi(sub("^0x", "", hex_str), base = 16L))
-  if (is.na(v) || v == 0) return(character(0))
-  names(Filter(function(b) bitwAnd(v, b) != 0L, .throttle_bits))
-}
+# Throttle decode now via cuasmR::decode_throttle (issue #134).
 
 # ---- GPU / display mode (WSL is blind to the MUX — see methodology doc) ----
 probe_mode <- function() {
