@@ -1,6 +1,54 @@
 # Session handoff
 
-> Last updated: 2026-06-03 (#134 CLOSED — PR-A #136 `ea0e7e6` + PR-B #137 `4ed0e55` both MERGED to main via merge-commits; cuasmR 0.2.0 on main, R CMD check 0/0/1 canonical Linux R. Adversarial review: 0 blockers/0 majors. Follow-up #138 filed (comparison-harness consolidation). Next = #135 Ctrl+C re-test / #124 bench-all. Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: main
+> Last updated: 2026-06-03T13:35Z (#134 epic + #138 both CLOSED/merged; cuasmR
+> 0.2.0 on main. Docs housekeeping = **PR #142 OPEN** (awaiting merge). #140/#141
+> filed for measurement. Use WSL Linux R, not Windows Rscript.exe) | Branch of
+> open work: `docs/housekeeping-audit-2026-06-03` (→ main on #142 merge)
+
+## ▶ SESSION END — 2026-06-03 (docs housekeeping + #134 lineage drain)
+
+**Objective.** Drain the #134 (cuasmR CRAN-ready) epic lineage and bring all
+documentation current.
+
+**Completed (merged unless noted):**
+- **#134 epic CLOSED** — PR #136 (`ea0e7e6`) + PR #137 (`4ed0e55`) merged: cuasmR
+  0.1.0→0.2.0 measurement API migration. Adversarial review 0 blockers/0 majors.
+- **#138 CLOSED** — PR #139 (`f4160cb`) merged: `bench_flash_all.R` rewired onto
+  `cuasmR::run_bench` + revived; imma s02/s04 grep-shape left distinct.
+- **Docs housekeeping → PR #142 OPEN** (`b07567c`, 21 files): multi-agent drift
+  audit (40 confirmed) + fixes. Pre-push gate green.
+- GitHub repo description + topics updated (cuasmR surfaced; +rstats/+r-package).
+
+**In Progress / awaiting:**
+- **PR #142 OPEN, NOT merged.** base main, MERGEABLE, `closingIssuesReferences:[]`,
+  CI green at push. Next = watch CI + merge (merge-commit; nothing stacked on it).
+  It edits THIS file — do **not** edit `docs/CONTINUE_HERE.md` on main while #142
+  is open (stacked-file 3-way conflict; see `project_stacked_pr_merge_mechanics`).
+
+**Next steps:**
+1. Merge **#142** once CI green.
+2. **[USER / measurement]** **#140** — re-measure Sparse HGEMM 2:4 (2048³ + 4096³)
+   to resolve the `41,721` vs `31.9 TFLOPS` value + the 2048³/4096³ size conflict;
+   reconcile `inventory.md`, `gpu_reflections.md`, `hgemm_sparse/README`, GitHub
+   desc. Inline `⚠ #140` flags already placed.
+3. **[USER decision]** **#141** — INT8 IMMA peak convention: `348` (dense) vs `696`
+   (2:4 sparse) across `kernel_architecture.qmd` + the `igemm` bench `.cu`. Inline
+   `⚠ #141` flag placed.
+4. **#135** (grid-sweep Ctrl+C single-press re-test, elevated pwsh — see step
+   detail below) / **#124** (bench-all one-click runner, builds on cuasmR API).
+
+**Context / decisions (negative space):**
+- **Numbers trap held:** did NOT auto-fix #140/#141 — no measurement file
+  arbitrates the values; flagged + filed rather than invent. Adversarial verify
+  caught a real numbers-trap walk (gpu_reflections size mis-pairing).
+- **Gate coverage:** pre-push gate + docs CI run only `make test` smoke +
+  `bench_regress` + link/version/quarto — NOT bench_flash_all / imma / grid / doc
+  tools. Verify those GPU-free (fixture diff, link-check). See
+  `project_gate_coverage_gpu_free_verify`.
+- **Subagent output ≠ ground truth:** audit recommendations had ≥2 errors
+  (hgemm path depth, a numbers-trap value); re-derive from primary source.
+
+---
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -54,7 +102,13 @@ are benchmark-pipeline hardening — no queued kernel work.
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 135 | Multi-kernel × clock grid sweep tool (filed 2026-05-27)        |
-| 138 | Consolidate comparison-harness runners onto cuasmR (filed 2026-06-03, low-pri; bench_flash_all + bench_imma_s02/s04 + latent crash twin) |
+| 140 | Reconcile Sparse HGEMM 2:4 headline number (value + size) — needs measurement (filed 2026-06-03) |
+| 141 | Standardize INT8 IMMA peak: 348 dense vs 696 sparse across docs + igemm bench (filed 2026-06-03) |
+
+Resolved 2026-06-03: **#138** via PR #139 (`f4160cb`) — bench_flash_all.R
+rewired onto `cuasmR::run_bench` + `parse_throughput` and revived (dead
+`phase3/` path → `kernels/attention/flash_attention`); bench_imma_s02/s04
+grep-extract shape left intentionally distinct.
 
 Resolved 2026-05-27: **#131** (lock-aware bench_regress — Phase 1
 end-to-end verified, `ecae5b7` + `7bfc307` pushed) and **#125**

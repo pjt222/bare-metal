@@ -161,7 +161,7 @@ L2 and post-warmup all accesses are L2 hits regardless of layout. The
 ## Files
 
 - `gen_cymatic_data.R` — generates `perm.bin` + `traces.bin` from R math.
-  Sources `../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
+  Sources `../../../scripts/cymatic/cymatic_mapping.R` and `cymatic_analyze.R`.
 - `bench.cu` — CUDA gather bench with median + scaled iters.
 - `Makefile` — `make`, `make gen`, `make run`, `make sweep`, `make clean`.
 - `results/cymatic/grids/grid{256,512,1024,2048}_{disc,square,overlayed}_results.txt` — captured benchmark output.

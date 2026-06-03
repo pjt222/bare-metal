@@ -1,5 +1,11 @@
 # cuasmR — R-native SASS hand-edit toolchain
 
+Documents **cuasmR 0.2.0**. The package now has two surfaces: the SASS cubin
+read / write / patch toolchain (most of this document) and the **benchmark
+measurement API** added in 0.2.0 ([#134](https://github.com/pjt222/bare-metal/issues/134))
+— see the *Measurement API* section below. 20 exported functions total
+(8 cubin + 12 measurement).
+
 Replaces the upstream Python [`cloudcores/CuAssembler`](https://github.com/cloudcores/CuAssembler) for the `.cubin → edit → .cubin` workflow on this project (#102).
 
 **Why custom**: upstream is ~2 years stale and breaks on every CUDA major-version bump. CUDA 13.2 changed the cubin `e_flags` layout (#101) — `sm_version` moved from byte[0] to byte[1], `vsm_version` removed entirely. Patching upstream Python had high drift cost for a project whose policy is R-primary.
@@ -114,7 +120,7 @@ subset(cuasm_insns(obj2, "vector_add"), slot == 13)
 | `kernels/gemm/hgemm/hgemm_16warp_splitk.sm_86.cubin`        | 1 | 1504  | cuda13 | ✓ |
 | `kernels/attention/flash_attention/.../flash_attn_br16_v2_pipeline_pad2.cubin`   | 1 | 1256  | cuda13 | ✓ |
 | `kernels/convolution/conv2d/conv2d_implicit_gemm_v2.sm_86.cubin`   | 1 | 1024  | cuda13 | ✓ |
-| `kernels/convolution/resblock/resblock.sm_86.cubin`                | 2 | 1232  | cuda12 | ✓ |
+| `kernels/convolution/resblock/resblock_fused.sm_86.cubin`         | 2 | 1232  | cuda12 | ✓ |
 
 Mix of CUDA 12.x and 13.x cubins, single- and multi-kernel cubins.
 
@@ -124,10 +130,12 @@ Mix of CUDA 12.x and 13.x cubins, single- and multi-kernel cubins.
 Rscript -e 'library(testthat); library(cuasmR); test_dir("R/cuasmR/tests/testthat")'
 ```
 
-Three checks:
-1. Byte-identical roundtrip on `kernels/tutorial/vector_add`.
-2. `e_flags` decoder accepts both legacy and new layouts.
-3. `cuasm_set` patches at most 8 bytes (one 64-bit word) per call.
+Five test files (`R/cuasmR/tests/testthat/`):
+- `test-roundtrip.R` — byte-identical roundtrip, `e_flags` decode (legacy + new
+  layouts), `cuasm_set` patches at most one 64-bit word per call.
+- `test-parse_throughput.R`, `test-validate_sample.R`, `test-check_regression.R`,
+  `test-bench_io.R` — the 0.2.0 measurement API (differential / characterization
+  tests against captured bench stdout fixtures).
 
 ## CLI
 
@@ -141,6 +149,30 @@ Rscript scripts/build.R roundtrip kernels/tutorial/vector_add.cu
 
 The `assemble` subcommand is a stub — point users at the `cuasm_read → cuasm_set → cuasm_write` R script pattern shown above. Text-to-bytes assembly is intentionally out of scope.
 
+## Measurement API (0.2.0, #134)
+
+0.2.0 added a packaged GPU-benchmark measurement API, migrated out of the
+`scripts/{bench,probe}` harnesses so the run → parse → validate → regress
+pipeline has one tested implementation. The seven measurement harnesses
+(`bench_regress.R`, `grid_measure.R`, `grid_collect.R`, `probe_gpu_power.R`,
+`rebaseline_measure.R`, `clock_lock_sweep.R`, `bench_flash_all.R`) now
+`library(cuasmR)` and call these 12 exports:
+
+| Group | Functions | Source |
+|---|---|---|
+| Run + parse | `run_bench`, `parse_throughput` | `R/cuasmR/R/bench_run.R` |
+| Sampling | `validate_sample`, `collect_valid_samples`, `report_median_metrics` | `R/cuasmR/R/bench_measure.R` |
+| Regression | `check_regression` | `R/cuasmR/R/bench_regression.R` |
+| JSONL store | `append_jsonl_row`, `read_jsonl` | `R/cuasmR/R/bench_io.R` |
+| GPU metadata | `capture_gpu_state`, `classify_meta`, `decode_throttle`, `summarise_meta` | `R/cuasmR/R/bench_meta.R` |
+
+Pipeline order: `run_bench` (launch + GPU-state snapshot) → `parse_throughput`
+(ms + GFLOPS/TOPS from stdout) → `validate_sample` (reject throttled / wrong-clock
+samples via `classify_meta`) → `collect_valid_samples` → `report_median_metrics`
+→ `check_regression` (vs `data/baselines.json`), with `append_jsonl_row` /
+`read_jsonl` as the per-sample store. See `docs/benchmark_methodology.md` and
+`docs/grid_sweep_methodology.md` for the measurement design.
+
 ## Comparison to upstream CuAssembler
 
 |                      | upstream Python | cuasmR (this repo) |
@@ -150,7 +182,7 @@ The `assemble` subcommand is a stub — point users at the `cuasm_read → cuasm
 | CUDA 12.x compatible         | yes                            | yes |
 | CUDA 13.x compatible         | broken (#101)                  | yes |
 | Roundtrip byte-identical     | mostly (depends on metadata)   | yes (preserves all non-text bytes) |
-| Maintenance surface          | ~5000 lines Python              | ~400 lines R |
+| Maintenance surface          | ~5000 lines Python              | ~1,100 lines R (incl. 0.2.0 measurement API) |
 | Drift on CUDA major bump     | breaks                         | tracks nvdisasm output (stable) |
 
 ## See also
@@ -159,4 +191,7 @@ The `assemble` subcommand is a stub — point users at the `cuasm_read → cuasm
 - Issue #102 — this replacement
 - `R/cuasmR/R/elf.R` — `e_flags` layout decoder (handles both formats)
 - `R/cuasmR/R/disasm.R` — nvdisasm output parser
-- `R/cuasmR/R/api.R` — exported functions
+- `R/cuasmR/R/api.R` — exported cubin read/write/patch functions
+- `R/cuasmR/R/bench_run.R`, `bench_measure.R`, `bench_regression.R`,
+  `bench_io.R`, `bench_meta.R` — the 0.2.0 measurement API (#134)
+- `R/cuasmR/NEWS.md` — 0.1.0 / 0.2.0 changelog

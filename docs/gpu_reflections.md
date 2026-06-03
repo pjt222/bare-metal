@@ -964,7 +964,12 @@ HGEMM baseline**.
 | Tiled 128×128, scalar smem loads | 2048³ | 12,341 | 39% | `__halves2half2` fragment construction |
 | + A-fragment `ldmatrix` | 2048³ | 19,025 | 60% | `ldmatrix.sync.aligned.m8n8.x2.shared.b16` |
 | + B-fragment `ldmatrix.trans` | 2048³ | **41,930** | **131%** | `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16` |
-| Final (4096³ validation) | 4096³ | **41,721** | **131%** | Same kernel, larger problem |
+| Final (4096³ validation) ⚠ | 4096³ | **41,721** | **131%** | Same kernel, larger problem |
+
+> **⚠ Size-label discrepancy ([#140](https://github.com/pjt222/bare-metal/issues/140)).**
+> This table labels 41,721 as a **4096³** result, but `docs/inventory.md:25`
+> labels the same 41,721 figure as **2048³**. The two surfaces disagree on the
+> size; #140 will re-measure and pin both value and size.
 
 The kernel is now **faster than dense HGEMM** — achieving the theoretical
 2x sparsity advantage in practice.

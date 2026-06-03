@@ -81,7 +81,7 @@ nvcc --cubin -arch=sm_86 -O2 -o hgemm.sm_86.cubin hgemm.cu
 cuobjdump -sass hgemm.sm_86.cubin | grep HMMA
 
 # Produce editable .cuasm for SASS study
-python3 ../../scripts/build.py disasm hgemm.sm_86.cubin
+Rscript ../../../scripts/build.R disasm hgemm.sm_86.cubin
 
 # Build bench
 nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common

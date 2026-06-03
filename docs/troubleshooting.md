@@ -346,10 +346,10 @@ there's a real correctness problem. High `max_rel` alone with small `max_abs` is
 
 The `Makefile` in `kernels/tutorial/` uses Unix `make`. On Windows, use WSL:
 ```bash
-wsl -e bash -c 'export PATH=/usr/local/cuda/bin:$PATH && cd /mnt/d/dev/p/bare-metal/phase1 && make all'
+wsl -e bash -c 'export PATH=/usr/local/cuda/bin:$PATH && cd /mnt/d/dev/p/bare-metal && make tutorial'
 ```
 
-Or call the Python build script directly — it works on both platforms.
+Or run `Rscript scripts/build.R compile <kernel>.cu` from the repo root (the R-native build harness; the old Python `build.py` was retired in #102).
 
 ---
 

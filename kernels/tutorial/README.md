@@ -32,7 +32,7 @@ nvcc --cubin -arch=sm_86 -O1 -o vector_add.sm_86.cubin vector_add.cu
 cuobjdump -sass vector_add.sm_86.cubin
 
 # Or use the build script (also produces editable .cuasm)
-python ../scripts/build.py all vector_add.cu
+Rscript ../../scripts/build.R all vector_add.cu
 ```
 
 ## Step 2: Understanding the SASS Output
@@ -125,7 +125,7 @@ Save the file as `vector_add.sm_86.modified.cuasm`.
 ## Step 4: Reassemble
 
 ```bash
-python ../scripts/build.py assemble vector_add.sm_86.modified.cuasm
+Rscript ../../scripts/build.R assemble vector_add.sm_86.modified.cuasm
 # produces: vector_add.sm_86.modified.reassembled.cubin
 ```
 
@@ -163,15 +163,15 @@ FMUL modification confirmed — GPU is multiplying, not adding!
 
 ## Before You Hand-Edit: Run the Roundtrip Test
 
-The roundtrip test verifies that CuAssembler can disassemble and reassemble
+The roundtrip test verifies that cuasmR can disassemble and reassemble
 the cubin without changes, producing a working binary. **Do this first.**
 
 ```bash
-python ../scripts/build.py roundtrip vector_add.cu
+Rscript ../../scripts/build.R roundtrip vector_add.cu
 ```
 
-If this fails, CuAssembler has a compatibility issue with your CUDA version.
-Check `SETUP.md` and ensure you're using CUDA 12.x.
+If this fails, cuasmR has a compatibility issue with your toolchain.
+Check `SETUP.md` and ensure you're using CUDA 13.2.
 
 ## What's Next
 

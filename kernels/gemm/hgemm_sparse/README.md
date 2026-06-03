@@ -6,6 +6,11 @@ most 2 non-zeros. Encoded via NVIDIA's 2:4 sparsity primitive
 matches dense HGEMM at 2048³, regresses at 4096³ (see
 [Obs N](../../../docs/gpu_reflections.md), [Obs HH](../../../docs/gpu_reflections.md)).
 
+> **⚠ Number under review ([#140](https://github.com/pjt222/bare-metal/issues/140)).**
+> This "31.9 TFLOPS / dense-parity" figure disagrees with the 41,721 dense-equiv
+> GFLOPS (24.0% peak, ~1.31× over dense) headline in `docs/inventory.md`. Neither
+> is backed by a current measurement; #140 will re-measure and reconcile.
+
 ## Files
 
 ### Kernels

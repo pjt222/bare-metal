@@ -225,10 +225,11 @@ reasons table shows why samples were dropped. Patterns:
 
 ## Future work
 
-- **#134 cuasmR migration.** `grid_measure.R` is the canonical
-  measurement function. Lands in `scripts/probe/` for now; the
-  cuasmR migration absorbs it as a package function with `R CMD
-  check` coverage.
+- ~~**#134 cuasmR migration.**~~ **Done (#134, CLOSED).** The measurement
+  primitives are now `cuasmR` package functions with `R CMD check` coverage;
+  `grid_measure.R` does `library(cuasmR)` and calls `run_bench`,
+  `parse_throughput`, `validate_sample`, `append_jsonl_row`, `read_jsonl`. The
+  script remains in `scripts/probe/` as the planner/orchestration brain.
 - **#128 OC showcase.** Grid sweep above native clock is the OC
   data source. Add `regimes: [1850, 1900, 1950]` for the
   appropriate kernels once an over-volt is dialled in.

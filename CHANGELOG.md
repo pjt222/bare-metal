@@ -13,6 +13,23 @@ historical reference.
 ## Unreleased
 
 ### Changed
+- **cuasmR measurement-API migration (#134, cuasmR 0.1.0 → 0.2.0).** The
+  benchmark run → parse → validate → regress logic was migrated out of the
+  `scripts/{bench,probe}` harnesses into the `cuasmR` package as 12 new exports
+  (`run_bench`, `parse_throughput`, `validate_sample`, `collect_valid_samples`,
+  `report_median_metrics`, `check_regression`, `append_jsonl_row`, `read_jsonl`,
+  `capture_gpu_state`, `classify_meta`, `decode_throttle`, `summarise_meta`).
+  Seven harness scripts now `library(cuasmR)`; the package gained roxygen
+  `man/`, declared `Imports`, and a clean `R CMD check --as-cran` (0/0/1 on
+  Linux R 4.6.0). Landed as stacked PRs #136 + #137.
+- **bench_flash_all revival (#138, PR #139).** `bench_flash_all.R` rewired onto
+  `cuasmR::run_bench` + `parse_throughput` (removing a duplicated run-and-parse
+  primitive and a can't-launch crash handler) and revived: its dead
+  `phase3/flash_attention` discovery path → `kernels/attention/flash_attention`,
+  `REPO_ROOT` derivation fixed to a `.git`/`renv.lock` marker-search, and the
+  `--build` target `make phase3` → `make attention`. The `bench_imma_s02/s04.R`
+  `run_bench_grep` grep-extract helper was documented as an intentionally
+  distinct shape (not migrated).
 - Documentation review pass. Voice and provenance leakage cleaned
   up across user-facing docs; "Tier N" jargon retained only in
   this file. Created `AGENTS.md` as the canonical agent-facing
