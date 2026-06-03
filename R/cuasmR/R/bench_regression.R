@@ -7,7 +7,7 @@
 #' Classify a measured sample against its baseline.
 #'
 #' A run that crashed is a regression (CRASH). A run taken under an unfair
-#' GPU state (throttle / power cap / below a clock floor — per the entry's
+#' GPU state (throttle / power cap / below a clock floor -- per the entry's
 #' \code{valid_when}) is \strong{not} comparable and returns SKIPPED, not
 #' REGRESSION. Otherwise the throughput ratio versus baseline is bucketed
 #' by \code{tolerance} into REGRESSION / OK / IMPROVED.
@@ -34,7 +34,7 @@ check_regression <- function(current, baseline, tolerance,
 
   # Refuse to compare if the GPU was in an unfair state during the run
   # (thermal throttle, sw power cap, etc). Reported as SKIPPED, not
-  # REGRESSION — the measurement isn't comparable to baseline regardless
+  # REGRESSION -- the measurement isn't comparable to baseline regardless
   # of what the number says.
   if (!is.null(current$meta_pre) && !is.null(current$meta_post)) {
     valid_when <- if (!is.null(baseline$valid_when)) baseline$valid_when

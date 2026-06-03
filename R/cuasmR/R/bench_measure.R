@@ -20,7 +20,7 @@
 #' \strong{Throttle scope.} \code{classify_meta} inspects BOTH \code{pre}
 #' and \code{post} throttle. A caller that validates on the post-run
 #' snapshot only (grid_measure) must pass its post snapshot as \emph{both}
-#' \code{pre} and \code{post} — then the pre/post union collapses to
+#' \code{pre} and \code{post} -- then the pre/post union collapses to
 #' post-only, matching its original \code{throttle_str(post)} semantics.
 #' rebaseline / bench_regress pass their real \code{pre}, \code{post}.
 #'
@@ -73,7 +73,7 @@ validate_sample <- function(rc, throughput, pre, post,
 #' (so a caller can pick a representative sample and carry its metadata
 #' forward). Warmup stays with the caller (counts differ per harness).
 #'
-#' grid_measure.R does NOT use this — it records every attempt (valid or
+#' grid_measure.R does NOT use this -- it records every attempt (valid or
 #' not) to JSONL with no retry, and shares only \code{\link{validate_sample}}.
 #'
 #' @param sample_fn Niladic function returning one run result.

@@ -14,17 +14,17 @@
 # Picked fields that matter for "is this measurement comparable to a
 # baseline recorded earlier?":
 #
-#   clocks.current.sm       — boost vs base clock; the dominant driver
+#   clocks.current.sm       -- boost vs base clock; the dominant driver
 #                             of throughput variance on a laptop GPU.
-#   clocks.current.memory   — memory clock; affects DRAM-bound kernels.
-#   temperature.gpu         — flags incoming thermal throttle.
-#   power.draw              — flags power-cap throttle.
-#   pstate                  — P0 (max) vs P2 / P5 / P8 (idle steps).
-#   clocks_throttle_reasons.active   — the canonical "is the kernel
+#   clocks.current.memory   -- memory clock; affects DRAM-bound kernels.
+#   temperature.gpu         -- flags incoming thermal throttle.
+#   power.draw              -- flags power-cap throttle.
+#   pstate                  -- P0 (max) vs P2 / P5 / P8 (idle steps).
+#   clocks_throttle_reasons.active   -- the canonical "is the kernel
 #                                       being penalised right now"
 #                                       bitmask (see decode below).
-#   utilization.gpu         — sanity check that the kernel actually ran.
-#   utilization.memory      — DRAM bus pressure during the launch.
+#   utilization.gpu         -- sanity check that the kernel actually ran.
+#   utilization.memory      -- DRAM bus pressure during the launch.
 .NVIDIA_SMI_FIELDS <- c(
   "clocks.current.sm",
   "clocks.current.memory",
@@ -154,7 +154,7 @@ decode_throttle <- function(hex_str) {
 }
 
 # Laptop GPU mode (hybrid vs dGPU/MUX). WSL2 nvidia-smi cannot observe
-# the MUX state — `display_active` reads Disabled in both modes — so the
+# the MUX state -- `display_active` reads Disabled in both modes -- so the
 # mode is NOT auto-detected. It is taken from the BARE_METAL_GPU_MODE
 # environment variable, set explicitly by whoever records the run.
 # Accepted: "hybrid", "dgpu". Anything else (including unset) -> "unknown".
@@ -255,7 +255,7 @@ classify_meta <- function(pre, post, valid_when = list()) {
     max_temp_c          = NULL,
     require_ac          = FALSE
   )
-  cfg <- modifyList(defaults, as.list(valid_when))
+  cfg <- utils::modifyList(defaults, as.list(valid_when))
 
   reasons <- character(0)
 
@@ -269,10 +269,10 @@ classify_meta <- function(pre, post, valid_when = list()) {
     }
   }
   if (!is.null(cfg$min_clock_sm)) {
-    # Use post-run clock — the one the kernel actually saw at the end. An
+    # Use post-run clock -- the one the kernel actually saw at the end. An
     # NA clock (nvidia-smi parse miss) is treated as below the floor:
     # we could not confirm the kernel ran at speed, so the sample is
-    # unfair. NA-safe — a bare `NA < x` would error in `if`.
+    # unfair. NA-safe -- a bare `NA < x` would error in `if`.
     clk_v <- post$gpu$clock_sm
     if (is.na(clk_v) || clk_v < cfg$min_clock_sm) {
       reasons <- c(reasons,
@@ -284,7 +284,7 @@ classify_meta <- function(pre, post, valid_when = list()) {
   if (!is.null(cfg$max_temp_c)) {
     if (post$gpu$temp_c > cfg$max_temp_c) {
       reasons <- c(reasons,
-        sprintf("temp=%d°C > max %d°C",
+        sprintf("temp=%d\u00b0C > max %d\u00b0C",
                 as.integer(post$gpu$temp_c), as.integer(cfg$max_temp_c)))
     }
   }
@@ -294,7 +294,7 @@ classify_meta <- function(pre, post, valid_when = list()) {
 
   ok <- length(reasons) == 0L
   gpu_mode <- if (!is.null(post$host$gpu_mode)) post$host$gpu_mode else "unknown"
-  summary <- sprintf("clk=%d/%d MHz  temp=%d°C  power=%.1fW  pstate=%s  %s  gpu_mode=%s",
+  summary <- sprintf("clk=%d/%d MHz  temp=%d\u00b0C  power=%.1fW  pstate=%s  %s  gpu_mode=%s",
                      as.integer(post$gpu$clock_sm),
                      as.integer(post$gpu$clock_mem),
                      as.integer(post$gpu$temp_c),
