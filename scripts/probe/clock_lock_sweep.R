@@ -48,7 +48,9 @@ local({
   }
 })
 
-source(here("scripts", "bench", "bench_meta.R"))
+# GPU/host state capture now lives in the cuasmR package (issue #134;
+# was source("scripts/bench/bench_meta.R")).
+suppressMessages(library(cuasmR))
 
 # ---- Parameters ------------------------------------------------------
 
@@ -76,30 +78,11 @@ log_file     <- here("scripts", "probe", "clock_lock_sweep.log")
 
 # ---- Bench execution (shared shape with rebaseline_measure.R) --------
 
-run_bench <- function(exe_abs, args) {
-  pre  <- capture_gpu_state()
-  out  <- suppressWarnings(
-    system2(exe_abs, args, stdout = TRUE, stderr = TRUE))
-  post <- capture_gpu_state()
-  status <- attr(out, "status")
-  list(out = out, pre = pre, post = post,
-       rc = if (is.null(status)) 0L else as.integer(status))
-}
+# run_bench() (run + GPU-state capture) now lives in cuasmR (issue #134);
+# the caller still chdir's into the exe dir first.
 
-parse_bench_line <- function(out, match, label) {
-  cand <- grep(match, out, fixed = TRUE, value = TRUE)
-  cand <- cand[grepl(label, cand, fixed = TRUE) &
-               grepl("ms",  cand, fixed = TRUE)]
-  if (length(cand) == 0L) return(list(ms = NA_real_, tput = NA_real_))
-  line <- cand[[length(cand)]]
-  label_rx <- gsub("([().])", "\\\\\\1", label)
-  list(
-    ms   = suppressWarnings(as.numeric(
-             sub(".*?([0-9.]+)\\s*ms.*", "\\1", line))),
-    tput = suppressWarnings(as.numeric(
-             sub(sprintf(".*?([0-9.]+)\\s*%s.*", label_rx), "\\1", line)))
-  )
-}
+# Throughput parsing now lives in cuasmR::parse_throughput (issue #134);
+# `config$label` maps to value_label, pick = "last". Returns $throughput.
 
 # Decode the post-run throttle reasons to a single string. GpuIdle is
 # benign (the GPU idled after the bench finished); anything else is a
@@ -147,15 +130,16 @@ main <- function() {
   rows <- vector("list", n_samples)
   for (i in seq_len(n_samples)) {
     run    <- run_bench(exe_abs, config$args)
-    parsed <- parse_bench_line(run$out, config$match, config$label)
+    parsed <- parse_throughput(run$out, match = config$match,
+                               value_label = config$label, pick = "last")
     thr    <- throttle_label(run$post)
     clk    <- run$post$gpu$clock_sm
     rows[[i]] <- data.table(
-      sample = i, tput = parsed$tput, ms = parsed$ms,
+      sample = i, tput = parsed$throughput, ms = parsed$ms,
       clk = as.integer(clk), throttle = thr, rc = run$rc)
     cli_alert(paste0(
       "sample {i}/{n_samples}: ",
-      "{round(parsed$tput, 0)} {config$label}  ",
+      "{round(parsed$throughput, 0)} {config$label}  ",
       "{round(parsed$ms, 3)} ms  clk {clk} MHz  throttle={thr}"))
   }
   dt <- rbindlist(rows)

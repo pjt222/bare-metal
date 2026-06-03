@@ -13,20 +13,10 @@
 
 library(jsonlite)
 
-# GPU + host state pre/post each bench. Sourced here so other modules
-# can rely on bench_regress.R + meta together.
-.bench_meta_path <- {
-  candidates <- c(
-    file.path(dirname(sub("^--file=", "",
-                          grep("^--file=", commandArgs(trailingOnly = FALSE),
-                               value = TRUE)[1])),
-              "bench_meta.R"),
-    "scripts/bench/bench_meta.R"
-  )
-  ok <- candidates[file.exists(candidates)]
-  if (length(ok)) ok[[1]] else NA_character_
-}
-if (!is.na(.bench_meta_path)) source(.bench_meta_path)
+# GPU + host state pre/post each bench, now from the cuasmR package
+# (issue #134; was source("scripts/bench/bench_meta.R")). capture_gpu_state,
+# classify_meta, decode_throttle, summarise_meta are exported by cuasmR.
+suppressMessages(library(cuasmR))
 
 # WSL CUDA libpath (R subprocesses can't see GPU otherwise).
 .WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
@@ -131,92 +121,12 @@ find_executable <- function(kernel_path) {
 #
 # Bench stdout typically holds multiple `<X> ms ... <Y> (GFLOPS|TOPS)`
 # lines, one per kernel variant. The baseline entry tells us which one
-# is *this* kernel's number via three optional fields:
-#
-#   match        substring of the line containing the kernel's label
-#   section      substring of an earlier section header (only consider
-#                lines after this header until the next header)
-#   value_label  text immediately following the throughput number on
-#                the matched line; required when the line has multiple
-#                numbers (e.g. 'eff GFLOPS' vs 'dense-equiv GFLOPS')
-#
-# Without `match`, falls back to first-ms-GFLOPS-line legacy behavior.
+# is *this* kernel's number via three optional fields (match / section /
+# value_label) passed through to cuasmR::parse_throughput. The line
+# selection + number extraction live there now (issue #134); a
+# characterization test in the package (test-parse_throughput.R) pins
+# them to the original .pick_line/.parse_line behaviour on real output.
 # ----------------------------------------------------------------------
-
-# Heuristic: a section header is a line whose stripped form starts
-# with `===` or `---` or contains '---' immediately after the trim.
-# Used by the `section` filter to bracket the search.
-.is_section_header <- function(line) {
-  s <- trimws(line)
-  grepl("^(===|---)", s, perl = TRUE)
-}
-
-# Filter raw output (a character vector of lines) to the lines inside
-# the requested section. If section_match is NULL, returns lines as-is.
-.filter_section <- function(lines, section_match) {
-  if (is.null(section_match) || !nzchar(section_match)) return(lines)
-  in_section <- FALSE
-  keep <- logical(length(lines))
-  for (i in seq_along(lines)) {
-    is_hdr <- .is_section_header(lines[[i]])
-    if (is_hdr) {
-      in_section <- grepl(section_match, lines[[i]], fixed = TRUE)
-      next  # drop the header itself
-    }
-    keep[[i]] <- in_section
-  }
-  lines[keep]
-}
-
-# Parse a single line into ms + throughput, honoring value_label when
-# given so the right column is picked out of multi-number lines.
-.parse_line <- function(line, value_label = NULL) {
-  out <- list()
-  m_ms <- regmatches(line,
-                     regexec("([0-9.]+)\\s*ms", line, perl = TRUE))[[1]]
-  if (length(m_ms) >= 2) out$ms <- as.numeric(m_ms[2])
-
-  if (!is.null(value_label) && nzchar(value_label)) {
-    # Number followed by literal value_label (e.g. 'dense-equiv GFLOPS').
-    pat <- sprintf("([0-9][0-9,.]*)\\s*%s",
-                   gsub("([][}{()|.+*?^$\\\\])", "\\\\\\1", value_label, perl = TRUE))
-    m <- regmatches(line, regexec(pat, line, perl = TRUE,
-                                  ignore.case = TRUE))[[1]]
-    if (length(m) >= 2) {
-      out$throughput <- as.numeric(gsub(",", "", m[2], fixed = TRUE))
-      # Unit: take the trailing GFLOPS/TOPS word from value_label if
-      # present, else default to GFLOPS.
-      u <- regmatches(value_label,
-                      regexec("(GFLOPS|TOPS)\\b", value_label,
-                              perl = TRUE, ignore.case = TRUE))[[1]]
-      out$unit <- if (length(u) >= 2) toupper(u[2]) else "GFLOPS"
-    }
-  } else {
-    m_tp <- regmatches(line,
-                       regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                               line, perl = TRUE, ignore.case = TRUE))[[1]]
-    if (length(m_tp) >= 3) {
-      out$throughput <- as.numeric(gsub(",", "", m_tp[2], fixed = TRUE))
-      out$unit <- toupper(m_tp[3])
-    }
-  }
-  out
-}
-
-# Pick the right line out of bench output, given a baseline-config's
-# match/section directives. Returns the chosen line (string) or NULL.
-.pick_line <- function(output_lines, match_str = NULL, section_str = NULL) {
-  candidates <- .filter_section(output_lines, section_str)
-  has_metrics <- grepl("ms", candidates) &
-                 grepl("GFLOPS|TOPS", candidates, ignore.case = TRUE)
-  candidates <- candidates[has_metrics]
-  if (!length(candidates)) return(NULL)
-  if (is.null(match_str) || !nzchar(match_str)) {
-    return(candidates[[1]])  # legacy: first metric-bearing line
-  }
-  hits <- candidates[grepl(match_str, candidates, fixed = TRUE)]
-  if (length(hits)) hits[[1]] else NULL
-}
 
 # ----------------------------------------------------------------------
 # Benchmark runner
@@ -232,46 +142,37 @@ run_benchmark <- function(exe_path, args, baseline_cfg = NULL) {
   setwd(exe_dir)
   on.exit(setwd(prev_wd), add = TRUE)
 
-  # Snapshot GPU + host state around the bench launch so we
-  # can refuse to compare against baseline if the GPU was thermally
-  # throttled, on battery, etc. capture_gpu_state() is a no-op (NULL)
-  # if bench_meta.R didn't load (e.g. running on a CI box without nvidia-smi).
-  pre_meta <- if (exists("capture_gpu_state", mode = "function"))
-                capture_gpu_state() else NULL
-
-  out <- tryCatch(
-    suppressWarnings(system2(abs_exe, args, stdout = TRUE, stderr = TRUE,
-                             timeout = 120)),
-    error = function(e) {
-      attr(character(0), "status") <- 1L
-      character(0)
-    }
-  )
-
-  post_meta <- if (exists("capture_gpu_state", mode = "function"))
-                 capture_gpu_state() else NULL
-
-  status <- attr(out, "status")
-  rc <- if (is.null(status)) 0L else as.integer(status)
+  # Run + GPU-state capture via the cuasmR core (issue #134). run_bench
+  # snapshots capture_gpu_state() pre/post (NULL on a CI box without
+  # nvidia-smi) and returns the stdout+stderr line vector. The 120s
+  # timeout and error->rc=1 fallback live in run_bench.
+  r <- run_bench(abs_exe, args, timeout = 120)
+  out <- r$out
+  rc  <- r$rc
   output <- paste(out, collapse = "\n")
 
   metrics <- list(raw_output = output, returncode = rc,
-                  meta_pre = pre_meta, meta_post = post_meta)
+                  meta_pre = r$pre, meta_post = r$post)
 
   match_str   <- if (!is.null(baseline_cfg)) baseline_cfg$match       else NULL
   section_str <- if (!is.null(baseline_cfg)) baseline_cfg$section     else NULL
   value_label <- if (!is.null(baseline_cfg)) baseline_cfg$value_label else NULL
 
-  picked <- .pick_line(out, match_str = match_str, section_str = section_str)
-  if (is.null(picked)) {
-    # Nothing matched our hints; fall back to whole-output scan as before.
-    picked <- output
+  # Throughput parse via cuasmR::parse_throughput (issue #134). pick =
+  # "first" reproduces the legacy .pick_line (first match-bearing line);
+  # a characterization test (cuasmR test-parse_throughput.R) proves
+  # identical ms/throughput/unit on real bench output for every config.
+  parsed <- parse_throughput(out, match = match_str, section = section_str,
+                             value_label = value_label, pick = "first")
+  if (is.na(parsed$throughput)) {
+    # Hints matched nothing; fall back to a whole-output scan (first
+    # ms + GFLOPS/TOPS line anywhere), as the old .pick_line NULL path did.
+    parsed <- parse_throughput(out, value_label = value_label, pick = "first")
   }
-  parsed <- .parse_line(picked, value_label = value_label)
-  metrics$ms         <- parsed$ms
-  metrics$throughput <- parsed$throughput
-  metrics$unit       <- parsed$unit
-  metrics$matched_line <- picked
+  metrics$ms           <- parsed$ms
+  metrics$throughput   <- parsed$throughput
+  metrics$unit         <- parsed$unit
+  metrics$matched_line <- if (is.na(parsed$line)) output else parsed$line
   metrics
 }
 
@@ -302,117 +203,42 @@ measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
     run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
   }
 
-  samples  <- list()        # valid metrics lists
-  attempt  <- 0L
-  rejected <- character(0)
-  while (length(samples) < CLOCK_LOCK_SAMPLES && attempt < CLOCK_LOCK_MAX_TRY) {
-    attempt <- attempt + 1L
-    m <- run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg)
+  # Collect N valid samples. run_benchmark produces a full metrics list
+  # (run+capture+parse); cuasmR::validate_sample is the per-sample verdict
+  # (rc / parse / classify_meta(valid_when) / two-sided locked band). The
+  # loop returns FULL metrics lists so the representative sample below can
+  # carry meta_pre/meta_post/matched_line/unit forward (issue #134).
+  res <- collect_valid_samples(
+    sample_fn = function() run_benchmark(exe, cfg_args, baseline_cfg = baseline_cfg),
+    validate_fn = function(m) validate_sample(
+      m$returncode, m$throughput, m$meta_pre, m$meta_post,
+      valid_when = valid_when, clock_band = c(lo, hi)),
+    n_valid = CLOCK_LOCK_SAMPLES, max_attempts = CLOCK_LOCK_MAX_TRY)
 
-    if (!is.null(m$returncode) && m$returncode != 0L) {
-      rejected <- c(rejected, sprintf("crash(exit=%d)", m$returncode)); next
-    }
-    if (is.null(m$throughput)) {
-      rejected <- c(rejected, "parse-fail"); next
-    }
-    # Throttle / temp / ac check via the entry's valid_when.
-    if (exists("classify_meta", mode = "function")) {
-      cls <- classify_meta(m$meta_pre, m$meta_post, valid_when)
-      if (isFALSE(cls$ok)) {
-        rejected <- c(rejected, sprintf("unfair(%s)",
-                                        paste(cls$reasons, collapse = ";")))
-        next
-      }
-      if (is.na(cls$ok)) { rejected <- c(rejected, "no-gpu-meta"); next }
-    } else {
-      rejected <- c(rejected, "no-meta-module"); next
-    }
-    # Two-sided clock-band check: reject sag AND "lock never applied".
-    clk <- m$meta_post$gpu$clock_sm
-    if (is.null(clk) || is.na(clk) || clk < lo || clk > hi) {
-      rejected <- c(rejected,
-                    sprintf("clock %s MHz outside locked band %d-%d",
-                            if (is.null(clk)) "NA"
-                            else as.character(as.integer(clk)), lo, hi))
-      next
-    }
-    samples[[length(samples) + 1L]] <- m
-  }
-
-  if (length(samples) < CLOCK_LOCK_SAMPLES) {
+  if (!res$complete) {
     return(list(status = "insufficient",
                 msg = sprintf(
                   "INSUFFICIENT (%d/%d valid in %d tries; rejects: %s)",
-                  length(samples), CLOCK_LOCK_SAMPLES, attempt,
-                  paste(utils::head(rejected, 6L), collapse = ", "))))
+                  length(res$samples), CLOCK_LOCK_SAMPLES, res$attempts,
+                  paste(utils::head(res$rejected, 6L), collapse = ", "))))
   }
 
+  samples <- res$samples
   tputs <- vapply(samples, function(s) s$throughput, numeric(1))
   mss   <- vapply(samples,
                   function(s) if (is.null(s$ms)) NA_real_ else s$ms,
                   numeric(1))
+  med <- report_median_metrics(tputs, mss)
   # Representative sample (closest to the median) carries meta + unit
   # + matched_line forward; throughput/ms are overwritten with medians.
-  current <- samples[[which.min(abs(tputs - stats::median(tputs)))]]
-  current$throughput <- stats::median(tputs)
-  current$ms         <- stats::median(mss, na.rm = TRUE)
+  current <- samples[[which.min(abs(tputs - med$median_throughput))]]
+  current$throughput <- med$median_throughput
+  current$ms         <- med$median_ms
   list(status = "ok", current = current)
 }
 
-# ----------------------------------------------------------------------
-# Regression decision
-# ----------------------------------------------------------------------
-check_regression <- function(current, baseline, tolerance,
-                             default_valid_when = list()) {
-  if (!is.null(current$returncode) && current$returncode != 0L) {
-    return(list(is_reg = TRUE,
-                msg = sprintf("CRASH (exit=%d)", current$returncode)))
-  }
-
-  # Refuse to compare if the GPU was in an unfair state
-  # during the run (thermal throttle, sw power cap, etc). Reported as
-  # SKIPPED, not REGRESSION — the measurement isn't comparable to
-  # baseline regardless of what the number says.
-  if (exists("classify_meta", mode = "function") &&
-      !is.null(current$meta_pre) && !is.null(current$meta_post)) {
-    valid_when <- if (!is.null(baseline$valid_when)) baseline$valid_when
-                  else default_valid_when
-    cls <- classify_meta(current$meta_pre, current$meta_post, valid_when)
-    if (isFALSE(cls$ok)) {
-      return(list(is_reg = FALSE, skipped = TRUE,
-                  msg = sprintf("SKIPPED (%s) [%s]",
-                                paste(cls$reasons, collapse = "; "),
-                                cls$summary)))
-    }
-  }
-
-  unit <- if (!is.null(current$unit)) current$unit else "GFLOPS"
-  baseline_val <- baseline[[tolower(unit)]]
-  if (is.null(baseline_val)) baseline_val <- baseline$gflops
-  if (is.null(baseline_val)) baseline_val <- baseline$tops
-  if (is.null(baseline_val)) baseline_val <- 0
-  current_val <- if (!is.null(current$throughput)) current$throughput else 0
-
-  if (baseline_val == 0 || current_val == 0) {
-    return(list(is_reg = TRUE,
-                msg = sprintf("NO_DATA (baseline=%g, current=%g)",
-                              baseline_val, current_val)))
-  }
-  ratio <- current_val / baseline_val
-  if (ratio < (1.0 - tolerance)) {
-    list(is_reg = TRUE,
-         msg = sprintf("REGRESSION %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  } else if (ratio > (1.0 + tolerance)) {
-    list(is_reg = FALSE,
-         msg = sprintf("IMPROVED %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  } else {
-    list(is_reg = FALSE,
-         msg = sprintf("OK %.1f%% of baseline (%.0f vs %.0f %s)",
-                       ratio * 100, current_val, baseline_val, unit))
-  }
-}
+# Regression decision now lives in cuasmR::check_regression (issue #134):
+# CRASH / SKIPPED (unfair GPU state) / NO_DATA / REGRESSION / OK / IMPROVED.
 
 # ----------------------------------------------------------------------
 # main

@@ -44,7 +44,9 @@ local({
   }
 })
 
-source(here("scripts", "bench", "bench_meta.R"))
+# GPU/host state capture now lives in the cuasmR package (issue #134;
+# was source("scripts/bench/bench_meta.R")).
+suppressMessages(library(cuasmR))
 
 # ----------------------------------------------------------------------
 # CLI parsing
@@ -120,15 +122,12 @@ normalise_clock <- function(c) {
 # ----------------------------------------------------------------------
 # Plan
 # ----------------------------------------------------------------------
+# Resume keys = the (git_head, clock_target, cell_id) of every already-
+# recorded sample. The tolerant JSONL read is cuasmR::read_jsonl (issue
+# #134); the key construction stays here (grid's schema).
 load_jsonl_keys <- function(path) {
-  if (is.null(path) || !file_exists(path)) return(character(0))
-  lines <- readLines(path, warn = FALSE)
-  if (length(lines) == 0L) return(character(0))
-  rows <- lapply(lines, function(l) {
-    tryCatch(fromJSON(l, simplifyVector = FALSE),
-             error = function(e) NULL)
-  })
-  rows <- Filter(Negate(is.null), rows)
+  rows <- read_jsonl(path, simplify = FALSE)$rows
+  if (length(rows) == 0L) return(character(0))
   keys <- vapply(rows, function(r) {
     clk <- if (is.null(r$clock_target_mhz) || is.na(r$clock_target_mhz))
              "native" else as.character(as.integer(r$clock_target_mhz))
@@ -194,53 +193,8 @@ build_plan <- function(spec, resume_jsonl) {
 # ----------------------------------------------------------------------
 # Measure
 # ----------------------------------------------------------------------
-parse_bench_line <- function(out, match, value_label, section) {
-  lines <- out
-  if (!is.null(section) && nzchar(section)) {
-    in_sec <- FALSE
-    keep <- logical(length(lines))
-    for (i in seq_along(lines)) {
-      s <- trimws(lines[[i]])
-      is_hdr <- grepl("^(===|---)", s, perl = TRUE)
-      if (is_hdr) {
-        in_sec <- grepl(section, lines[[i]], fixed = TRUE)
-        next
-      }
-      keep[[i]] <- in_sec
-    }
-    lines <- lines[keep]
-  }
-  cand <- grep(match, lines, fixed = TRUE, value = TRUE)
-  cand <- cand[grepl("ms", cand, fixed = TRUE)]
-  if (!is.null(value_label) && nzchar(value_label))
-    cand <- cand[grepl(value_label, cand, fixed = TRUE)]
-  if (length(cand) == 0L)
-    return(list(ms = NA_real_, throughput = NA_real_, unit = NA_character_))
-
-  line <- cand[[length(cand)]]
-  ms <- suppressWarnings(as.numeric(
-    sub(".*?([0-9.]+)\\s*ms.*", "\\1", line)))
-
-  if (!is.null(value_label) && nzchar(value_label)) {
-    rx <- gsub("([().])", "\\\\\\1", value_label)
-    tp <- suppressWarnings(as.numeric(
-      sub(sprintf(".*?([0-9.]+)\\s*%s.*", rx), "\\1", line)))
-    unit <- if (grepl("TOPS", value_label, ignore.case = TRUE))
-              "TOPS" else "GFLOPS"
-  } else {
-    m <- regmatches(line,
-                    regexec("([0-9][0-9,.]*)\\s*(GFLOPS|TOPS)",
-                            line, perl = TRUE, ignore.case = TRUE))[[1]]
-    if (length(m) >= 3L) {
-      tp <- as.numeric(gsub(",", "", m[[2]], fixed = TRUE))
-      unit <- toupper(m[[3]])
-    } else {
-      tp <- NA_real_
-      unit <- NA_character_
-    }
-  }
-  list(ms = ms, throughput = tp, unit = unit)
-}
+# Throughput parsing now lives in cuasmR::parse_throughput (issue #134).
+# grid uses pick = "last" (the perf line is the last match-bearing line).
 
 throttle_str <- function(post) {
   reasons <- setdiff(post$gpu$throttle, "GpuIdle")
@@ -263,27 +217,11 @@ static_gpu_info <- function() {
   )
 }
 
-run_one_sample <- function(exe_abs, args) {
-  pre  <- capture_gpu_state()
-  out  <- suppressWarnings(
-    system2(exe_abs, as.character(args),
-            stdout = TRUE, stderr = TRUE))
-  post <- capture_gpu_state()
-  st   <- attr(out, "status")
-  list(out = out, pre = pre, post = post,
-       rc = if (is.null(st)) 0L else as.integer(st))
-}
+# Per-sample run + GPU-state capture now lives in cuasmR::run_bench
+# (issue #134). The caller still chdir's into the exe dir first.
 
-# Append one row as a single JSONL line. `cat(..., append = TRUE)`
-# is atomic at line boundaries on POSIX (and on Windows for short
-# writes < PIPE_BUF / page size) — a Ctrl+C between rows leaves
-# previous rows intact; a Ctrl+C mid-row leaves at most one
-# truncated final line that the reader drops.
-append_jsonl_row <- function(jsonl_path, row) {
-  json <- toJSON(row, auto_unbox = TRUE, na = "null", null = "null",
-                 digits = NA)
-  cat(json, "\n", sep = "", file = jsonl_path, append = TRUE)
-}
+# JSONL append (atomic per line) now lives in cuasmR::append_jsonl_row
+# (issue #134).
 
 measure_cell <- function(cell, jsonl_path, run_id, gh) {
   exe_abs <- path_abs(here(cell$exe))
@@ -309,11 +247,11 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
   setwd(path_dir(exe_abs))
 
   for (i in seq_len(warmup_n)) {
-    run_one_sample(exe_abs, args)
+    run_bench(exe_abs, args)
   }
 
   for (i in seq_len(n_samples)) {
-    r <- run_one_sample(exe_abs, args)
+    r <- run_bench(exe_abs, args)
 
     # Ctrl+C while R is blocked in system2 sends SIGINT to every
     # process attached to the console: the bench child catches it and
@@ -327,25 +265,25 @@ measure_cell <- function(cell, jsonl_path, run_id, gh) {
       quit(save = "no", status = 130L)
     }
 
-    parsed <- parse_bench_line(r$out, cell$match,
-                               cell$value_label, cell$section)
+    parsed <- parse_throughput(r$out, match = cell$match,
+                               section = cell$section,
+                               value_label = cell$value_label,
+                               pick = "last")
     thr <- throttle_str(r$post)
     clk_obs <- as.integer(r$post$gpu$clock_sm %||% NA_integer_)
 
-    valid <- TRUE
-    reject <- NA_character_
-    if (r$rc != 0L) { valid <- FALSE; reject <- sprintf("rc=%d", r$rc) }
-    else if (is.na(parsed$throughput)) {
-      valid <- FALSE; reject <- "parse_failed"
-    } else if (thr != "none") {
-      valid <- FALSE; reject <- sprintf("throttle:%s", thr)
-    } else if (!is.null(clk_tgt) && !is.na(clk_obs)) {
-      if (clk_obs < clk_lo || clk_obs > clk_hi) {
-        valid <- FALSE
-        reject <- sprintf("clock_out_of_band:%d not in [%d,%d]",
-                          clk_obs, clk_lo, clk_hi)
-      }
-    }
+    # Per-sample verdict via cuasmR::validate_sample (issue #134). grid
+    # validates on the POST snapshot only (its throttle_str(post)
+    # semantics), so pass r$post as both pre and post. The two-sided
+    # clock band applies only in a locked regime with an observed clock —
+    # matching grid's original `!is.null(clk_tgt) && !is.na(clk_obs)`
+    # guard (an NA clock skips the band, as before).
+    vr <- validate_sample(r$rc, parsed$throughput, r$post, r$post,
+                          valid_when = list(allow_throttle = c("GpuIdle")),
+                          clock_band = if (!is.null(clk_tgt) && !is.na(clk_obs))
+                                         c(clk_lo, clk_hi) else NULL)
+    valid  <- vr$ok
+    reject <- vr$reason
 
     row <- list(
       run_id           = run_id,

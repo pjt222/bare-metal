@@ -1,0 +1,26 @@
+=== Flash Attention: RegPV (32 KB) vs Baseline (48 KB) ===
+seq=1024 d=64 batch=8 heads=8
+
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU
+
+Baseline smem: 49152 bytes (48.0 KB)
+RegPV    smem: 32768 bytes (32.0 KB)
+
+Registers/thread: baseline=122  regpv=156
+Blocks/SM:        baseline=2  regpv=3
+Warps/SM:         baseline=8  regpv=12
+
+Correctness:
+  flash_attn_br16       (baseline, 48 KB) PASS  (max_abs=2.74e-05  max_rel=2.58e+01)
+  flash_attn_br16_regpv (reg PV,   32 KB) PASS  (max_abs=2.74e-05  max_rel=2.58e+01)
+
+Performance (batch=8, heads=8):
+
+  flash_attn_br16       (baseline, 48 KB)         3.002 ms      5834 GFLOPS
+  flash_attn_br16_regpv (reg PV,   32 KB)         2.592 ms      6757 GFLOPS
+
+  Speedup: 1.16x (13.7% faster)
+
+SASS:
+  cuobjdump -sass flash_attn_br16_regpv.sm_86.cubin | grep -c HMMA
+  cuobjdump -sass flash_attn_br16_regpv.sm_86.cubin | grep -c 'LDS\|STS'

@@ -1,0 +1,32 @@
+=== Implicit GEMM vs Explicit im2col + GEMM ===
+  Explicit: im2col_nhwc_fp16 → col buffer → wmma_gemm_conv
+  Implicit: implicit_gemm_conv (indices on-the-fly, no col buffer)
+
+--- SD 64×64  Cin=Cout=320  (baseline, large col buffer) ---
+  M=4096 K=2880 Cout=320  col_buf=23.6 MB  GFLOPs=7.55
+  vs explicit: PASS (max_abs=0.00e+00)
+  vs CPU ref:  max_abs=4.47e-06
+  Explicit (im2col+GEMM): 1.225 ms  →   6163 GFLOPS
+  Implicit (single kern): 1.003 ms  →   7530 GFLOPS  (1.22× speedup)
+
+--- SD 32×32  Cin=Cout=640  (smaller spatial, larger channels) ---
+  M=1024 K=5760 Cout=640  col_buf=11.8 MB  GFLOPs=7.55
+  vs explicit: PASS (max_abs=0.00e+00)
+  vs CPU ref:  max_abs=4.88e-06
+  Explicit (im2col+GEMM): 1.805 ms  →   4183 GFLOPS
+  Implicit (single kern): 1.665 ms  →   4535 GFLOPS  (1.08× speedup)
+
+--- SD 128×128 Cin=Cout=160 (large spatial, small col buffer penalty) ---
+  M=16384 K=1440 Cout=160  col_buf=47.2 MB  GFLOPs=7.55
+  vs explicit: PASS (max_abs=0.00e+00)
+  vs CPU ref:  max_abs=5.08e-06
+  Explicit (im2col+GEMM): 2.184 ms  →   3457 GFLOPS
+  Implicit (single kern): 1.161 ms  →   6502 GFLOPS  (1.88× speedup)
+
+--- Small     64×64  Cin=Cout=64  (index decode overhead visible) ---
+  M=4096 K=576 Cout=64  col_buf=4.7 MB  GFLOPs=0.30
+  vs explicit: PASS (max_abs=0.00e+00)
+  vs CPU ref:  max_abs=4.41e-06
+  Explicit (im2col+GEMM): 0.199 ms  →   1516 GFLOPS
+  Implicit (single kern): 0.137 ms  →   2200 GFLOPS  (1.45× speedup)
+

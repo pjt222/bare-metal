@@ -1,0 +1,25 @@
+=== HGEMM Benchmark — Tensor Cores (sm_86) ===
+Matrix: C[2048×2048] = A[2048×2048] * B[2048×2048]  (FP16 in, FP32 out)
+
+Device: NVIDIA GeForce RTX 3070 Ti Laptop GPU
+
+Kernels loaded: naive + tiled(128x128) + direct-store + 16warp + 16warp+epi
+
+CPU reference skipped (matrix too large — use M<=512 for correctness check)
+
+Performance (avg of 50 runs, 5 warmup):
+  hgemm_wmma (naive 32x32)              2.593 ms    6626.07 GFLOPS
+  hgemm_tiled (128x128 smem epi)        1.473 ms   11667.08 GFLOPS
+  hgemm_direct (128x128 no epi)         1.195 ms   14381.79 GFLOPS
+  hgemm_16warp (128x128 2blk/SM)        0.580 ms   29611.38 GFLOPS
+  hgemm_16warp_epi (2blk+epi)           1.033 ms   16632.93 GFLOPS
+  hgemm_256x128 (1blk/SM AI=85)         1.009 ms   17033.74 GFLOPS
+  FP32 peak (FFMA)                         --         21700 GFLOPS  (theoretical)
+  FP16 Tensor Core peak                    --        174000 GFLOPS  (theoretical)
+
+  Best: 17.0% of FP16 peak
+  Tiled vs naive: 1.76× (+76.1%)
+  Direct vs smem-epi: 1.2327× (+23.27%)
+  16-warp vs 8-warp: 2.5380× (+153.80%)
+  16-warp+epi vs 8-warp: 1.4256× (+42.56%)
+  16-warp+epi vs 16-warp(direct): 0.5617× (-43.83%)

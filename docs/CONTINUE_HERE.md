@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-05-27 (#135 grid-sweep tool feature-complete; P2-5 single-Ctrl+C re-test pending) | Branch: main
+> Last updated: 2026-06-02 (#134 PR-A cuasmR measurement migration feature-complete, Phases 1–5; push initiated, PR not yet opened) | Branch: feat/134-cuasmr-measurement-migration
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -365,27 +365,107 @@ that's the cancelled cell — but 1200/1410/1500 measured cleanly):
 These match the clock_lock_sweep.R numbers (1410→44k, 1500→47k)
 within run-to-run variance. Sanity-check passes.
 
+## Latest session — #134 PR-A COMPLETE (Phases 0–5) (2026-06-02)
+
+The #134 cuasmR measurement-migration runs as **two PRs** (decided with
+user): PR-A = the dedupe (Phases 1–5), PR-B = CRAN polish (Phase 6 —
+roxygen/`man/` + `R CMD check --as-cran`). **PR-A is feature-complete**
+on branch **`feat/134-cuasmr-measurement-migration`** (~10 commits on
+`53d7671`). **Push initiated** end of session (user approved push + PR);
+the pre-push hook runs `make test` (builds + smoke-runs all benches —
+several minutes of GPU work) + `check_links.R` + `bench_regress`, so the
+push is slow. **First confirm the branch actually landed on origin**
+(`git ls-remote --heads origin feat/134-cuasmr-measurement-migration`):
+if yes → `gh pr create` (PR not yet opened); if not → re-push (the hook
+may have been interrupted; the gate itself passes — verified). Each phase
+kept the pre-push gate green; incremental, never big-bang.
+
+Plan file: `~/.claude/plans/hey-there-how-tender-fern.md`.
+
+| Phase | Commit | What |
+|-------|--------|------|
+| 0 | — | Baseline gate: 7 configs, 0 regressions, 5 OK + 2 SKIP, PASSED. Reference for diffing. |
+| 1 | `e01cf4d` | `bench_meta.R` → cuasmR (`capture_gpu_state`/`classify_meta`/`decode_throttle`/`summarise_meta`). Source-time WSL `LD_LIBRARY_PATH` guard → `.onLoad` (`zzz.R`). 4 sourcers `source()`→`library(cuasmR)`; compat shim kept. **`.gitignore` fix**: `bench_*` rule was swallowing `R/cuasmR/R/bench_*.R` — added `!R/cuasmR/R/bench_*.R` (cf. `832201d`). |
+| 2a | `c9f977d` | `run_bench(exe, args, timeout=0)` → `bench_run.R`. 4 runners consolidated. |
+| 2b | `caeca97` | `parse_throughput(lines, match, section, value_label, pick)` → `bench_run.R`. Unifies 4 divergent parsers; **GPU-free differential test** (`test-parse_throughput.R`, 41 assertions) with the 3 originals as oracles over real captured stdout — incl. igemm_sparse two-number line (dense-equiv not eff) + conv2d section. |
+| 3 | `d518f1b` | `validate_sample` + `collect_valid_samples` + `report_median_metrics` → `bench_measure.R`. Independent re-derivation (workflow, one agent/caller) caught **two drifts the planning agents missed**: (a) grid validates throttle on POST only — pass `(post, post)` to collapse `classify_meta`'s pre/post union; (b) `classify_meta` min_clock_sm did `NA < x` (`if(NA)` crash) — made NA-safe (reject). `test-validate_sample.R` (58 assertions) asserts each caller's verbatim decision incl. the discriminating pre-throttled/post-clean case + NA clock. grid keeps its record-all loop. |
+| 4 | `fd8f853` | `append_jsonl_row` + `read_jsonl` → `bench_io.R`. The tolerant per-line read was dup'd in grid_measure's `load_jsonl_keys` and grid_collect's `read_jsonl`; both rewired. `test-bench_io.R` (12). |
+| 5 | `65855a0` | `check_regression` → `bench_regression.R` (last API stage). bench_regress drops local. Also deduped probe_gpu_power's identical `decode_throttle`. `test-check_regression.R` (15). |
+| bump | `72da9b2` | cuasmR `0.1.0`→`0.2.0` (new API surface); renv.lock Version field synced (surgical edit, not a full snapshot). |
+
+NAMESPACE is **hand-maintained** in PR-A (roxygen `#'` blocks present but
+`roxygenise()` deferred to PR-B/Phase 6 — running it now churns the whole
+NAMESPACE/`man/`).
+
+Verification each phase: reinstall (`Rscript scripts/install_cuasmR.R` —
+**mandatory**, `library()` loads the *installed* copy) → run rewired
+script(s) → gate green. Live native grid cell measure confirmed
+run_bench+parse_throughput+JSONL end-to-end (hgemm_2048 → 31889 GFLOPS).
+
+### PR-A verification (all green)
+
+- **Full cuasmR suite: 131 assertions, 0 fail** (parse_throughput 41,
+  validate_sample 58, bench_io 12, check_regression 15, roundtrip 6 — the
+  1 warning is the pre-existing roundtrip one). All GPU-free differential/
+  unit tests; they become the PR-B/Phase-6 test base.
+- **Gate unchanged at every phase**: 7 configs, 0 regressions, PASSED.
+  `--tolerance 0.0` → REGRESSION detected, exit 1 (the gate still *blocks*
+  through `cuasmR::check_regression`).
+- **Live integration**: grid native cell (validate_sample(post,post) +
+  record-all JSONL); bench_regress `--clock-locked 1605` with NO host lock
+  → igemm_4096 INSUFFICIENT (0/5 valid, all rejected, no false pass);
+  rebaseline config 1 → clean median `31888.7 GFLOPS (31637.2-32020)` via
+  the rewired closure + `on_sample` glue + `report_median_metrics`;
+  probe_gpu_power `--json` decodes `0x..01`→GpuIdle via cuasmR.
+- **Downstream safe**: `bench_reference.R` `source()`s bench_regress.R; its
+  `sys.nframe()==0L` guard means no gate auto-run, and `check_regression`
+  (cuasmR) / `run_benchmark` (kept) / `capture_gpu_state` (cuasmR) all
+  resolve. No deleted `.parse_line`/`.pick_line` usage anywhere.
+
+**AC4 status**: every extracted measurement function is deduped. The one
+loose runner left is `bench_flash_all.R`'s `run_bench` — deliberately NOT
+migrated (flash-specific run+parse fusion: GFLOPS + PASS/FAIL, no GPU-state
+capture; behaviour + flash-bench verification make it a separate follow-up).
+
+The packaged measurement API (cuasmR 0.2.0), in pipeline order:
+`run_bench → parse_throughput → validate_sample → collect_valid_samples →
+report_median_metrics → check_regression`, plus `append_jsonl_row` /
+`read_jsonl` and the `capture_gpu_state` / `classify_meta` /
+`decode_throttle` / `summarise_meta` base. #124 (`bench-all`) builds on this.
+
 ## Next steps
 
-1. **[USER] Re-test P2-5 with `246c961`.** In elevated pwsh:
+1. **Confirm PR-A push, then open the PR.** Push was initiated end of last
+   session (user-approved). Check `git ls-remote --heads origin
+   feat/134-cuasmr-measurement-migration`: landed → `gh pr create --base
+   main` (title "#134 PR-A: cuasmR measurement API (Phases 1–5)", body =
+   the phase table + verification + the bench_flash_all defer; **do NOT
+   `Closes #134`** — PR-B/Phase 6 still owes the CRAN work, so reference it
+   only). Not landed → re-push (`git push -u origin
+   feat/134-cuasmr-measurement-migration`; the gate passes — slowness is
+   just the GPU `make test` in the hook; `--no-verify` only if the hook is
+   the blocker and you've already confirmed the gate green).
+2. **PR-B = Phase 6** (CRAN polish, same branch or a new one off it):
+   `roxygen2::roxygenise()` (generate `man/`, regenerate NAMESPACE),
+   `.Rbuildignore`, testthat for the pure logic (the PR-A differential
+   tests already cover most), `R CMD check --as-cran` clean (document NOTEs:
+   nvdisasm SystemRequirements, GPU tests skipped on CI). Optional cleanup:
+   migrate `bench_flash_all.R`'s `run_bench` (the one deferred dup).
+3. **[USER] Re-test P2-5 with `246c961`** (separate from #134). In elevated pwsh:
    `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096`.
    Wait for first sample line of any group, press Ctrl+C **once**.
    Expect: `Bench exited 130 (SIGINT)` → `Cell cancelled by user`
    → cleanup → exit. Verify no orphans:
    `Get-Process Rscript -ErrorAction SilentlyContinue; wsl -- pgrep -f grid_measure.R`.
    If single press still requires multiple, investigate further.
-2. **P2-6 — full elevated sweep (~1 h).** Once P2-5 re-test is green,
+4. **P2-6 — full elevated sweep (~1 h).** Once P2-5 re-test is green,
    run the full plan:
    `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1`.
    Then materialise: `wsl -- Rscript scripts/probe/grid_collect.R --print`.
    Inspect `grid_sweep_results.rds` for the full plateau map. Close #135.
-3. **#134 — cuasmR CRAN-ready migration** (epic). `grid_measure.R`
-   is now the canonical measurement function and joins
-   `measure_clock_locked()` + the `rebaseline_measure.R` sampling
-   loop as duplicate-by-design code to dedupe into cuasmR.
-4. **#124 — `bench-all` runner** (epic). Build on the packaged
+5. **#124 — `bench-all` runner** (epic). Build on the packaged
    cuasmR API (#134) once it exists.
-5. **#128 — OC showcase**: deferred. The grid_sweep above-native-
+6. **#128 — OC showcase**: deferred. The grid_sweep above-native-
    clock data will be its data source.
 
 Closed earlier, not in scope unless reopened:
