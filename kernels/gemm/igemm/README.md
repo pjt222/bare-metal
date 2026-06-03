@@ -2,36 +2,36 @@
 
 ## Why INT8
 
-INT8 Tensor Cores deliver 4× the throughput of FP16 on the same silicon:
+INT8 Tensor Cores deliver 2× the throughput of FP16 on the same silicon (dense; 4× with 2:4 sparsity):
 
 | Precision | Peak Throughput | SASS Instruction |
 |-----------|----------------|------------------|
 | FP32 FFMA | 21.7 TFLOPS | `FFMA` |
 | FP16 Tensor | 174 TFLOPS | `HMMA.16816.F32` |
-| INT8 Tensor | 696 TOPS | `IMMA.16816.S8.S8` |
+| INT8 Tensor | 348 TOPS (dense; 2:4-sparse 696) | `IMMA.16816.S8.S8` |
 
 INT8 is the inference workhorse: weights and activations quantized to 8-bit, accumulated in INT32, then dequantized to FP32 for the next layer.
 
 ## Measured Results (RTX 3070 Ti Laptop, sm_86)
 
-| Kernel | 4096³ Time | TOPS | % INT8 Peak | vs Naive |
-|--------|-----------|------|-------------|----------|
-| Naive (global loads) | 12.5 ms | 10,980 | 1.6% | 1.00× |
-| Tiled 64×64 (compiler) | 9.1 ms | 15,121 | 2.2% | 1.38× |
-| Tiled 64×64 (hand-tuned S02) | 9.0 ms | 15,341 | 2.2% | 1.40× |
-| Tiled 64×64 (aggressive S01) | 9.1 ms | 15,170 | 2.2% | 1.38× |
-| Register-blocked 128×128 | 10.8 ms | 12,741 | 1.8% | 1.16× |
-| Pipelined LDG (double-buffer) | 7.6 ms | 18,054 | 2.6% | 1.64× |
-| **Pipelined cp.async (double-buffer)** | **6.6 ms** | **20,688** | **3.0%** | **1.88×** |
-| 8-warp 128×128 (1 blk/SM) | 5.6 ms | 24,533 | 3.5% | 2.21× |
-| 8-warp 128×256 (1 blk/SM) | **5.0 ms** | **27,591** | **4.0%** | **2.49×** |
-| Persistent 128×256 (L2) | 5.0 ms | 27,383 | 4.0% | 2.47× |
+| Kernel | 4096³ Time | TOPS | % INT8 Peak (dense 348) | vs Naive |
+|--------|-----------|------|-------------------------|----------|
+| Naive (global loads) | 12.5 ms | 10,980 | 3.2% | 1.00× |
+| Tiled 64×64 (compiler) | 9.1 ms | 15,121 | 4.3% | 1.38× |
+| Tiled 64×64 (hand-tuned S02) | 9.0 ms | 15,341 | 4.4% | 1.40× |
+| Tiled 64×64 (aggressive S01) | 9.1 ms | 15,170 | 4.4% | 1.38× |
+| Register-blocked 128×128 | 10.8 ms | 12,741 | 3.7% | 1.16× |
+| Pipelined LDG (double-buffer) | 7.6 ms | 18,054 | 5.2% | 1.64× |
+| **Pipelined cp.async (double-buffer)** | **6.6 ms** | **20,688** | **5.9%** | **1.88×** |
+| 8-warp 128×128 (1 blk/SM) | 5.6 ms | 24,533 | 7.0% | 2.21× |
+| 8-warp 128×256 (1 blk/SM) | **5.0 ms** | **27,591** | **7.9%** | **2.49×** |
+| Persistent 128×256 (L2) | 5.0 ms | 27,383 | 7.9% | 2.47× |
 
 FP16 HGEMM reference: **31,910 GFLOPS** at 4096³ (hgemm_16warp).
 
 **Why tiled 64×64 beats register-blocked 128×128:** The 128×128 kernel's inner loop has 16 mma_sync calls per K-step (vs 4 for 64×64). This long IMMA chain reduces warp switching frequency. With only 8 warps/SM (4 warps × 2 blocks), the scheduler can't fully hide Tensor Core pipeline latency (S08 stalls). The 64×64 version's shorter inner loop allows faster warp interleaving — same lesson as the Bc=128 Flash Attention experiment.
 
-**Why only 4.0% of INT8 peak?** The tiled kernel without pipelining was fully bandwidth-bound: 2 GB at 608 GB/s = ~3.3 ms floor vs 9.0 ms total. Software pipelining (double-buffered smem) overlaps LDG for tile N+1 with IMMA compute on tile N, reclaiming ~2.4 ms of pipeline bubble. The 128×256 variant with 1 block/SM (8 warps) achieves the best balance of compute density vs occupancy. The remaining gap to the 0.2 ms compute minimum is still dominated by DRAM bandwidth.
+**Why only 7.9% of INT8 peak?** (dense 348 TOPS basis.) The tiled kernel without pipelining was fully bandwidth-bound: 2 GB at 608 GB/s = ~3.3 ms floor vs 9.0 ms total. Software pipelining (double-buffered smem) overlaps LDG for tile N+1 with IMMA compute on tile N, reclaiming ~2.4 ms of pipeline bubble. The 128×256 variant with 1 block/SM (8 warps) achieves the best balance of compute density vs occupancy. The remaining gap to the 0.2 ms compute minimum is still dominated by DRAM bandwidth.
 
 See [`docs/gpu_reflections.md`](../../../docs/gpu_reflections.md) for the full optimization timeline (Insight 12: "IMMA pipelining is memory-bound until tile size grows", Insight 20: "L2 reuse from persistent grid is negligible").
 

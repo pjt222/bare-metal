@@ -19,7 +19,8 @@ tooling language; there are no Python run-time dependencies.
 - 46 SMs (laptop bin) / 48 SMs (desktop bin), 128 cores/SM, 64K
   32-bit registers/SM, 100 KB max shared memory/SM.
 - FP32 peak 21.7 TFLOPS, FP16 Tensor Core peak 174 TFLOPS, INT8
-  Tensor Core peak 348 TOPS, DRAM 608 GB/s, L2 4 MB.
+  Tensor Core peak 348 TOPS dense (2:4-sparse 696), DRAM 608 GB/s,
+  L2 4 MB.
 - The 50 KB shared-memory cliff is load-bearing: blocks at >50 KB
   drop to 1 block/SM (4 warps), measured 2× regression vs blocks
   at ≤50 KB (2 blocks/SM, 8 warps).

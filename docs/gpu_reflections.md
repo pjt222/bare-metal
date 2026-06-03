@@ -816,12 +816,12 @@ Key design decisions:
    for accumulators alone. Forces 128×128 tiles (not 128×256) to stay under 255 regs.
 2. **Block-wide max_abs reduction**: 3 extra __syncthreads per K-tile (2 for separate
    A/B reductions, 1 after quantization). ~200 cycles overhead per tile vs ~500 cycles
-   IMMA = ~40% overhead. The 4× theoretical INT8/FP16 ratio absorbs this easily.
+   IMMA = ~40% overhead. The 2× theoretical INT8/FP16 ratio (dense) absorbs this easily.
 3. **Smem layout**: FP16 double-buffer (32 KB) + INT8 working (8 KB) + epilogue (8 KB)
    = 48 KB exactly (aliased reduction scratch into epilogue to fit under static limit).
 **The HGEMM baseline is naive (no tiling, no pipelining). A tiled HGEMM would narrow
 the gap, but the online-quant kernel is also using only 128×128 tiles — both have room
-to grow. The architectural advantage (4× INT8 throughput) is fundamental.**
+to grow. The architectural advantage (2× INT8 throughput, dense) is fundamental.**
 
 **Insight 22: In-place FP16→INT8 quantization saves registers, not just smem.**
 The original online-quant kernel used separate INT8 buffers (8 KB smem, 239 regs).
