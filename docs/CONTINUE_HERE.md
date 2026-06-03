@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-06-02 (#134 PR-A cuasmR measurement migration feature-complete, Phases 1–5; push initiated, PR not yet opened) | Branch: feat/134-cuasmr-measurement-migration
+> Last updated: 2026-06-03 (#134 PR-A #136 + PR-B #137 both open & green; cuasmR R CMD check 0/0/1 on canonical Linux R. Next = review/merge #136 then #137. Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: feat/134-cuasmr-cran-polish
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -435,22 +435,51 @@ report_median_metrics → check_regression`, plus `append_jsonl_row` /
 
 ## Next steps
 
-1. **Confirm PR-A push, then open the PR.** Push was initiated end of last
-   session (user-approved). Check `git ls-remote --heads origin
-   feat/134-cuasmr-measurement-migration`: landed → `gh pr create --base
-   main` (title "#134 PR-A: cuasmR measurement API (Phases 1–5)", body =
-   the phase table + verification + the bench_flash_all defer; **do NOT
-   `Closes #134`** — PR-B/Phase 6 still owes the CRAN work, so reference it
-   only). Not landed → re-push (`git push -u origin
-   feat/134-cuasmr-measurement-migration`; the gate passes — slowness is
-   just the GPU `make test` in the hook; `--no-verify` only if the hook is
-   the blocker and you've already confirmed the gate green).
-2. **PR-B = Phase 6** (CRAN polish, same branch or a new one off it):
-   `roxygen2::roxygenise()` (generate `man/`, regenerate NAMESPACE),
-   `.Rbuildignore`, testthat for the pure logic (the PR-A differential
-   tests already cover most), `R CMD check --as-cran` clean (document NOTEs:
-   nvdisasm SystemRequirements, GPU tests skipped on CI). Optional cleanup:
-   migrate `bench_flash_all.R`'s `run_bench` (the one deferred dup).
+1. ✅ **DONE (2026-06-03) — PR-A pushed + PR [#136](https://github.com/pjt222/bare-metal/pull/136) opened**
+   against `main`. Pre-push gate green (7 configs, 0 regressions, 1
+   improvement conv2d 113%, 2 skip). PR body = phase table + verification +
+   bench_flash_all defer; **references #134 without closing** (no
+   `close/fix/resolve #134` adjacency — GitHub ignores negation, so even
+   "does not close #134" would auto-close; phrased as "leaves #134 open").
+   PR-B/Phase 6 still owes CRAN.
+   - **Hang gotcha (root cause of last session's "push didn't land"):** an
+     *interrupted* push leaves the smoke bench (`./bench 512 512 512`)
+     spinning ~92% CPU, GPU 0% util, `wchan=0` — it wedges the WSL CUDA
+     path so the *next* push hangs on the **first** smoke bench (looks slow,
+     is stuck; 20 min, no log progress). Fix: `kill -9` the spinner tree,
+     confirm a fresh `./bench 512 512 512` runs clean, re-push. No
+     `--no-verify` / `wsl --shutdown` needed — the kill is the root fix.
+2. ✅ **DONE (2026-06-03) — PR-B pushed + PR [#137](https://github.com/pjt222/bare-metal/pull/137) opened**,
+   **stacked** (base = `feat/134-cuasmr-measurement-migration`, the PR-A
+   branch; head = `feat/134-cuasmr-cran-polish`). GitHub auto-retargets to
+   `main` when #136 merges. `closingIssuesReferences == []` (verified — does
+   NOT auto-close #134; leaves the epic open). Pre-push gate green.
+   - **`R CMD check --as-cran` (canonical Linux R 4.6.0): 0 errors / 0 warnings
+     / 1 note** (CRAN incoming feasibility: new submission + `sm_8x` title-case
+     false positive). The Windows R 4.5.2 run showed 0/0/**3** — the 2 extra
+     NOTES were just missing-pandoc + clock-skew (Windows env), not defects.
+     `cran-comments.md` documents the conservative 3-NOTE list (harmless;
+     CRAN's Linux sees 1). Code-level result (0E/0W) holds on both.
+   - Did: `roxygenise()` → `man/` (20 `.Rd`) + roxygen-owned NAMESPACE (export
+     set unchanged, 20); `DESCRIPTION` `Imports: jsonlite, stats, utils` +
+     Title `cubins`→`Cubins`; `NEWS.md`; `.Rbuildignore`; `cran-comments.md`.
+     Source fixes the check surfaced: invalid `attr(character(0),"status")<-1L`
+     in `run_bench` (→ `structure(...status=1L)`, also fixes silent rc=0 on a
+     thrown system2), `utils::modifyList`, non-ASCII (em-dash→`--`, °→`°`).
+   - testthat 126 expectations, 0 fail (×2 stable). bench_flash_all `run_bench`
+     dup still deferred (out of scope; separate follow-up).
+   - **Toolchain (CORRECTED):** I first ran roxygenise + check via the
+     **Windows** `Rscript.exe` (anchored on the global CLAUDE.md MCP path) —
+     a mistake. The gate, Makefile, and hook all use the **WSL Linux R**
+     (`/usr/local/bin/Rscript` 4.6.0) with `renv/library/linux-ubuntu-noble/`.
+     Use Linux R for R work here (it has roxygen2; for the check use base
+     `R CMD check` + `_R_CHECK_FORCE_SUGGESTS_=false`). See memory
+     `project_r_toolchain_renv_gotchas`.
+   - **renv lib — NO real problem (earlier note was wrong).** The "degraded to
+     3 packages" lib was the **Windows** `renv/library/windows/` lib, which
+     the gate never uses. The **Linux gate lib** (`linux-ubuntu-noble`) is
+     healthy: **72 packages** incl. cuasmR 0.2.0, jsonlite, stringr — which is
+     why the push hook (Linux R) passed. No restore needed. renv.lock fine.
 3. **[USER] Re-test P2-5 with `246c961`** (separate from #134). In elevated pwsh:
    `pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096`.
    Wait for first sample line of any group, press Ctrl+C **once**.
