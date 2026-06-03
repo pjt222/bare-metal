@@ -248,11 +248,15 @@ Bc=128 crosses the 50 KB smem cliff → 1 block/SM occupancy regression. Bc=64 s
 
 ---
 
-## flash_attn_br16_v2 (current canonical, issue #29)
+## flash_attn_br16_v2 → v2_pipeline (current canonical, issue #29)
 
 The `flash_attn_br16_v2.cu` kernel is the result of a three-stage refactor
-of `flash_attn_br16_regpv` (issue #29). It is the canonical
-high-performance Flash Attention kernel.
+of `flash_attn_br16_regpv` (issue #29). A further `cp.async` double-buffer
+refactor — `flash_attn_br16_v2_pipeline.cu` — supersedes it (+14%) and is
+**the current headline kernel: 11,453 GFLOPS / 1.53 ms** at seq=1024 b=8 h=8
+(6.6% of FP16 Tensor Core peak). See the waterfall in
+[`docs/inventory.md`](../../../docs/inventory.md). The `v2` numbers below are
+the intermediate step.
 
 ### Performance (RTX 3070 Ti, sm_86)
 
@@ -263,7 +267,8 @@ high-performance Flash Attention kernel.
 | seq=2048, batch=4, heads=8 | 4.87 ms | **3.46 ms** | **1.41×** |
 | seq=4096, batch=2, heads=8 | 10.12 ms | **6.86 ms** | **1.47×** |
 
-GFLOPS plateau: ~10 TFLOPS effective (5.7% of FP16 Tensor Core peak 174 TFLOPS).
+GFLOPS plateau for `v2`: ~10 TFLOPS effective (5.7% of FP16 Tensor Core peak
+174 TFLOPS); the `v2_pipeline` successor reaches 11,453 GFLOPS / 6.6% (above).
 
 ### What Changed
 

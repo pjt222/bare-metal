@@ -75,11 +75,13 @@ make reproduce          # setup + verify + build + bench-vs-baselines
 ```
 
 `make reproduce` chains `setup` (renv restore + cuasmR install),
-`verify` (env check), `all` (compile every cubin + bench), and
-`bench` (run benches and compare against `data/baselines.json`).
-A clean run ends with `RESULT: PASSED -- all benchmarks within
-tolerance`. The pre-push hook calls the same regression check. Build
-entry points are documented in [`AGENTS.md`](AGENTS.md).
+`verify` (env check), `all` (compile every cubin + bench), `bench`
+(run benches and compare against `data/baselines.json`; this stage
+prints `RESULT: PASSED -- all benchmarks within tolerance`), and
+`figures` (regenerate `docs/figures/`). The run finishes with the
+`Full reproduction complete` banner. The pre-push hook calls the same
+regression check. Build entry points are documented in
+[`AGENTS.md`](AGENTS.md).
 
 ## License
 

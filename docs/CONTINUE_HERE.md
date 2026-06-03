@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-06-03 (#134 CLOSED — PR-A #136 `ea0e7e6` + PR-B #137 `4ed0e55` both MERGED to main via merge-commits; cuasmR 0.2.0 on main, R CMD check 0/0/1 canonical Linux R. Adversarial review: 0 blockers/0 majors. Follow-up #138 filed (comparison-harness consolidation). Next = #135 Ctrl+C re-test / #124 bench-all. Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: main
+> Last updated: 2026-06-03 (#134 CLOSED — PR-A #136 `ea0e7e6` + PR-B #137 `4ed0e55` both MERGED; cuasmR 0.2.0 on main, R CMD check 0/0/1 canonical Linux R. Adversarial review: 0 blockers/0 majors. Follow-up #138 CLOSED — merged via PR #139 `f4160cb` (bench_flash_all rewired onto cuasmR + revived; imma s02/s04 left distinct). Docs-housekeeping audit pass done. Next = #135 (grid-sweep Ctrl+C re-test) / #124 (bench-all). Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -54,7 +54,11 @@ are benchmark-pipeline hardening — no queued kernel work.
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 135 | Multi-kernel × clock grid sweep tool (filed 2026-05-27)        |
-| 138 | Consolidate comparison-harness runners onto cuasmR (filed 2026-06-03, low-pri; bench_flash_all + bench_imma_s02/s04 + latent crash twin) |
+
+Resolved 2026-06-03: **#138** via PR #139 (`f4160cb`) — bench_flash_all.R
+rewired onto `cuasmR::run_bench` + `parse_throughput` and revived (dead
+`phase3/` path → `kernels/attention/flash_attention`); bench_imma_s02/s04
+grep-extract shape left intentionally distinct.
 
 Resolved 2026-05-27: **#131** (lock-aware bench_regress — Phase 1
 end-to-end verified, `ecae5b7` + `7bfc307` pushed) and **#125**

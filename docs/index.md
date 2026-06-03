@@ -36,7 +36,7 @@ Underlying data lives in `../data/` (`baselines.json`,
 | [`ampere_sass_reference.md`](ampere_sass_reference.md) | sm_86 instruction reference                          |
 | [`control_codes.md`](control_codes.md)             | Stall counts, barriers, yield, scoreboards               |
 | [`memory_hierarchy.md`](memory_hierarchy.md)       | GA104 memory subsystem and the 50 KB cliff               |
-| [`cuasm_r.md`](cuasm_r.md)                         | Local R package for SASS byte-level hand-edits           |
+| [`cuasm_r.md`](cuasm_r.md)                         | cuasmR 0.2.0: SASS byte-level hand-edits + benchmark measurement API |
 
 ## Tutorial series
 
@@ -61,6 +61,8 @@ prerequisite and 06 as synthesis.
 | [`gpu_reflections.md`](gpu_reflections.md)                                           | Observation catalogue. The first-person voice is a deliberate stylistic experiment; see file preamble. |
 | [`fragment_shfl_reductions.md`](fragment_shfl_reductions.md)                         | Reusable Tensor Core reduction pattern           |
 | [`benchmark_methodology.md`](benchmark_methodology.md)                               | Throttle, the 150 W power cap, clock-lock vs cooldown, reproducibility |
+| [`grid_sweep_methodology.md`](grid_sweep_methodology.md)                             | Multi-kernel × clock grid-sweep tool architecture (#135) |
+| [`rebaseline_protocol.md`](rebaseline_protocol.md)                                   | Re-baselining procedure (executed 2026-05-22; see baselines.json) |
 | [`cymatic_memory_mapping.md`](cymatic_memory_mapping.md)                             | Chladni-pattern memory layout: theory and bench  |
 | [`diffusion_primitives.md`](diffusion_primitives.md)                                 | UNet primitive inventory                         |
 | [`int8_sparse_4096_regression_analysis.md`](int8_sparse_4096_regression_analysis.md) | Companion to Observation HH                      |

@@ -16,8 +16,6 @@ buffer, implicit GEMM eliminates it entirely.
 | `conv2d_im2col.cu`                | Im2col + WMMA HGEMM                | works, dominated by col-buffer DRAM |
 | `conv2d_implicit_gemm.cu`         | Implicit GEMM v1                   | superseded by v2 |
 | `conv2d_implicit_gemm_v2.cu`      | Implicit GEMM v2 (canonical)       | **2.18× ResBlock outlier**, Obs GG |
-| `conv2d_direct.cuasm`             | hand-tuned SASS over `conv2d.cu`   | reference for hand-edit research |
-| `wmma_gemm.cuasm`                 | WMMA primitive shared with im2col path | building block |
 
 ### Bench
 

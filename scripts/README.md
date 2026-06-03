@@ -13,6 +13,8 @@ scripts/
 ├── build.R                   ── compile / disasm / roundtrip (uses local cuasmR)
 ├── verify_setup.R            ── environment check (CUDA, GPU, cuasmR, renv)
 ├── install_cuasmR.R          ── (re)install the local cuasmR R package
+├── check_versions.R          ── assert CUDA/R version strings agree (CI gate)
+├── publish_hf.R              ── sync the kernel corpus to the HF dataset
 ├── install-hooks.sh          ── install repo-local git hooks
 │
 ├── model/                    ── analytical perf models (no GPU required)
@@ -32,14 +34,25 @@ scripts/
 │   ├── cymatic_optimize_summary.R ── tabulate optimize.R sweep output
 │   └── cymatic_fa_alignment.R ── how cymatic regions align with FA seq tiles
 │
-├── bench/                    ── benchmark harnesses (need GPU)
+├── bench/                    ── benchmark harnesses (need GPU; measurement via cuasmR, #134)
 │   ├── bench_regress.R       ── runs all benches vs data/baselines.json
+│   ├── bench_meta.R          ── GPU-state capture shim (capture_gpu_state/classify_meta now in cuasmR)
 │   ├── bench_reference.R     ── runs local reference benches vs data/reference_baselines.json
 │   ├── compare_reference.R   ── joins project baselines to local reference baselines
 │   ├── bench_flash_all.R     ── runs every FA variant in kernels/attention/flash_attention/, prints table
 │   ├── bench_imma_s02.R      ── one-off: IMMA S02 vs S04 stall comparison
 │   ├── bench_imma_s04.R      ── companion to s02
 │   └── handtune_imma_s04.R   ── byte-patch S04 → S02 via cuasmR + run
+│
+├── probe/                    ── GPU power/clock probes + grid sweep (need GPU; cuasmR, #134)
+│   ├── grid_measure.R        ── per-cell measure (multi-kernel × clock grid)
+│   ├── grid_collect.R        ── materialise the JSONL sample store → RDS
+│   ├── probe_gpu_power.R     ── read-only power/clock envelope probe
+│   ├── rebaseline_measure.R  ── hgemm + igemm re-baseline driver
+│   ├── clock_lock_sweep.R    ── clock-lock sweep for igemm 4096³
+│   ├── probe_clock_lock.R    ── probe whether host-side -lgc holds
+│   ├── run_grid_sweep.ps1    ── elevated-pwsh grid orchestrator (Ctrl+C-safe -rgc)
+│   └── run_locked_eval.ps1   ── elevated-pwsh single locked-clock eval driver
 │
 ├── profile/                  ── NCU profiling + measured roofline
 │   ├── ncu_profile.R         ── ncu wrapper for one kernel → markdown row

@@ -61,7 +61,7 @@ performance on GA104: **registers**, **shared memory**, and **warp occupancy**.
 
 | Resource | GA104 (RTX 3070 Ti Laptop) |
 |---|---|
-| Streaming Multiprocessors | 48 |
+| Streaming Multiprocessors | 46 |
 | CUDA cores / SM | 128 |
 | Tensor Cores / SM | 4 (3rd gen) |
 | Registers / SM | 65,536 (32-bit) |
@@ -71,6 +71,12 @@ performance on GA104: **registers**, **shared memory**, and **warp occupancy**.
 | FP32 peak (FFMA) | 21.7 TFLOPS |
 | FP16 Tensor peak (HMMA) | 174 TFLOPS |
 | INT8 Tensor peak (IMMA) | 696 TOPS |
+
+> **⚠ INT8 IMMA peak convention under review ([#141](https://github.com/pjt222/bare-metal/issues/141)).**
+> 696 TOPS is the 2:4-sparse-doubled figure; the *dense* INT8 IMMA peak is
+> 348 TOPS (per `AGENTS.md` / `docs/inventory.md`). The %-of-INT8-peak figures
+> in this document use the 696,000 denominator; #141 will standardize on one
+> convention across the docs and the `igemm` bench.
 
 ## The Occupancy Model {#sec-occupancy}
 
@@ -610,8 +616,8 @@ The three highest-impact optimizations, in recommended order:
 3. **LDSM-interleaved inner loops** (+5--15%): manual scheduling of smem loads
    between HMMA pairs for near-maximum TC pipeline utilization. (Issue #19)
 
-**Update (post-optimization sprint):** Steps 1-2 alone achieved **32,197 GFLOPS
-(18.5% of FP16 peak)** --- far exceeding the predicted ~25 TFLOPS ceiling.
+**Update (post-optimization sprint):** Steps 1-2 alone achieved **31,910 GFLOPS
+(18.3% of FP16 peak)** --- far exceeding the predicted ~25 TFLOPS ceiling.
 Bank-conflict padding (+39%) and 16-byte cp.async (+39%) compound dramatically.
 Step 3 (256x128 tile) was a negative result (-38%: occupancy loss outweighs
 higher AI). Steps 4-5 (triple-buffer, LDSM interleaving) are infeasible or

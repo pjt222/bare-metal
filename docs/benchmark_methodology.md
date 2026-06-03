@@ -18,14 +18,14 @@ not comparable to each other or to a baseline recorded earlier.
 
 `scripts/bench/bench_regress.R` already refuses to compare a run
 against a baseline when the GPU was throttled during the run (see
-`bench_meta.R::classify_meta`). That keeps the regression gate
+`cuasmR::classify_meta`). That keeps the regression gate
 honest, but it means a throttled run is *skipped* — and a full
 "run everything" pass needs a way to not silently drop runs.
 
 ## Throttle taxonomy
 
 `nvidia-smi` reports an active-throttle bitmask, decoded in
-`bench_meta.R::decode_throttle`. The states that make a measurement
+`cuasmR::decode_throttle`. The states that make a measurement
 unfair (`.UNFAIR_THROTTLES`):
 
 | Reason | Meaning |
@@ -189,7 +189,8 @@ run:
 export BARE_METAL_GPU_MODE=dgpu     # or: hybrid
 ```
 
-`scripts/bench/bench_meta.R` (`capture_gpu_state()`) records it as
+`cuasmR::capture_gpu_state()` (the `scripts/bench/bench_meta.R` path is now a
+thin `library(cuasmR)` shim) records it as
 `$host$gpu_mode` in every run's metadata, and the one-line GPU-state
 header printed by `bench_regress.R` shows `gpu_mode=...`. Accepted
 values are `hybrid` and `dgpu`; anything else, including unset,

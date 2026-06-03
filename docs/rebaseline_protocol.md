@@ -1,8 +1,22 @@
 # Re-baseline protocol — hgemm + igemm_sparse
 
-> Status: draft handoff, 2026-05-21 | Owner: USER (controlled
-> measurement session) | Unblocks: push of 5 queued `main` commits,
-> issues #129 / #125.
+> Status: **SUPERSEDED — executed 2026-05-22**; results are in
+> `data/baselines.json`. This page is retained as the procedure record.
+> | Owner: USER (controlled measurement session) | Unblocked: push of the
+> queued `main` commits, issues #129 / #125.
+
+> **What actually happened (corrects the 2026-05-21 plan below).** The plan
+> assumed clock-locking was unavailable and that baselines would be recorded
+> at a no-lock ~1410 MHz cold-clock. That was wrong: **host-side
+> `nvidia-smi.exe -lgc` works** (#125 verdict corrected). In the executed
+> re-baseline the non-power-bound GEMM configs were recorded at **native boost**
+> (hgemm 2048³ 31789 GFLOPS @ 1740–1770 MHz, 4096³ 30397 @ 1770–1785 MHz),
+> igemm_sparse 2048³ at 36892 @ 1410 MHz, and the power-bound
+> igemm_sparse 4096³ under a **1605 MHz host-side lock** (50497 dq-GFLOPS,
+> removed from the automated gate). The `flash_attn_br16_regpv` tolerance was
+> NOT narrowed. See `docs/benchmark_methodology.md` for the host-side lock
+> mechanism. Treat the §"Recording clock" / "-lgc rejected" framing below as
+> the pre-execution plan, not the outcome.
 
 ## Why this exists
 

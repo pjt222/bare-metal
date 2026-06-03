@@ -12,7 +12,7 @@ Understanding its SASS is the key to understanding GPU performance.
 |---|---|---|
 | A | `naive.cu` | Simplest GEMM SASS — the multiply-accumulate loop |
 | B | `tiled.cu` | Shared memory tiling, LDS/STS, BAR.SYNC, FFMA pipeline |
-| C | `hand_tuned.cuasm` | Stall count tuning, latency hiding, software pipelining |
+| C | _planned (not yet built)_ | Stall count tuning, latency hiding, software pipelining — study `tiled.sm_86.sass` for now |
 
 ## Benchmark Results (RTX 3070 Ti Laptop, sm_86)
 
@@ -101,8 +101,9 @@ Approaching peak requires combining all of these:
 - **Stall count tuning**: reduce S values in control codes to eliminate idle cycles
 - **Software prefetch**: issue next iteration's global loads early
 
-This is what `hand_tuned.cuasm` implements. Study the tiled SASS first,
-then look at how the control codes change in the hand-tuned version.
+This is what a Stage C `hand_tuned.cuasm` would implement — it is **not yet
+built** in this directory. Study the tiled SASS (`tiled.sm_86.sass`) first to
+see where the control codes and stall counts would change.
 
 ## Build Commands
 
