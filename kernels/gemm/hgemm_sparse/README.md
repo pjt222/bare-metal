@@ -3,9 +3,9 @@
 FP16 GEMM where every contiguous 4-element group of operand A has at
 most 2 non-zeros. Encoded via NVIDIA's 2:4 sparsity primitive
 (`mma.sp.sync.aligned.m16n8k16` PTX, `HMMA.16816.SP` SASS).
-Dense-equivalent throughput is **~1.27× dense HGEMM** (matched-clock,
-same-session — see [Headline](#headline-rtx-3070-ti-laptop-sm_86) below),
-the structured-sparsity win (development arc:
+Dense-equivalent throughput is **~1.33× dense HGEMM** (clock-locked
+1605 MHz, 4096³ — see [Headline](#headline-rtx-3070-ti-laptop-sm_86)
+below), the structured-sparsity win (development arc:
 [Obs N](../../../docs/gpu_reflections.md), [Obs HH](../../../docs/gpu_reflections.md)).
 
 ## Files
@@ -43,34 +43,37 @@ nvcc -arch=sm_86 -O2 -o bench bench.cu -lcuda -I../common
 2:4 sparsity skips half of A's K-elements, so **dense-equivalent**
 throughput (the FLOP count the same problem would cost as dense work)
 can exceed the dense HGEMM baseline — that excess is the sparsity win.
-Re-measured 2026-06-03 (#140), `bench.cu` Dense-eq column:
+Measured under a host-side clock lock (`nvidia-smi.exe -lgc 1605,1605`,
+elevated Windows shell — the only regime free of the 150 W power-cap
+bimodal; [#143](https://github.com/pjt222/bare-metal/issues/143)),
+`bench.cu` Dense-eq column, every cell steady at 1605 MHz:
 
-| Shape  | Dense HGEMM (16-warp) | Sparse 2:4 (dense-eq) |
-|--------|----------------------:|----------------------:|
-| 2048³  | 31,948 GFLOPS @ 1.77 GHz | 40,153 GFLOPS @ 1.41 GHz |
-| 4096³  | 32,327 GFLOPS @ 1.67 GHz | 41,080 GFLOPS @ 1.69 GHz |
+| Shape  | Dense HGEMM (16-warp) | Sparse 2:4 (dense-eq) | Sparse-eq / dense |
+|--------|----------------------:|----------------------:|------------------:|
+| 2048³  | 29,259 GFLOPS | 40,980 GFLOPS | 1.40× |
+| 4096³  | 31,886 GFLOPS | 42,257 GFLOPS | **1.33×** |
 
-At **4096³** both kernels are long-running and power-bound at the 150 W
-cap, at near-identical SM clock (~1.68 GHz) → a fair same-power
-comparison: sparse-eq / dense = 41,080 / 32,327 = **1.27×**. This is the
-clock-robust headline — sparse dense-equivalent throughput is ~1.27×
-dense, between the 1× floor and 2× ceiling of 2:4 sparsity. (The 2048³
-rows are at *mismatched* clocks — sparse ran un-boosted at 1.41 GHz,
-dense at 1.77 GHz — so their raw ratio understates the sparse advantage;
-treat 4096³ as canonical.)
+**Canonical: ~1.33× over dense at 4096³** (= 133%, confirming the
+long-standing **131%** in [Obs N](../../../docs/gpu_reflections.md)) —
+sparse dense-equivalent throughput sits between the 1× floor and 2×
+ceiling of 2:4 sparsity. The 2048³ ratio (1.40×) is higher only because
+the 1605 lock sits below dense's native boost: dense HGEMM is clock-bound
+and is suppressed more by the lock than the power-bound sparse kernel, so
+treat 4096³ as canonical, not 2048³. Locked figures are stable to <0.5%
+across re-runs (vs ~1.9× bimodal at native boost — the power-cap artifact
+documented for `igemm_sparse_tiled`).
 
 > The earlier "31.9 TFLOPS / dense-parity" wording was a **category
 > error**: 31.9 TFLOPS is the *dense* HGEMM baseline (the frozen
-> reference line `bench.cu` prints), not the sparse result. On a
-> dense-equivalent basis the sparse kernel **beats** dense; it does not
-> merely match it.
+> reference line `bench.cu` prints), not the sparse result — and the
+> locked dense 4096³ (31,886) confirms that literal. On a
+> dense-equivalent basis the sparse kernel **beats** dense by ~1.33×; it
+> does not merely match.
 >
-> Absolute sparse numbers above are native-boost and power-bound
-> (bimodal on the 150 W laptop, like `igemm_sparse_tiled`). A stable
-> locked-clock absolute and the 2048³-vs-4096³ per-clock regression
-> (old "0.81×" claim — not reproducible at native boost) need an
-> elevated `nvidia-smi.exe -lgc` re-measure →
-> [#143](https://github.com/pjt222/bare-metal/issues/143).
+> The old "4096³ regresses to ~26 TFLOPS / 0.81×" claim is **refuted**:
+> at matched 1605 MHz, sparse 4096³ (42,257) is at parity-or-above 2048³
+> (40,980), not a 19% drop. The apparent regression was native-boost
+> power-cap noise, not a size effect.
 
 ## Cross-references
 

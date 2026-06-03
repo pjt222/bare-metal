@@ -966,18 +966,18 @@ HGEMM baseline**.
 | + B-fragment `ldmatrix.trans` | 2048³ | **41,930** | **131%** | `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16` |
 | Final (4096³ validation) | 4096³ | **41,721** | **131%** | Same kernel, larger problem |
 
-> **Size-label reconciled ([#140](https://github.com/pjt222/bare-metal/issues/140), 2026-06-03).**
+> **Size-label reconciled + locked-clock confirmed ([#140](https://github.com/pjt222/bare-metal/issues/140) / [#143](https://github.com/pjt222/bare-metal/issues/143), 2026-06-03).**
 > This journey table is authoritative: 41,930 @ 2048³ and 41,721 @ 4096³ (both
-> 131% of dense). `docs/inventory.md` previously copied the 4096³ figure into a
-> 2048³ row — now corrected to cite the re-measured **41,080 @ 4096³**. The
-> 2026-06-03 re-measure confirms ~41k dense-eq at both sizes and a same-session
-> matched-clock sparse/dense ratio of **1.27×** (4096³, ~1.68 GHz, both
-> power-bound). The table's historical **131%** is vs the frozen 31,910 dense
-> literal; the re-measured **1.27×** is vs same-session dense (32,327) — they
-> agree within native-boost spread. The old "31.9 TFLOPS / dense-parity" wording
-> in the kernel README was a category error (31.9 = the *dense* baseline). Absolutes are native-boost
-> and power-bound (bimodal, like `igemm_sparse_tiled`); a stable locked-clock
-> figure → [#143](https://github.com/pjt222/bare-metal/issues/143).
+> 131% of dense). `docs/inventory.md` had copied the 4096³ figure into a 2048³
+> row — corrected to 4096³. A host-side clock lock (`nvidia-smi.exe -lgc 1605`,
+> the regime free of the 150 W power-cap bimodal) **vindicates the 131%**: at
+> matched 1605 MHz 4096³, sparse dense-eq **42,257** vs dense **31,886** GFLOPS
+> = **1.33× = 133%** — and the locked dense 31,886 ≈ the frozen 31,910 literal
+> the original 131% was computed against. The old "31.9 TFLOPS / dense-parity"
+> wording in the kernel README was a category error (31.9 = the *dense*
+> baseline). The old "4096³ 0.81× regression" is **refuted**: locked, sparse
+> 4096³ (42,257) is at parity-or-above 2048³ (40,980), not a 19% drop — the
+> apparent regression was native-boost power-cap noise.
 
 The kernel is now **faster than dense HGEMM** — achieving the theoretical
 2x sparsity advantage in practice.
