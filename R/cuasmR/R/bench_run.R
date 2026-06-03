@@ -14,7 +14,7 @@
 #' The benchmark resolves its cubin with a \emph{cwd-relative} filename
 #' (\code{cuModuleLoad}), so it must run from the executable's own
 #' directory. This function does \strong{not} change the working
-#' directory — the caller is responsible for \code{setwd()} into the exe
+#' directory -- the caller is responsible for \code{setwd()} into the exe
 #' dir (typically once around a warmup + sample loop). Pass an absolute
 #' \code{exe} path so the launch itself is cwd-independent.
 #'
@@ -38,8 +38,7 @@ run_bench <- function(exe, args, timeout = 0) {
     suppressWarnings(system2(exe, as.character(args),
                              stdout = TRUE, stderr = TRUE, timeout = timeout)),
     error = function(e) {
-      attr(character(0), "status") <- 1L
-      character(0)
+      structure(character(0), status = 1L)
     }
   )
   post <- capture_gpu_state()
@@ -67,7 +66,7 @@ run_bench <- function(exe, args, timeout = 0) {
 #'
 #' @param lines Character \emph{vector} of bench stdout lines (the
 #'   \code{out} element of \code{\link{run_bench}()}). Not a collapsed
-#'   string — the scan is line-wise.
+#'   string -- the scan is line-wise.
 #' @param match Optional fixed substring identifying the kernel's line.
 #' @param section Optional fixed substring of a section header bracketing
 #'   the search.
@@ -88,7 +87,7 @@ parse_throughput <- function(lines, match = NULL, section = NULL,
   na_out <- list(ms = NA_real_, throughput = NA_real_,
                  unit = NA_character_, line = NA_character_)
 
-  # Section filter — same header heuristic as the original parsers.
+  # Section filter -- same header heuristic as the original parsers.
   if (!is.null(section) && nzchar(section)) {
     in_sec <- FALSE
     keep <- logical(length(lines))

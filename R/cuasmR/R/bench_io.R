@@ -33,7 +33,7 @@ append_jsonl_row <- function(jsonl_path, row) {
 #' own voice.
 #'
 #' @param path Path to the JSONL file. A missing or empty file yields an
-#'   empty result (no error) — callers that require the file should check
+#'   empty result (no error) -- callers that require the file should check
 #'   first.
 #' @param simplify Passed to \code{jsonlite::fromJSON} as
 #'   \code{simplifyVector}: \code{FALSE} keeps nested lists (for
