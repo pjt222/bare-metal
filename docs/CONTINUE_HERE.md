@@ -1,52 +1,59 @@
 # Session handoff
 
-> Last updated: 2026-06-03T13:35Z (#134 epic + #138 both CLOSED/merged; cuasmR
-> 0.2.0 on main. Docs housekeeping = **PR #142 OPEN** (awaiting merge). #140/#141
-> filed for measurement. Use WSL Linux R, not Windows Rscript.exe) | Branch of
-> open work: `docs/housekeeping-audit-2026-06-03` (→ main on #142 merge)
+> Last updated: 2026-06-03T18:10Z (#142 merged; **#140 / #143 / #141 all
+> CLOSED** — sparse HGEMM 2:4 measured + clock-locked, INT8 peak standardized.
+> main clean at `1361fc1`. Use WSL Linux R, not Windows Rscript.exe.) |
+> Branch: `docs/session-handoff-2026-06-03`
 
-## ▶ SESSION END — 2026-06-03 (docs housekeeping + #134 lineage drain)
+## ▶ SESSION END — 2026-06-03 (eve) — sparse-HGEMM measurement + INT8 convention
 
-**Objective.** Drain the #134 (cuasmR CRAN-ready) epic lineage and bring all
-documentation current.
+**Objective.** Land the deferred #134 follow-ups: measure the sparse HGEMM 2:4
+number conflict on GPU (#140), pin a stable absolute under a clock lock (#143),
+and standardize the INT8 IMMA peak convention (#141) — keeping every doc surface
+consistent.
 
-**Completed (merged unless noted):**
-- **#134 epic CLOSED** — PR #136 (`ea0e7e6`) + PR #137 (`4ed0e55`) merged: cuasmR
-  0.1.0→0.2.0 measurement API migration. Adversarial review 0 blockers/0 majors.
-- **#138 CLOSED** — PR #139 (`f4160cb`) merged: `bench_flash_all.R` rewired onto
-  `cuasmR::run_bench` + revived; imma s02/s04 grep-shape left distinct.
-- **Docs housekeeping → PR #142 OPEN** (`b07567c`, 21 files): multi-agent drift
-  audit (40 confirmed) + fixes. Pre-push gate green.
-- GitHub repo description + topics updated (cuasmR surfaced; +rstats/+r-package).
+**Completed (all merged to main, in order):**
+- **#142 merged** (`6e556e4`) — docs housekeeping audit (21 files) + this handoff.
+- **#140 CLOSED** — PR #144 (`122c5b6`): measured sparse HGEMM 2:4 at the machine.
+  The "31.9 TFLOPS / dense-parity" README claim was a **category error** — 31.9 =
+  the *dense* HGEMM baseline (the frozen `bench.cu` reference line), not the
+  sparse result. ~41k dense-eq at both sizes; 41,721 is the 4096³ figure
+  (inventory had mis-sized it 2048³ — corrected).
+- **#143 CLOSED** — PR #145 (`04d0953`): elevated `-lgc 1605` locked re-measure
+  (the regime free of the 150 W power-cap bimodal). Sparse dense-eq / dense =
+  **1.33× @ 4096³** (42,257 vs 31,886, steady 1605 MHz, <0.5% across re-runs),
+  **vindicating the historical 131%** (locked dense 31,886 ≈ the 31,910 literal).
+  4096³ "0.81× regression" **REFUTED** — native-boost power-cap noise. The #140
+  native-boost 1.27× was the anomaly (dense ran hot).
+- **#141 CLOSED** — PR #146 (`1361fc1`): INT8 peak standardized on **348 TOPS
+  dense** as the %-of-peak denominator everywhere (qmd + igemm bench/`.cu`/README
+  + AGENTS + gpu_reflections); 696 kept only as labeled 2:4-sparse ceiling.
+  Quarto render verified 7.9% (= inventory's igemm). Root-cause fix in AGENTS.md.
 
-**In Progress / awaiting:**
-- **PR #142 OPEN, NOT merged.** base main, MERGEABLE, `closingIssuesReferences:[]`,
-  CI green at push. Next = watch CI + merge (merge-commit; nothing stacked on it).
-  It edits THIS file — do **not** edit `docs/CONTINUE_HERE.md` on main while #142
-  is open (stacked-file 3-way conflict; see `project_stacked_pr_merge_mechanics`).
+**In Progress / awaiting:** none — all three follow-ups closed, main clean,
+GPU idle, host clock lock released (`-rgc`).
 
 **Next steps:**
-1. Merge **#142** once CI green.
-2. **[USER / measurement]** **#140** — re-measure Sparse HGEMM 2:4 (2048³ + 4096³)
-   to resolve the `41,721` vs `31.9 TFLOPS` value + the 2048³/4096³ size conflict;
-   reconcile `inventory.md`, `gpu_reflections.md`, `hgemm_sparse/README`, GitHub
-   desc. Inline `⚠ #140` flags already placed.
-3. **[USER decision]** **#141** — INT8 IMMA peak convention: `348` (dense) vs `696`
-   (2:4 sparse) across `kernel_architecture.qmd` + the `igemm` bench `.cu`. Inline
-   `⚠ #141` flag placed.
-4. **#135** (grid-sweep Ctrl+C single-press re-test, elevated pwsh — see step
-   detail below) / **#124** (bench-all one-click runner, builds on cuasmR API).
+1. **#135** — grid-sweep Ctrl+C single-press re-test (elevated pwsh; clock-lock
+   probe). 2. **#124** — bench-all one-click full-corpus runner (builds on the
+   cuasmR measurement API). 3. **#128** — OC showcase (deferred). All research-
+   grade; no queued kernel work.
 
 **Context / decisions (negative space):**
-- **Numbers trap held:** did NOT auto-fix #140/#141 — no measurement file
-  arbitrates the values; flagged + filed rather than invent. Adversarial verify
-  caught a real numbers-trap walk (gpu_reflections size mis-pairing).
-- **Gate coverage:** pre-push gate + docs CI run only `make test` smoke +
-  `bench_regress` + link/version/quarto — NOT bench_flash_all / imma / grid / doc
-  tools. Verify those GPU-free (fixture diff, link-check). See
-  `project_gate_coverage_gpu_free_verify`.
-- **Subagent output ≠ ground truth:** audit recommendations had ≥2 errors
-  (hgemm path depth, a numbers-trap value); re-derive from primary source.
+- **A number needs its regime.** A native-boost "matched-clock" ratio still
+  misleads when the two kernels differ in clock-sensitivity (dense = clock-bound,
+  sparse = power-bound) — my 1.27× was an artifact. The elevated `-lgc 1605` lock
+  is the arbiter; lock at 1605 (like `igemm_sparse_tiled`) for comparability.
+  **GFLOPS/MHz is fiction under the 150 W cap** (requested ≠ delivered clock).
+  See `project_ga104_laptop_power_cap` (updated this session).
+- **Clock lock needs an elevated Windows shell** — plain WSL `nvidia-smi -lgc` is
+  denied. When you lack it, use the same-session matched-clock RATIO (clock-
+  robust) for comparison questions; absolutes still need the lock.
+- **%-of-peak uses the dense peak** (INT8 348, FP16 174) on every surface; sparse
+  ceilings (696, etc.) appear only as explicitly-labeled figures.
+- **Held the numbers trap throughout:** invented no value — every number is a
+  fresh measurement with its clock annotated, or the established figure confirmed
+  within spread.
 
 ---
 
@@ -85,7 +92,7 @@ Post-warmup, 3-run mean unless noted. Sources in
 | ResBlock SD UNet (N=1, C=320, H=W=32)           | 13.07 ms (289 GFLOPS)   | **1.86 ms (2,025 GFLOPS)**              | 7.01×   |
 | Sparse INT8 IGEMM 4096³                         | 15,030 TOPS dense       | **35,509 dense-equiv TOPS**             | 1.39×   |
 | HGEMM 16-warp (post +8 padding)                 | —                       | **31,910 GFLOPS** at 2048³ / 4096³      | —       |
-| Sparse HGEMM 2:4                                | —                       | **41,721 dense-equiv GFLOPS** at 2048³  | —       |
+| Sparse HGEMM 2:4                                | —                       | **41,721 dense-equiv GFLOPS** at 4096³ (1.33× dense, locked 1605) | —       |
 
 Flash Attention plateau: ~11.5 TFLOPS = 6.6 % of FP16 Tensor Core
 peak (174 TFLOPS). Path:
@@ -102,8 +109,12 @@ are benchmark-pipeline hardening — no queued kernel work.
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
 | 135 | Multi-kernel × clock grid sweep tool (filed 2026-05-27)        |
-| 140 | Reconcile Sparse HGEMM 2:4 headline number (value + size) — needs measurement (filed 2026-06-03) |
-| 141 | Standardize INT8 IMMA peak: 348 dense vs 696 sparse across docs + igemm bench (filed 2026-06-03) |
+
+Resolved 2026-06-03 (eve): **#142** (PR #142, merge `6e556e4` — docs
+housekeeping), **#140** (PR #144, merge `122c5b6` — sparse HGEMM measured,
+parity mislabel killed), **#143** (PR #145, merge `04d0953` — locked `-lgc
+1605`: 1.33× / 131% vindicated, regression refuted), **#141** (PR #146, merge
+`1361fc1` — INT8 peak standardized on 348 dense; qmd render verified 7.9%).
 
 Resolved 2026-06-03: **#138** via PR #139 (`f4160cb`) — bench_flash_all.R
 rewired onto `cuasmR::run_bench` + `parse_throughput` and revived (dead
