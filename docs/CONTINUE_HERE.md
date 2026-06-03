@@ -1,6 +1,6 @@
 # Session handoff
 
-> Last updated: 2026-06-03 (#134 PR-A #136 + PR-B #137 both open & green; cuasmR R CMD check 0/0/1 on canonical Linux R. Next = review/merge #136 then #137. Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: feat/134-cuasmr-cran-polish
+> Last updated: 2026-06-03 (#134 CLOSED — PR-A #136 `ea0e7e6` + PR-B #137 `4ed0e55` both MERGED to main via merge-commits; cuasmR 0.2.0 on main, R CMD check 0/0/1 canonical Linux R. Adversarial review: 0 blockers/0 majors. Follow-up #138 filed (comparison-harness consolidation). Next = #135 Ctrl+C re-test / #124 bench-all. Use WSL Linux R for R work, not Windows Rscript.exe) | Branch: main
 
 Per-author scratchpad for picking up where the previous working
 session left off. Expected to churn between sessions. Durable
@@ -53,8 +53,8 @@ are benchmark-pipeline hardening — no queued kernel work.
 |-----|----------------------------------------------------------------|
 | 124 | `bench-all` one-click full-corpus benchmark runner (epic)      |
 | 128 | Overclocked single-kernel showcase mode (deferred)             |
-| 134 | Migrate probe/bench R tooling into cuasmR; make cuasmR CRAN-ready (epic) |
 | 135 | Multi-kernel × clock grid sweep tool (filed 2026-05-27)        |
+| 138 | Consolidate comparison-harness runners onto cuasmR (filed 2026-06-03, low-pri; bench_flash_all + bench_imma_s02/s04 + latent crash twin) |
 
 Resolved 2026-05-27: **#131** (lock-aware bench_regress — Phase 1
 end-to-end verified, `ecae5b7` + `7bfc307` pushed) and **#125**
@@ -435,7 +435,7 @@ report_median_metrics → check_regression`, plus `append_jsonl_row` /
 
 ## Next steps
 
-1. ✅ **DONE (2026-06-03) — PR-A pushed + PR [#136](https://github.com/pjt222/bare-metal/pull/136) opened**
+1. ✅ **DONE + MERGED (2026-06-03) — PR-A [#136](https://github.com/pjt222/bare-metal/pull/136) merged to main, merge-commit `ea0e7e6`**
    against `main`. Pre-push gate green (7 configs, 0 regressions, 1
    improvement conv2d 113%, 2 skip). PR body = phase table + verification +
    bench_flash_all defer; **references #134 without closing** (no
@@ -449,10 +449,10 @@ report_median_metrics → check_regression`, plus `append_jsonl_row` /
      is stuck; 20 min, no log progress). Fix: `kill -9` the spinner tree,
      confirm a fresh `./bench 512 512 512` runs clean, re-push. No
      `--no-verify` / `wsl --shutdown` needed — the kill is the root fix.
-2. ✅ **DONE (2026-06-03) — PR-B pushed + PR [#137](https://github.com/pjt222/bare-metal/pull/137) opened**,
-   **stacked** (base = `feat/134-cuasmr-measurement-migration`, the PR-A
-   branch; head = `feat/134-cuasmr-cran-polish`). GitHub auto-retargets to
-   `main` when #136 merges. `closingIssuesReferences == []` (verified — does
+2. ✅ **DONE + MERGED (2026-06-03) — PR-B [#137](https://github.com/pjt222/bare-metal/pull/137) merged to main, merge-commit `4ed0e55`**
+   (was stacked; retargeted to `main` after #136 merged, diff stayed 707/58/31
+   = no double-count). GitHub auto-retargeted to
+   `main` when #136 merged. `closingIssuesReferences == []` (verified — does
    NOT auto-close #134; leaves the epic open). Pre-push gate green.
    - **`R CMD check --as-cran` (canonical Linux R 4.6.0): 0 errors / 0 warnings
      / 1 note** (CRAN incoming feasibility: new submission + `sm_8x` title-case
@@ -464,10 +464,17 @@ report_median_metrics → check_regression`, plus `append_jsonl_row` /
      set unchanged, 20); `DESCRIPTION` `Imports: jsonlite, stats, utils` +
      Title `cubins`→`Cubins`; `NEWS.md`; `.Rbuildignore`; `cran-comments.md`.
      Source fixes the check surfaced: invalid `attr(character(0),"status")<-1L`
-     in `run_bench` (→ `structure(...status=1L)`, also fixes silent rc=0 on a
-     thrown system2), `utils::modifyList`, non-ASCII (em-dash→`--`, °→`°`).
-   - testthat 126 expectations, 0 fail (×2 stable). bench_flash_all `run_bench`
-     dup still deferred (out of scope; separate follow-up).
+     in `run_bench` (→ `structure(...status=1L)`). NB the old form did NOT
+     silently read rc=0 — `attr(<literal>,k)<-v` *throws* "target of assignment
+     expands to non-language object"; inside the tryCatch error handler that
+     propagates and aborts the whole harness. The fix converts that propagating
+     crash on the can't-launch path into a clean rc=1 (→ `validate_sample`
+     records `crash(exit=1)`). Also `utils::modifyList`, non-ASCII (em-dash→`--`,
+     °→`°`).
+   - testthat 131 pass / 0 fail / 1 warn (independently re-run post-merge).
+     bench_flash_all `run_bench` dup + bench_imma_s02/s04 `run_bench_grep` +
+     the latent crash twin now tracked in **#138** (comparison-harness
+     consolidation, low-pri).
    - **Toolchain (CORRECTED):** I first ran roxygenise + check via the
      **Windows** `Rscript.exe` (anchored on the global CLAUDE.md MCP path) —
      a mistake. The gate, Makefile, and hook all use the **WSL Linux R**
