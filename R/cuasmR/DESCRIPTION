@@ -1,6 +1,6 @@
 Package: cuasmR
 Type: Package
-Title: R-Native SASS Disassembler and Patcher for NVIDIA sm_8x cubins
+Title: R-Native SASS Disassembler and Patcher for NVIDIA sm_8x Cubins
 Version: 0.2.0
 Authors@R:
     person("Philipp", "Thoss", , "ph.thoss@gmx.de", role = c("aut", "cre"),
@@ -14,7 +14,11 @@ Description: Read NVIDIA cubin files emitted by nvcc (CUDA 12.x and 13.x),
 License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.0)
+Imports:
+    jsonlite,
+    stats,
+    utils
 SystemRequirements: NVIDIA CUDA Toolkit 12.x or 13.x (nvdisasm on PATH)
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
