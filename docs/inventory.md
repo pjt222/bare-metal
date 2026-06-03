@@ -22,7 +22,7 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 
 | Kernel                  | Size    | Time      | GFLOPS              | % peak  |
 |-------------------------|---------|-----------|---------------------|---------|
-| **Sparse HGEMM 2:4**    | 2048³   | —         | **41,721** (eq)     | 24.0%   |
+| **Sparse HGEMM 2:4**    | 4096³   | —         | **41,721** (eq)     | 24.0%   |
 | **Sparse INT8 mma.sp**  | 2048³   | —         | **39,674** (eq)     | 11.4%   |
 | **HGEMM 16-warp**       | 4096³   | —         | **31,910**          | 18.3%   |
 | **IGEMM 128×256**       | 4096³   | —         | **27,591**          | 7.9%    |
@@ -30,11 +30,16 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 | **Conv2d implicit GEMM**| 64×64 320ch | **1.13 ms** | **6,687**       | 3.8%    |
 | **Online FP16→INT8**    | 4096³   | —         | **17,070**          | 9.6%    |
 
-> **⚠ Sparse HGEMM 2:4 (2048³) is under measurement review — see [#140](https://github.com/pjt222/bare-metal/issues/140).**
-> The 41,721 (24.0%) headline above disagrees with section A below (line ~107)
-> and `kernels/gemm/hgemm_sparse/README.md`, which report 31.9 TFLOPS
-> dense-parity. No measured value currently arbitrates the figure or its size;
-> do not treat 41,721 as confirmed until #140 lands.
+> **Sparse HGEMM 2:4 — re-measured 2026-06-03 ([#140](https://github.com/pjt222/bare-metal/issues/140) resolved).**
+> The old "31.9 TFLOPS / dense-parity" wording (section A below / the kernel
+> README) was a category error: 31.9 TFLOPS is the *dense* HGEMM baseline, not
+> the sparse result. Same-session matched-clock 4096³ — sparse dense-eq 41,080
+> (confirms the 41,721 headline within native-boost spread) vs dense 32,327
+> GFLOPS (~1.68 GHz, both power-bound at the 150 W cap) = **1.27× over dense**,
+> between the 1× floor and 2× ceiling of 2:4 sparsity.
+> Absolutes are native-boost and power-bound (bimodal, like `igemm_sparse_tiled`
+> below); a stable locked-clock figure and the 2048³-vs-4096³ regression need an
+> elevated `nvidia-smi.exe -lgc` re-measure → [#143](https://github.com/pjt222/bare-metal/issues/143).
 
 > **`igemm_sparse_tiled` 4096³ — documented reference, not a regression-gated baseline.**
 > Measured 2026-05-22: **50,497 dense-equiv GFLOPS / 2.722 ms** at a
@@ -110,7 +115,7 @@ into a register tile.
 |---|---|---:|---|
 | `kernels/gemm/sgemm/`                 | naive / tiled / register-blocked FP32 | ~1 TFLOPS at 2048³  | `FFMA` |
 | `kernels/gemm/hgemm/`                 | tiled FP16 WMMA → 16-warp persistent  | **31.9 TFLOPS** at 2048³ | `HMMA.16816.F32` |
-| `kernels/gemm/hgemm_sparse/`          | 2:4 structured sparse FP16            | 31.9 TFLOPS dense-equiv at 2048³ ⚠ conflicts with headline 41,721 — under review [#140](https://github.com/pjt222/bare-metal/issues/140) | `HMMA.16816.SP` |
+| `kernels/gemm/hgemm_sparse/`          | 2:4 structured sparse FP16            | 41,721 dense-eq GFLOPS at 4096³ — 1.27× dense, matched-clock ([#140](https://github.com/pjt222/bare-metal/issues/140)) | `HMMA.16816.SP` |
 | `kernels/gemm/igemm/`                 | INT8 IMMA + cp.async pipelining       | 27.6 TOPS (8warp_256) at 2048³ | `IMMA.16816.S8.S8` |
 | `kernels/convolution/conv2d/conv2d_implicit_gemm.cu` | reshapes conv into GEMM with on-the-fly index gen | 7.2 GFLOPS at SD 64×64×320 | `HMMA.16816.F32` |
 
