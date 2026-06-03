@@ -47,6 +47,13 @@ cases <- list(
          line  = "igemm_tiled \\(64x64\\)")
 )
 
+# run_bench_grep -- intentionally NOT migrated to cuasmR (issue #138). A distinct
+# A/B grep-extract shape, not the statistical measurement primitive #134 packaged:
+# it greps a *regex* kernel label, extracts throughput only (no ms, no GPU-state
+# capture), for cubin-swap patch validation. cuasmR::parse_throughput uses
+# fixed-substring matching + ms+throughput, so routing this through it would be a
+# semantic regex->fixed change for no correctness gain on a non-gated tool. Kept
+# by design (byte-identical helper in bench_imma_s02.R).
 run_bench_grep <- function(grep_re) {
     # bench loads cubins relative to its CWD; run inside kernels/gemm/igemm.
     orig_cwd <- getwd()
