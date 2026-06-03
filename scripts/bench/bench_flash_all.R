@@ -10,7 +10,7 @@
 #   Rscript scripts/bench/bench_flash_all.R 1024 8 8
 #   Rscript scripts/bench/bench_flash_all.R --build 1024 8 8
 
-# (uses base R only — no library() loads needed)
+suppressMessages(library(cuasmR))   # run_bench + parse_throughput (issue #138)
 
 # WSL CUDA libpath fix.
 .WSL_CUDA_LIB <- "/usr/lib/wsl/lib"
@@ -23,12 +23,24 @@ if (dir.exists(.WSL_CUDA_LIB) &&
 }
 
 REPO_ROOT <- {
+  # Walk up from the script dir to the repo marker -- matches the proven
+  # derivation in bench_regress.R (the old fixed dirname() count broke when
+  # the script moved to scripts/bench/, issue #138).
   args_full <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", args_full, value = TRUE)
-  if (length(fa)) normalizePath(dirname(dirname(sub("^--file=", "", fa[1]))))
-  else            normalizePath(getwd())
+  start <- if (length(fa)) normalizePath(dirname(sub("^--file=", "", fa[1])))
+           else            normalizePath(getwd())
+  cur <- start
+  repeat {
+    if (file.exists(file.path(cur, ".git")) ||
+        file.exists(file.path(cur, "renv.lock"))) break
+    parent <- dirname(cur)
+    if (parent == cur) { cur <- start; break }  # marker never found
+    cur <- parent
+  }
+  cur
 }
-FLASH_DIR <- file.path(REPO_ROOT, "phase3", "flash_attention")
+FLASH_DIR <- file.path(REPO_ROOT, "kernels", "attention", "flash_attention")
 
 discover_benches <- function() {
   files <- list.files(FLASH_DIR, full.names = TRUE)
@@ -45,25 +57,20 @@ discover_benches <- function() {
 }
 
 run_bench <- function(exe_path, args) {
-  out <- tryCatch(
-    suppressWarnings(system2(exe_path, args, stdout = TRUE, stderr = TRUE,
-                             timeout = 120)),
-    error = function(e) {
-      attr(character(0), "status") <- 1L
-      character(0)
-    }
-  )
-  status <- attr(out, "status")
-  rc <- if (is.null(status)) 0L else as.integer(status)
-  output <- paste(out, collapse = "\n")
+  # Run + parse via cuasmR (issue #138). cuasmR::run_bench captures GPU state
+  # around the launch and returns a status-bearing rc with the correct
+  # can't-launch handler (the old inline `attr(character(0),"status")<-1L`
+  # threw and aborted the harness). parse_throughput replaces the inline
+  # ms/GFLOPS regex; pick = "first" matches the original, which took the first
+  # same-line "X ms ... Y GFLOPS" match (perl `.` does not cross newlines).
+  r <- cuasmR::run_bench(exe_path, args, timeout = 120)
+  output <- paste(r$out, collapse = "\n")
 
-  m <- list(raw = output, returncode = rc)
-  hit <- regmatches(output,
-                    regexec("([0-9.]+)\\s*ms.*?([0-9][0-9,.]*)\\s*GFLOPS",
-                            output, perl = TRUE, ignore.case = TRUE))[[1]]
-  if (length(hit) >= 3) {
-    m$ms     <- as.numeric(hit[2])
-    m$gflops <- as.numeric(gsub(",", "", hit[3], fixed = TRUE))
+  m <- list(raw = output, returncode = r$rc)
+  p <- cuasmR::parse_throughput(r$out, pick = "first")
+  if (!is.na(p$ms) && !is.na(p$throughput)) {
+    m$ms     <- p$ms
+    m$gflops <- p$throughput
   }
   m$check <- if (grepl("PASS", output, fixed = TRUE)) "PASS"
              else if (grepl("FAIL", output, fixed = TRUE)) "FAIL"
@@ -118,11 +125,11 @@ main <- function() {
     cat("No bench executables found in kernels/attention/flash_attention/\n")
     if (do_build) {
       cat("Attempting to build...\n")
-      system2("make", c("-C", dirname(FLASH_DIR), "phase3"))
+      system2("make", c("-C", REPO_ROOT, "attention"))
       benches <- discover_benches()
     }
     if (!length(benches)) {
-      cat("Run: make phase3\n"); quit(status = 1)
+      cat("Run: make attention\n"); quit(status = 1)
     }
   }
 
