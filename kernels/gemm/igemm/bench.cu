@@ -9,8 +9,8 @@
  *   ./bench [M] [N] [K]
  *   ./bench 4096 4096 4096   # default — large enough to saturate Tensor Cores
  *
- * Expected: ~4× improvement over FP16 HGEMM in throughput (TOPS).
- * Theoretical: 696 TOPS INT8 / 174 TFLOPS FP16 = 4×
+ * Expected: ~2× improvement over FP16 HGEMM in throughput (TOPS) — dense.
+ * Theoretical (dense): 348 TOPS INT8 / 174 TFLOPS FP16 = 2× (2:4-sparse: 696 TOPS, 4×)
  */
 
 #include <cstdio>
@@ -642,7 +642,7 @@ int main(int argc, char **argv) {
     int bench_iters  = 50;
     printf("\nPerformance (avg of %d runs, %d warmup):\n", bench_iters, warmup_iters);
 
-    double int8_peak_tops  = 696000.0;  // RTX 3070 Ti INT8 Tensor Core peak
+    double int8_peak_tops  = 348000.0;  // RTX 3070 Ti dense INT8 TC peak (2:4-sparse ceiling 696000)
     double fp16_peak_gflops = 174000.0;
 
     void *bench_args[] = { &dev_a_int8, &dev_b_int8, &dev_c, &M, &N, &K, &scale_a, &scale_b };

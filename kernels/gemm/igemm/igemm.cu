@@ -6,7 +6,7 @@
  *
  * Why INT8 Tensor Cores?
  *   FP16 Tensor peak:  ~174  TFLOPS  (HMMA.16816.F32)
- *   INT8 Tensor peak:  ~696  TOPS    (IMMA.8816.S8 — 4× throughput, same silicon)
+ *   INT8 Tensor peak:  ~348  TOPS    (IMMA.8816.S8 — 2× FP16 throughput dense, same silicon; 2:4-sparse 696)
  *
  * INT8 is the inference workhorse: weights and activations quantized to 8-bit,
  * accumulated in INT32, then dequantized back to FP32 for the next layer.

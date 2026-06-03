@@ -70,13 +70,14 @@ performance on GA104: **registers**, **shared memory**, and **warp occupancy**.
 | DRAM bandwidth | 608 GB/s |
 | FP32 peak (FFMA) | 21.7 TFLOPS |
 | FP16 Tensor peak (HMMA) | 174 TFLOPS |
-| INT8 Tensor peak (IMMA) | 696 TOPS |
+| INT8 Tensor peak (IMMA) | 348 TOPS (dense; 2:4-sparse 696) |
 
-> **⚠ INT8 IMMA peak convention under review ([#141](https://github.com/pjt222/bare-metal/issues/141)).**
-> 696 TOPS is the 2:4-sparse-doubled figure; the *dense* INT8 IMMA peak is
-> 348 TOPS (per `AGENTS.md` / `docs/inventory.md`). The %-of-INT8-peak figures
-> in this document use the 696,000 denominator; #141 will standardize on one
-> convention across the docs and the `igemm` bench.
+> **INT8 IMMA peak convention ([#141](https://github.com/pjt222/bare-metal/issues/141), standardized 2026-06-03).**
+> All %-of-INT8-peak figures in this document use the **dense** 348 TOPS
+> denominator (per `AGENTS.md` / `docs/inventory.md`), matching the dense
+> convention used for every other precision class. 696 TOPS is the
+> 2:4-sparse-doubled ceiling, cited only where a sparse kernel reports
+> against it.
 
 ## The Occupancy Model {#sec-occupancy}
 
@@ -193,7 +194,7 @@ igemm_data <- tibble::tribble(
 ) |>
   mutate(
     kernel = factor(kernel, levels = kernel[order(order)]),
-    pct_peak = tops / 696000 * 100,
+    pct_peak = tops / 348000 * 100,
     vs_naive = tops / 10897
   )
 
@@ -213,7 +214,7 @@ ggplot(igemm_data, aes(x = kernel, y = tops / 1000, fill = stage)) +
   scale_fill_manual(values = stage_colors, name = "Optimization stage") +
   scale_y_continuous(
     labels = label_comma(suffix = "k"),
-    sec.axis = sec_axis(~ . / 696 * 100, name = "% of INT8 peak (696 TOPS)")
+    sec.axis = sec_axis(~ . / 348 * 100, name = "% of INT8 peak (348 TOPS, dense)")
   ) +
   labs(
     title = "INT8 IGEMM Optimization Progression",
@@ -350,8 +351,8 @@ registers), enabling 2 blocks/SM.
 
 ## HMMA vs IMMA: The Quantization Tax {#sec-hmma-imma}
 
-The online-quant experiment attempted to exploit INT8 Tensor Cores (4x theoretical
-throughput) for FP16 matrix multiply by performing on-the-fly quantization. This
+The online-quant experiment attempted to exploit INT8 Tensor Cores (2x theoretical
+dense throughput over FP16) for FP16 matrix multiply by performing on-the-fly quantization. This
 section analyzes why the approach ultimately lost to a properly tiled HGEMM.
 
 ```{r fig-hmma-vs-imma}
@@ -444,13 +445,13 @@ ridge_fp16 <- 174000 / bw  # AI at which FP16 peak is reached
 # Roofline lines
 roofline_x <- seq(1, 512, by = 0.5)
 fp16_roof <- pmin(roofline_x * bw, 174000)
-int8_roof <- pmin(roofline_x * bw, 696000)
+int8_roof <- pmin(roofline_x * bw, 348000)
 fp32_roof <- pmin(roofline_x * bw, 21700)
 
 roof_df <- tibble(
   ai = rep(roofline_x, 3),
   gflops = c(fp32_roof, fp16_roof, int8_roof),
-  ceiling = rep(c("FP32 (21.7 TF)", "FP16 TC (174 TF)", "INT8 TC (696 TOP)"),
+  ceiling = rep(c("FP32 (21.7 TF)", "FP16 TC (174 TF)", "INT8 TC (348 TOP)"),
                 each = length(roofline_x))
 )
 
@@ -467,7 +468,7 @@ ggplot() +
   scale_color_manual(values = c(
     "FP32 (21.7 TF)" = gpu_grey,
     "FP16 TC (174 TF)" = gpu_blue,
-    "INT8 TC (696 TOP)" = gpu_green
+    "INT8 TC (348 TOP)" = gpu_green
   )) +
   annotation_logticks(sides = "bl") +
   labs(
@@ -489,7 +490,7 @@ arithmetic intensity to saturate the Tensor Cores.
 This explains why the 16-warp HGEMM at 128 ops/byte achieves only ~10.7% of
 FP16 peak: at 22% of machine balance, throughput is capped by DRAM bandwidth.
 The IGEMM 8-warp 128x256 kernel (192 ops/byte, 67% of balance) does better at
-4.0% of INT8 peak. **The next optimization target is increasing arithmetic
+7.9% of INT8 peak (dense 348 TOPS). **The next optimization target is increasing arithmetic
 intensity** via asymmetric tiles (256x128 → 85 ops/byte) or larger BK.
 
 ## The Inner Loop Length Rule {#sec-inner-loop}
@@ -590,7 +591,7 @@ the naive HGEMM used no tiling, no pipelining, and no occupancy optimization.
 Once the HGEMM path received the same treatment (128x128 tiles, cp.async,
 16-warp occupancy), it matched and then exceeded the online-quant path by ~10%.
 
-The structural cause: IMMA's 4x theoretical advantage is consumed by:
+The structural cause: IMMA's 2x theoretical (dense) advantage is consumed by:
 
 - **Double accumulator cost** (INT32 + FP32 running) = 128 registers minimum
 - **Quantization overhead** (~32% of tile time for max_abs + scale + convert)
