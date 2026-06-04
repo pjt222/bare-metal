@@ -23,12 +23,19 @@ bench_*
 # under kernels/, not here, so they stay ignored).
 !scripts/bench/
 !scripts/bench/*.R
+# bench_all.R reads its corpus spec from scripts/bench/bench_all.yml; the
+# `bench_*` rule would swallow the .yml (the *.R re-include above is R-only).
+!scripts/bench/*.yml
 # The cuasmR package R/ sources include bench_*.R files (issue #134
 # measurement migration); re-include them — they are library code, not
 # compiled bench artifacts.
 !R/cuasmR/R/bench_*.R
 !tests/bench_regress/
 !tests/bench_regress/**
+# tests/bench_all/ (issue #124) is swallowed by `bench_*` too — re-include
+# the GPU-free unit tests (results/bench_all/ generated output stays ignored).
+!tests/bench_all/
+!tests/bench_all/**
 test_dense_manual
 test_mma_sp
 test_inplace_race

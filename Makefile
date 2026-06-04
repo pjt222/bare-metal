@@ -64,7 +64,7 @@ REGRESS_BENCH := \
 # Default target
 # ------------------------------------------------------------------
 .PHONY: all cubins benches test clean disasm sass help \
-        setup verify bench bench-reference compare-reference reference-pipeline reproduce figures \
+        setup verify bench bench-all bench-reference compare-reference reference-pipeline reproduce figures \
         publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
 
@@ -203,6 +203,23 @@ verify:
 
 bench:
 	@$(RSCRIPT) scripts/bench/bench_regress.R
+
+# Full-corpus "run everything" pass (#124). Builds the whole corpus, then
+# runs every bench and records every result + metadata to
+# results/bench_all/<timestamp>/ (results.json, summary.md, samples.jsonl).
+# On-demand data collection -- NOT the regression gate (that stays `make
+# bench` / bench_regress.R, unchanged). Skip nothing, record everything.
+# Extra flags: make bench-all ARGS="--min-valid 3 --max-attempts 10"
+# Plan only (no GPU): make bench-all ARGS=--list   (or run bench_all.R directly)
+#
+# The build is best-effort (`-k` keep-going, `-` ignore failure): a corpus
+# bench that can't compile (e.g. a reference bench on a box without
+# cuSPARSELt/cuDNN) must NOT abort the pass -- bench_all.R records it
+# `not-built` and continues. Aborting here would defeat the whole
+# skip-nothing principle (the recipe would never run).
+bench-all:
+	-@$(MAKE) -k all
+	@$(RSCRIPT) scripts/bench/bench_all.R $(ARGS)
 
 figures:
 	@echo "=== Regenerating docs/figures ==="

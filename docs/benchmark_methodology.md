@@ -239,9 +239,35 @@ flag, host, OS / WSL build, `nvcc` and driver versions, GPU name +
 SM count, clock-lock state, **GPU mode (hybrid / dGPU)**, and the
 per-attempt `capture_gpu_state()` snapshots.
 
-This methodology is the design basis for the planned `make
-bench-all` target — see the benchmark-pipeline hardening issues on
-GitHub.
+This methodology is implemented by **`make bench-all`** →
+`scripts/bench/bench_all.R` (issue #124). It discovers the corpus
+exactly as `$(BENCH_EXES)`, drives each measurable bench through the
+cuasmR pipeline (`run_bench → parse_throughput → validate_sample →
+collect_valid_samples → report_median_metrics`), and writes
+`results/bench_all/<timestamp>/{results.json,summary.md,samples.jsonl}`
+with the run metadata above. Per-bench invocation + output-parse hints
+live in `scripts/bench/bench_all.yml`.
+
+Two honest categories beyond `degraded`/`failed`, so a non-perf bench
+never masquerades as a kernel failure (the spec tags each):
+
+- **`non-measurable`** — A/B sweep tables, ms-only composed pipelines,
+  and correctness harnesses emit no single parseable number. They are
+  run **once** to confirm they execute; a parse miss is expected, not a
+  failure.
+- **`skipped`** — benches that cannot run meaningfully here (a stub
+  library, or one needing external data files) are documented-skipped.
+
+Each spec entry also carries `verified` — `true` when its args + parse
+hint are confirmed by a recorded baseline/sweep number, else `infer`
+(read from the bench source; the first GPU run confirms it). A
+parse-fail on an `infer` row is a spec-hint bug to fix in
+`bench_all.yml`, not a real kernel failure.
+
+`make bench` / `bench_regress.R` stays the fast regression gate (the 5
+baselined kernels); `bench-all` is the on-demand "collect everything"
+pass. For clock/power context around a run, see
+`scripts/probe/probe_gpu_power.R`.
 
 For the concrete step-by-step procedure to re-record a suspect
 baseline (currently `hgemm` + `igemm_sparse`, recorded under a

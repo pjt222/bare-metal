@@ -12,6 +12,24 @@ historical reference.
 
 ## Unreleased
 
+### Added
+- **`make bench-all` full-corpus runner (#124).** New on-demand "run
+  everything" pass: `scripts/bench/bench_all.R` discovers the whole
+  `$(BENCH_EXES)` corpus, runs every bench, and records every attempt +
+  per-config summary + run metadata to
+  `results/bench_all/<timestamp>/{results.json,summary.md,samples.jsonl}`.
+  Skip nothing, record everything (docs/benchmark_methodology.md). Reuses
+  the cuasmR measurement API (no reimplementation). Per-bench invocation +
+  output-parse hints live in `scripts/bench/bench_all.yml` (all 48 corpus
+  exes specced). Benches that emit no single number (A/B sweep tables,
+  ms-only pipelines, correctness harnesses) are tagged `non-measurable`
+  and run once; un-runnable ones (cuDNN-SDPA stub, cymatic needs data
+  files) are documented-`skipped` — neither is reported as a kernel
+  `failed`. Each entry carries a `verified`/`infer` flag separating
+  baseline-confirmed specs from source-inferred ones. The fast regression
+  gate (`make bench` / `bench_regress.R`) is unchanged. GPU-free unit
+  tests in `tests/bench_all/`.
+
 ### Changed
 - **cuasmR measurement-API migration (#134, cuasmR 0.1.0 → 0.2.0).** The
   benchmark run → parse → validate → regress logic was migrated out of the
