@@ -35,7 +35,9 @@ scripts/
 │   └── cymatic_fa_alignment.R ── how cymatic regions align with FA seq tiles
 │
 ├── bench/                    ── benchmark harnesses (need GPU; measurement via cuasmR, #134)
-│   ├── bench_regress.R       ── runs all benches vs data/baselines.json
+│   ├── bench_regress.R       ── runs all benches vs data/baselines.json (the fast gate)
+│   ├── bench_all.R           ── full-corpus "run everything" pass → results/bench_all/ (#124)
+│   ├── bench_all.yml         ── per-bench invocation + parse spec for bench_all.R
 │   ├── bench_meta.R          ── GPU-state capture shim (capture_gpu_state/classify_meta now in cuasmR)
 │   ├── bench_reference.R     ── runs local reference benches vs data/reference_baselines.json
 │   ├── compare_reference.R   ── joins project baselines to local reference baselines

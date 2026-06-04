@@ -1,0 +1,369 @@
+# bench_all.yml -- declarative corpus spec for the full "run everything"
+# pass (#124). Consumed by scripts/bench/bench_all.R.
+#
+# It enumerates EVERY bench executable in $(BENCH_EXES) with its exact
+# invocation contract, so the runner never guesses args. (A corpus exe
+# with no entry here is still run, with --default-args + a generic parse,
+# flagged spec_source="default" and reported separately.)
+#
+# Per-kernel fields:
+#   id          unique slug (appears in the report + samples.jsonl).
+#   exe         repo-relative path to the bench binary.
+#   args        positional args; [] = use the bench's own internal defaults.
+#   match       fixed substring picking this kernel's output line
+#               (required when the bench prints several variants).
+#   section     fixed substring of a `===`/`---` section header; the parser
+#               only looks at lines after it. Omit unless `match` is
+#               ambiguous across sections (over-constraining risks a miss).
+#   value_label text immediately AFTER the throughput number on the line
+#               (e.g. "dense-equiv GFLOPS", "GB/s"); needed when the line
+#               carries several numbers, so the right column is taken.
+#   unit        authoritative unit for the report (set for GB/s benches --
+#               parse_throughput would otherwise mislabel them GFLOPS).
+#   measurable  false -> the bench emits no single parseable number (A/B
+#               sweep table, ms-only composed pipeline, correctness
+#               harness). It is run ONCE to confirm it executes; a parse
+#               miss is EXPECTED (status non-measurable), never `failed`.
+#   run         false -> cannot run meaningfully here (stub library, needs
+#               external data). Documented `skipped`, not run.
+#   verified    true  -> args + parse hint are confirmed by a recorded
+#               number (data/baselines.json or scripts/probe/grid_sweep.yml
+#               sweep). false/absent -> inferred from the bench source; a
+#               first GPU bench-all run confirms it. A parse-fail on an
+#               unverified entry is a HINT bug to fix here, NOT a real
+#               kernel failure -- do not read it as one.
+#   note        free text (carried into the report).
+#
+# Seeds: the 5 baselined kernels (data/baselines.json) + grid_sweep.yml
+# are reproduced verbatim and marked verified: true. The rest are mapped
+# from each bench's argv parsing + throughput printf (mapping pass #124).
+
+kernels:
+  # ---------------- GEMM: hgemm ----------------
+  - id: hgemm_16warp_2048
+    exe: kernels/gemm/hgemm/bench
+    args: [2048, 2048, 2048]
+    match: "hgemm_16warp (128x128 2blk/SM)"
+    verified: true
+    note: "baselines.json 31789 GFLOPS"
+
+  - id: hgemm_16warp_4096
+    exe: kernels/gemm/hgemm/bench
+    args: [4096, 4096, 4096]
+    match: "hgemm_16warp (128x128 2blk/SM)"
+    verified: true
+    note: "baselines.json 30397 GFLOPS"
+
+  - id: hgemm_aligned_4096
+    exe: kernels/gemm/hgemm/bench_aligned
+    args: []
+    match: "hgemm_16warp (baseline)"
+    note: "A/B vs aligned variant; default 4096^3 (M%128,N%128,K%32)"
+
+  - id: hgemm_epi_pad_4096
+    exe: kernels/gemm/hgemm/bench_epi_pad
+    args: []
+    match: "hgemm_16warp_epi (baseline)"
+    note: "A/B vs padded epilogue; default 4096^3"
+
+  - id: hgemm_dispatch
+    exe: kernels/gemm/hgemm/bench_dispatch
+    measurable: false
+    note: "dispatch-heuristic validation harness; ms-only comparison table, no GFLOPS"
+
+  - id: hgemm_persistent
+    exe: kernels/gemm/hgemm/bench_persistent
+    measurable: false
+    note: "A/B sweep table over 6 shapes; GFLOPS in columns, no single-number line"
+
+  - id: hgemm_splitk
+    exe: kernels/gemm/hgemm/bench_splitk
+    measurable: false
+    note: "A/B sweep table over 7 shapes x k-split; no single-number line"
+
+  # ---------------- GEMM: hgemm_sparse ----------------
+  - id: hgemm_sparse_tiled
+    exe: kernels/gemm/hgemm_sparse/bench
+    args: [2048, 2048, 2048]
+    measurable: false
+    note: "tiled-table output (ms/eff/dense-eq columns header-labeled, not on data row); perf section needs M>=512"
+
+  # ---------------- GEMM: sgemm ----------------
+  - id: sgemm_register_blocked
+    exe: kernels/gemm/sgemm/bench
+    args: [1024, 1024, 1024]
+    match: "register_blocked"
+    note: "FP32; canonical variant register_blocked"
+
+  # ---------------- GEMM: igemm ----------------
+  - id: igemm_cpasync_4096
+    exe: kernels/gemm/igemm/bench
+    args: [4096, 4096, 4096]
+    match: "igemm_cpasync"
+    value_label: "TOPS"
+    verified: true
+    note: "baselines.json 20227 TOPS (cp.async dbuf)"
+
+  - id: igemm_sparse_2048
+    exe: kernels/gemm/igemm/bench_sparse
+    args: [2048, 2048, 2048]
+    match: "igemm_sparse_tiled"
+    value_label: "dense-equiv GFLOPS"
+    verified: true
+    note: "baselines.json 36892 dense-equiv GFLOPS"
+
+  - id: igemm_sparse_4096
+    exe: kernels/gemm/igemm/bench_sparse
+    args: [4096, 4096, 4096]
+    match: "igemm_sparse_tiled"
+    value_label: "dense-equiv GFLOPS"
+    verified: true
+    note: "power-bound: throttles at native boost (expected degraded/failed here). Fair number is 50497 @ -lgc 1605 -- use run_locked_eval.ps1"
+
+  - id: igemm_sparse_persistent_512
+    exe: kernels/gemm/igemm/bench_persistent
+    args: [512, 512, 512]
+    match: "igemm_sparse_tiled_persistent"
+    value_label: "eff GFLOPS"
+    note: "persistent-grid sparse INT8; eff GFLOPS (2:4)"
+
+  # ---------------- attention: flash_attention ----------------
+  - id: flash_attn_multihead
+    exe: kernels/attention/flash_attention/bench
+    args: []
+    match: "flash_attn_multihead"
+    value_label: "GFLOPS"
+    note: "default seq=512 b=1 h=1; multi-head perf line"
+
+  - id: flash_attn_bc128
+    exe: kernels/attention/flash_attention/bench_bc128
+    args: []
+    match: "Bc=128:"
+    value_label: "GFLOPS"
+    note: "internal sweep; Bc=128 line, first config"
+
+  - id: flash_attn_br16
+    exe: kernels/attention/flash_attention/bench_br16
+    args: []
+    match: "flash_attn_br16  (FP16, HMMA)"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "default 1024/8/8; br16 HMMA bandwidth line"
+
+  - id: flash_attn_br16_regpv_1024
+    exe: kernels/attention/flash_attention/bench_br16_regpv
+    args: [1024, 8, 8]
+    match: "flash_attn_br16_regpv"
+    verified: true
+    note: "baselines.json 7152 GFLOPS (seq=1024 b=8 h=8)"
+
+  - id: flash_attn_fused
+    exe: kernels/attention/flash_attention/bench_fused
+    args: []
+    match: "flash_attn_fused"
+    value_label: "GFLOPS"
+    note: "default 1024/8/8; fused BSHD perf line"
+
+  - id: flash_attn_split_q
+    exe: kernels/attention/flash_attention/bench_split_q
+    args: [1024, 8, 8]
+    match: "br16 baseline"
+    value_label: "GFLOPS"
+    note: "split-Q vs br16 baseline; baseline reference line"
+
+  - id: flash_attn_pipeline
+    exe: kernels/attention/flash_attention/bench_pipeline
+    args: []
+    match: "Baseline:"
+    value_label: "GFLOPS"
+    note: "baseline vs cp.async pipelined; first config baseline line"
+
+  - id: flash_attn_wmma
+    exe: kernels/attention/flash_attention/bench_wmma
+    args: [1024, 8, 8]
+    match: "flash_attn_4warp"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "1-warp vs WMMA 4-warp; bandwidth (GB/s), not GFLOPS"
+
+  - id: flash_attn_br16_regpv_pad
+    exe: kernels/attention/flash_attention/bench_br16_regpv_pad
+    measurable: false
+    note: "8-variant smem-padding sweep table; no single-number line"
+
+  - id: flash_attn_persistent
+    exe: kernels/attention/flash_attention/bench_persistent
+    measurable: false
+    note: "persistent-grid sweep table (3 seq); columns, no single-number line"
+
+  - id: flash_attn_v2_baseline_pad
+    exe: kernels/attention/flash_attention/bench_v2_baseline_pad
+    measurable: false
+    note: "v2 unpadded-vs-padded sweep table; no single-number line"
+
+  - id: flash_attn_v2_persistent_pad
+    exe: kernels/attention/flash_attention/bench_v2_persistent_pad
+    measurable: false
+    note: "v2 persistent unpadded-vs-padded sweep table; no single-number line"
+
+  - id: flash_attn_v2_pipeline_pad
+    exe: kernels/attention/flash_attention/bench_v2_pipeline_pad
+    measurable: false
+    note: "v2 pipeline 3-padding sweep table; no single-number line"
+
+  - id: flash_attn_v2_variants
+    exe: kernels/attention/flash_attention/bench_v2_variants
+    measurable: false
+    note: "v2 baseline|pipeline|persistent comparison table; no single-number line"
+
+  # ---------------- attention: cross_attention ----------------
+  - id: cross_attn
+    exe: kernels/attention/cross_attention/bench
+    measurable: false
+    note: "ms and GFLOPS printed on separate lines; parser needs both on one line"
+
+  - id: cross_attn_dispatch
+    exe: kernels/attention/cross_attention/bench_dispatch
+    measurable: false
+    note: "regime-dispatch validation harness; correctness checks, no throughput"
+
+  - id: cross_attn_pipelined
+    exe: kernels/attention/cross_attention/bench_pipelined
+    args: []
+    match: "Baseline:"
+    value_label: "GFLOPS"
+    note: "baseline vs pipelined, 5 hardcoded configs; first baseline line. Long runtime"
+
+  - id: cross_attn_v2
+    exe: kernels/attention/cross_attention/bench_v2
+    measurable: false
+    note: "3-variant comparison table (smem/regs/blocks/ms/GFLOPS columns); no single-number line"
+
+  # ---------------- composition ----------------
+  - id: attention_layer
+    exe: kernels/composition/attention_layer/bench
+    measurable: false
+    note: "composed 11-step attention layer; ms-only relative comparison, no throughput metric"
+
+  # ---------------- convolution: conv2d ----------------
+  - id: conv2d_nhwc
+    exe: kernels/convolution/conv2d/bench
+    args: []
+    match: "conv2d_nhwc (3×3)"
+    value_label: "GFLOPS"
+    note: "default N1 64x64 Cin=Cout=64; 3x3 NHWC primary kernel"
+
+  - id: conv2d_implicit_gemm
+    exe: kernels/convolution/conv2d/bench_implicit_gemm
+    args: []
+    match: "Implicit (single kern)"
+    section: "SD 64"
+    verified: true
+    note: "baselines.json 7150 GFLOPS (SD 64x64 Cin=Cout=320)"
+
+  - id: conv2d_im2col
+    exe: kernels/convolution/conv2d/bench_im2col
+    measurable: false
+    note: "label-before-value output ('GFLOPS: N'); parser expects 'N GFLOPS'"
+
+  - id: conv2d_implicit_v2
+    exe: kernels/convolution/conv2d/bench_implicit_v2
+    measurable: false
+    note: "8-shape v1-vs-v2 comparison table; no single-number line"
+
+  # ---------------- convolution: resblock ----------------
+  - id: resblock
+    exe: kernels/convolution/resblock/bench
+    args: []
+    match: "Full ResNet Block"
+    value_label: "GFLOPS"
+    note: "default N1 C64 32x32 G8; full block (5 kernels), standard conv2d"
+
+  - id: resblock_implicit
+    exe: kernels/convolution/resblock/bench_implicit
+    args: []
+    match: "Full ResNet Block"
+    value_label: "GFLOPS"
+    note: "implicit_gemm conv (Tensor Cores)"
+
+  - id: resblock_implicit_v2
+    exe: kernels/convolution/resblock/bench_implicit_v2
+    args: []
+    match: "Full ResNet Block"
+    value_label: "GFLOPS"
+    note: "implicit_gemm_v2 (16-warp 128x128x32, FP16, cp.async)"
+
+  # ---------------- elementwise ----------------
+  - id: activations_relu
+    exe: kernels/elementwise/activations/bench
+    args: []
+    match: "relu_kernel"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "memory-bound; relu canonical variant (bandwidth)"
+
+  - id: timestep_emb
+    exe: kernels/elementwise/timestep_emb/bench
+    args: []
+    match: "timestep_emb_batch"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "default d_model=512 batch=1024; bandwidth"
+
+  # ---------------- reductions ----------------
+  - id: groupnorm_nhwc
+    exe: kernels/reductions/groupnorm/bench
+    args: []
+    match: "groupnorm NHWC"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "default N4 C32 64x64 G8; NHWC bandwidth"
+
+  - id: layernorm_warp
+    exe: kernels/reductions/layernorm/bench
+    args: []
+    match: "layernorm_warp"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "default 65536x32; warp variant bandwidth"
+
+  - id: softmax_warp
+    exe: kernels/reductions/softmax/bench
+    args: []
+    match: "softmax_warp"
+    value_label: "GB/s"
+    unit: "GB/s"
+    note: "default 65536x32; warp variant bandwidth"
+
+  # ---------------- memory_layout ----------------
+  - id: cymatic_gather
+    exe: kernels/memory_layout/cymatic/bench
+    run: false
+    note: "needs external data files perm.bin + traces.bin (generate via scripts/cymatic/*.R / gen_fa_traces.R); GB/s table, not run by default"
+
+  # ---------------- reference (cuBLAS / cuDNN / cuSPARSELt) ----------------
+  - id: ref_cublas_hgemm
+    exe: kernels/reference/cublas_hgemm/bench
+    args: [4096, 4096, 4096]
+    note: "cuBLAS FP16 GEMM reference; not-built if cuBLAS absent"
+
+  - id: ref_cublas_igemm
+    exe: kernels/reference/cublas_igemm/bench
+    args: [4096, 4096, 4096]
+    note: "cuBLAS INT8 GEMM reference (TOPS); not-built if cuBLAS absent"
+
+  - id: ref_cudnn_conv2d
+    exe: kernels/reference/cudnn_conv2d/bench
+    args: []
+    note: "cuDNN conv2d reference (default SD 64x64 Cin=Cout=320); not-built if cuDNN absent"
+
+  - id: ref_cudnn_sdpa
+    exe: kernels/reference/cudnn_sdpa/bench
+    run: false
+    note: "stub: cuDNN graph-based SDPA frontend unavailable on this system (prints to stderr, no measurement)"
+
+  - id: ref_cusparselt_igemm_sparse
+    exe: kernels/reference/cusparselt_igemm_sparse/bench
+    args: [4096, 4096, 4096]
+    value_label: "TOPS"
+    note: "cuSPARSELt 2:4 sparse INT8 reference (dense-equiv TOPS); not-built if cuSPARSELt absent. Data line is '... <ms> ms  <N> TOPS'; the words 'dense-equiv TOPS' appear only in the header, so match plain TOPS."
