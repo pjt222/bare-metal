@@ -55,7 +55,10 @@ here is build-graph gaps that "look right" (per-family target vs
 `KERNEL_CUBINS +=` link empirically.
 
 **Next steps (all remaining items need the elevated Windows GPU shell or are
-optional):**
+optional):** → **turnkey runbook:
+[`elevated_session_runbook.md`](elevated_session_runbook.md)** (copy-paste,
+verified pre-flight). North-star convergence goal: **#152** (one tool, all
+kernels × {native and/or locked-clock grid}).
 1. **#135** P2-5 single-Ctrl+C re-test + P2-6 full grid sweep (elevated pwsh).
 2. **#128** OC showcase (deferred; grid-sweep data is its source).
 3. Optional: publication-grade `make bench-all` (default `--min-valid 5`) now
