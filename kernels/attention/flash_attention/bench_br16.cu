@@ -101,8 +101,8 @@ int main(int argc, char **argv) {
     driver.copy_h2d(dKh, hKh, ne * sizeof(__half));
     driver.copy_h2d(dVh, hVh, ne * sizeof(__half));
 
-    CUfunction fn_4w = driver.load_kernel("flash_wmma.sm_86.cubin", "flash_attn_4warp");
-    CUfunction fn_br = driver.load_kernel("flash_br16.sm_86.cubin", "flash_attn_br16");
+    CUfunction fn_4w = driver.load_kernel("flash_attn_wmma.sm_86.cubin", "flash_attn_4warp");
+    CUfunction fn_br = driver.load_kernel("flash_attn_br16.sm_86.cubin", "flash_attn_br16");
 
     size_t smem_br = 2 * Bc * d * sizeof(__half)
                    + Br_block * Bc * sizeof(float)

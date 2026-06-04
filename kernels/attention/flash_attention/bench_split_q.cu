@@ -4,8 +4,8 @@
  * Tests flash_attn_split_q + reduce vs flash_attn_br16 baseline.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_split_q.sm_86.cubin flash_attn_split_q.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16.sm_86.cubin flash_attn_br16.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_split_q.sm_86.cubin flash_attn_split_q.cu
  *   nvcc -arch=sm_86 -O2 -o bench_split_q bench_split_q.cu -lcuda -I../../kernels/_common
  */
 
@@ -65,13 +65,13 @@ int main(int argc, char **argv) {
     BenchDriver driver;
     driver.init_context();
 
-    CUfunction fn_br16   = driver.load_kernel("flash_br16.sm_86.cubin", "flash_attn_br16");
+    CUfunction fn_br16   = driver.load_kernel("flash_attn_br16.sm_86.cubin", "flash_attn_br16");
 
     // Manual module load for split-q (need 2 kernels from 1 module)
     CUmodule mod_split;
     CUfunction fn_split, fn_reduce;
-    if (cuModuleLoad(&mod_split, "flash_split_q.sm_86.cubin") != CUDA_SUCCESS) {
-        fprintf(stderr, "Cannot load flash_split_q.sm_86.cubin\n"); return 1;
+    if (cuModuleLoad(&mod_split, "flash_attn_split_q.sm_86.cubin") != CUDA_SUCCESS) {
+        fprintf(stderr, "Cannot load flash_attn_split_q.sm_86.cubin\n"); return 1;
     }
     CHECK_CU(cuModuleGetFunction(&fn_split, mod_split, "flash_attn_split_q"));
     CHECK_CU(cuModuleGetFunction(&fn_reduce, mod_split, "flash_attn_split_q_reduce"));

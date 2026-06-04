@@ -4,8 +4,8 @@
  * Tests SM utilization improvement at small batch sizes.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_persistent.sm_86.cubin flash_attn_persistent.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16.sm_86.cubin flash_attn_br16.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_persistent.sm_86.cubin flash_attn_persistent.cu
  *   nvcc -arch=sm_86 -O2 -o bench_persistent bench_persistent.cu -lcuda -I../../kernels/_common
  */
 
@@ -63,8 +63,8 @@ int main(int argc, char **argv) {
     CHECK_CU(cuDeviceGetAttribute(&num_sms, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, driver.device));
     printf("SMs: %d\n\n", num_sms);
 
-    CUfunction fn_br16    = driver.load_kernel("flash_br16.sm_86.cubin",      "flash_attn_br16");
-    CUfunction fn_persist = driver.load_kernel("flash_persistent.sm_86.cubin","flash_attn_persistent");
+    CUfunction fn_br16    = driver.load_kernel("flash_attn_br16.sm_86.cubin",      "flash_attn_br16");
+    CUfunction fn_persist = driver.load_kernel("flash_attn_persistent.sm_86.cubin","flash_attn_persistent");
 
     size_t smem = 2 * Bc * d * sizeof(__half) + Br_block * Bc * sizeof(float) + Br_block * d * sizeof(float);
     CHECK_CU(cuFuncSetAttribute(fn_br16,    CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));

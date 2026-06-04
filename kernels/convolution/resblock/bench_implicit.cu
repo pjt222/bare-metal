@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
     driver.copy_h2d(d_W2f, h_W2f, (size_t)K_dim * C * sizeof(__half));
 
     CUmodule mod_rb, mod_conv_ig;
-    CHECK_CU(cuModuleLoad(&mod_rb, "resblock.sm_86.cubin"));
+    CHECK_CU(cuModuleLoad(&mod_rb, "resblock_fused.sm_86.cubin"));
     CHECK_CU(cuModuleLoad(&mod_conv_ig, "../conv2d/conv2d_implicit_gemm.sm_86.cubin"));
     CUfunction fn_gn_silu, fn_residual, fn_conv_ig;
     CHECK_CU(cuModuleGetFunction(&fn_gn_silu, mod_rb, "groupnorm_silu_fused"));

@@ -6,8 +6,8 @@
  * from 87.5% to ~0%, stall_short_sb + stall_mio drop substantially.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline.sm_86.cubin     flash_attn_br16_v2_pipeline.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline_pad.sm_86.cubin flash_attn_br16_v2_pipeline_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2_pipeline.sm_86.cubin     flash_attn_br16_v2_pipeline.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2_pipeline_pad.sm_86.cubin flash_attn_br16_v2_pipeline_pad.cu
  *   nvcc -arch=sm_86 -O2 -o bench_v2_pipeline_pad bench_v2_pipeline_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
     // unpadded: K_tile + V_tile = 2 × (Bc × d) bytes × 2 buffers + weight
     size_t smem_unpad = 2 * 2 * (size_t)Bc * d * sizeof(__half)
                       + (size_t)Br_block * Bc * sizeof(__half);
-    double gf_unpad = run_variant("flash_br16_v2_pipeline.sm_86.cubin",
+    double gf_unpad = run_variant("flash_attn_br16_v2_pipeline.sm_86.cubin",
                                   "flash_attn_br16_v2_pipeline",
                                   "v2 pipeline (unpadded, 40 KB)", smem_unpad);
 
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
     const int D_STRIDE = 72;
     size_t smem_pad = 2 * 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
                     + (size_t)Br_block * Bc * sizeof(__half);
-    double gf_pad   = run_variant("flash_br16_v2_pipeline_pad.sm_86.cubin",
+    double gf_pad   = run_variant("flash_attn_br16_v2_pipeline_pad.sm_86.cubin",
                                   "flash_attn_br16_v2_pipeline_pad",
                                   "v2 pipeline_pad (+8 K/V, 44 KB)", smem_pad);
 
@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
     const int W_STRIDE = 72;
     size_t smem_pad2 = 2 * 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
                      + (size_t)Br_block * W_STRIDE * sizeof(__half);
-    double gf_pad2  = run_variant("flash_br16_v2_pipeline_pad2.sm_86.cubin",
+    double gf_pad2  = run_variant("flash_attn_br16_v2_pipeline_pad2.sm_86.cubin",
                                   "flash_attn_br16_v2_pipeline_pad2",
                                   "v2 pipeline_pad2 (+8 K/V/W, 45 KB)", smem_pad2);
 

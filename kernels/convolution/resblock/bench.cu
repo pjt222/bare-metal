@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
 
     // Load kernels from two cubins
     CUmodule mod_rb, mod_conv;
-    CHECK_CU(cuModuleLoad(&mod_rb, "resblock.sm_86.cubin"));
+    CHECK_CU(cuModuleLoad(&mod_rb, "resblock_fused.sm_86.cubin"));
     CHECK_CU(cuModuleLoad(&mod_conv, "../conv2d/conv2d.sm_86.cubin"));
     CUfunction fn_gn_silu, fn_residual, fn_conv;
     CHECK_CU(cuModuleGetFunction(&fn_gn_silu, mod_rb, "groupnorm_silu_fused"));

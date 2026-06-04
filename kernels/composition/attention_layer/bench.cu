@@ -97,10 +97,10 @@ int main(int argc, char **argv) {
     // Load modules manually (multiple fns per module needed)
     CUmodule mod_ln, mod_hg, mod_fl, mod_fu, mod_ut;
     auto ld = [&](const char* p) { CUmodule m; if (cuModuleLoad(&m,p)!=CUDA_SUCCESS){fprintf(stderr,"Cannot load %s\n",p);exit(1);} return m; };
-    mod_ln = ld("../../kernels/reductions/layernorm/layernorm.sm_86.cubin");
-    mod_hg = ld("../../kernels/gemm/hgemm/hgemm.sm_86.cubin");
-    mod_fl = ld("../../kernels/attention/flash_attention/flash_br16.sm_86.cubin");
-    mod_fu = ld("../../kernels/attention/flash_attention/flash_fused.sm_86.cubin");
+    mod_ln = ld("../../reductions/layernorm/layernorm.sm_86.cubin");
+    mod_hg = ld("../../gemm/hgemm/hgemm.sm_86.cubin");
+    mod_fl = ld("../../attention/flash_attention/flash_attn_br16.sm_86.cubin");
+    mod_fu = ld("../../attention/flash_attention/flash_attn_fused.sm_86.cubin");
     mod_ut = ld("utils.sm_86.cubin");
 
     CUfunction fn_ln, fn_hg, fn_fl, fn_fu, fn_f2h, fn_tr_bshd, fn_tr_bhsd, fn_res;

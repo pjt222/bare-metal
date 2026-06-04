@@ -5,8 +5,8 @@
  * 2.36× on v2_pipeline) transfers to the non-pipelined v2 baseline.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin     flash_attn_br16_v2.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pad.sm_86.cubin flash_attn_br16_v2_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2.sm_86.cubin     flash_attn_br16_v2.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2_pad.sm_86.cubin flash_attn_br16_v2_pad.cu
  *   nvcc -arch=sm_86 -O2 -o bench_v2_baseline_pad bench_v2_baseline_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
 
     // unpadded baseline: K + V + W = 3 × Bc × d
     size_t smem_unpad = 3 * (size_t)Bc * d * sizeof(__half);
-    double gf_unpad = run_variant("flash_br16_v2.sm_86.cubin",
+    double gf_unpad = run_variant("flash_attn_br16_v2.sm_86.cubin",
                                    "flash_attn_br16_v2",
                                    "v2 baseline (unpadded, 24 KB)", smem_unpad);
 
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     const int D_STRIDE = 72;
     size_t smem_pad = 2 * (size_t)Bc * D_STRIDE * sizeof(__half)   // K_tile + V_tile
                     + (size_t)Br_block * D_STRIDE * sizeof(__half); // weight_smem (uses W_STRIDE=72 too)
-    double gf_pad   = run_variant("flash_br16_v2_pad.sm_86.cubin",
+    double gf_pad   = run_variant("flash_attn_br16_v2_pad.sm_86.cubin",
                                    "flash_attn_br16_v2_pad",
                                    "v2 baseline_pad (+8 K/V/W, 27 KB)", smem_pad);
 

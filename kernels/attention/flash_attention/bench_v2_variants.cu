@@ -2,9 +2,9 @@
  * bench_v2_variants.cu — Compare v2 baseline, v2_pipeline, v2_persistent
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2.sm_86.cubin flash_attn_br16_v2.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_v2_pipeline.sm_86.cubin flash_attn_br16_v2_pipeline.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_v2_persistent.sm_86.cubin flash_attn_v2_persistent.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2.sm_86.cubin flash_attn_br16_v2.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_v2_pipeline.sm_86.cubin flash_attn_br16_v2_pipeline.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_v2_persistent.sm_86.cubin flash_attn_v2_persistent.cu
  *   nvcc -arch=sm_86 -O2 -o bench_v2_variants bench_v2_variants.cu \
  *        -lcuda -I../../kernels/_common
  */
@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
 
     // ---- v2 baseline ----
     {
-        CUfunction fn = driver.load_kernel("flash_br16_v2.sm_86.cubin", "flash_attn_br16_v2");
+        CUfunction fn = driver.load_kernel("flash_attn_br16_v2.sm_86.cubin", "flash_attn_br16_v2");
         size_t smem = 2 * (size_t)Bc * d * sizeof(__half) + (size_t)Br_block * Bc * sizeof(__half);
         CHECK_CU(cuFuncSetAttribute(fn, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
         int regs = 0, blocks = 0;
@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
 
     // ---- v2 pipeline (cp.async double-buffered K/V) ----
     {
-        CUfunction fn = driver.load_kernel("flash_br16_v2_pipeline.sm_86.cubin", "flash_attn_br16_v2_pipeline");
+        CUfunction fn = driver.load_kernel("flash_attn_br16_v2_pipeline.sm_86.cubin", "flash_attn_br16_v2_pipeline");
         size_t smem = 2 * 2 * (size_t)Bc * d * sizeof(__half)        // 2 buffers × K + V each = 32 KB
                     + (size_t)Br_block * Bc * sizeof(__half);          // weight 8 KB
         CHECK_CU(cuFuncSetAttribute(fn, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
 
     // ---- v2 persistent ----
     {
-        CUfunction fn = driver.load_kernel("flash_v2_persistent.sm_86.cubin", "flash_attn_v2_persistent");
+        CUfunction fn = driver.load_kernel("flash_attn_v2_persistent.sm_86.cubin", "flash_attn_v2_persistent");
         size_t smem = 2 * (size_t)Bc * d * sizeof(__half) + (size_t)Br_block * Bc * sizeof(__half);
         CHECK_CU(cuFuncSetAttribute(fn, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
         int regs = 0, blocks = 0;
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
     // ---- v2 Bc=128 (issue #29 follow-up: bigger inner-K tile) ----
     {
         const int Bc128 = 128;
-        CUfunction fn = driver.load_kernel("flash_br16_v2_bc128.sm_86.cubin", "flash_attn_br16_v2_bc128");
+        CUfunction fn = driver.load_kernel("flash_attn_br16_v2_bc128.sm_86.cubin", "flash_attn_br16_v2_bc128");
         size_t smem = 2 * (size_t)Bc128 * d * sizeof(__half) + (size_t)Br_block * Bc128 * sizeof(__half);
         CHECK_CU(cuFuncSetAttribute(fn, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));
         int regs = 0, blocks = 0;
