@@ -269,6 +269,17 @@ baselined kernels); `bench-all` is the on-demand "collect everything"
 pass. For clock/power context around a run, see
 `scripts/probe/probe_gpu_power.R`.
 
+`bench-all` runs **native** (no clock lock), so power-bound configs that
+throttle at native boost land `degraded`/`failed`. For their fair numbers,
+re-measure under a host-side clock lock — see
+[`grid_sweep_methodology.md`](grid_sweep_methodology.md) (#135, the
+multi-kernel × clock grid) and `scripts/probe/run_locked_eval.ps1`. The
+operational runbook for the elevated, clock-locked session is
+[`elevated_session_runbook.md`](elevated_session_runbook.md). The end goal —
+**one** tool running all kernels against native **and/or** a defined
+locked-clock grid, converging this `bench-all` corpus runner with the #135
+grid sweep — is tracked in issue #152.
+
 For the concrete step-by-step procedure to re-record a suspect
 baseline (currently `hgemm` + `igemm_sparse`, recorded under a
 power-supply fault), see

@@ -25,6 +25,14 @@ Each tool has a distinct job:
 | `run_locked_eval.ps1`      | Single (kernel, clock) cell + log + JSONL row.|
 | `run_grid_sweep.ps1` (+ R) | Many (kernel × clock) cells; raw data set.  |
 
+The full-corpus, **native** counterpart is `bench_all.R` / `make bench-all`
+(#124; see [`benchmark_methodology.md`](benchmark_methodology.md)): it runs
+*every* kernel, but only at native boost. This grid sweep runs a *subset*
+across *locked* clocks. Converging the two — all kernels × {native and/or a
+locked-clock grid} — is tracked in issue #152. For the operational
+elevated-session runbook, see
+[`elevated_session_runbook.md`](elevated_session_runbook.md).
+
 ## Architecture
 
 Three pieces, three responsibilities. None reach into another's
