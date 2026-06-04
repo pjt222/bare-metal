@@ -1,9 +1,98 @@
 # Session handoff
 
-> Last updated: 2026-06-03T18:10Z (#142 merged; **#140 / #143 / #141 all
-> CLOSED** — sparse HGEMM 2:4 measured + clock-locked, INT8 peak standardized.
-> main clean at `1361fc1`. Use WSL Linux R, not Windows Rscript.exe.) |
-> Branch: `docs/session-handoff-2026-06-03`
+> Last updated: 2026-06-04 (#124 bench-all runner BUILT + GPU-validated on
+> branch `feat/124-bench-all` — NOT pushed/PR'd yet. Native GPU pass ran;
+> infer hints confirmed, 1 fixed (cusparselt); ~16 benches blocked by a
+> PRE-EXISTING cubin-name mismatch = candidate new issue, not #124.)
+> Use WSL Linux R (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
+
+## ▶ SESSION — 2026-06-04 — #124 bench-all full-corpus runner
+
+**Where we "broke off":** nowhere in git — the prior session landed
+everything clean (#140/#143/#141 + handoff PR #147 all merged, `919f0e1`,
+tree clean, no stash/worktree). The two divergent branches are dead:
+`refactor/bench-driver` (2026-05-05, pre-reorg, 46k-line revert) and
+`feat/138-comparison-harness-consolidation` (tip `dfa5d07` already an
+ancestor of main via PR #139). Both safe to prune. "Continue" = next item
+in the handoff queue. User picked **#124** (the only Claude-buildable item;
+#135/#128 need an elevated Windows GPU shell).
+
+**Built (branch `feat/124-bench-all`; includes a 4-lens adversarial review
+pass + advisor fixes):**
+- `scripts/bench/bench_all.R` — `make bench-all` full-corpus runner.
+  Discovers the corpus exactly as `$(BENCH_EXES)` (shell-free), runs every
+  bench, retries each measurable config to `--min-valid` via the cuasmR
+  pipeline (`run_bench → parse_throughput → validate_sample →
+  collect_valid_samples → report_median_metrics`), never aborts, writes
+  `results/bench_all/<ts>/{results.json,summary.md,samples.jsonl}`. Reuses
+  the cuasmR API; reimplements nothing.
+- `scripts/bench/bench_all.yml` — all **48** corpus exes specced (50 configs:
+  hgemm + igemm_sparse each at 2 sizes). 32 measurable, 16 `non-measurable`
+  (A/B sweep tables / ms-only pipelines / correctness harnesses → run once,
+  parse-miss expected, never `failed`), 2 `run:false` (cuDNN-SDPA stub,
+  cymatic needs perm.bin/traces.bin). `verified` vs `infer` flag separates
+  baseline/sweep-confirmed specs (7) from source-inferred (the rest).
+- `make bench-all` target (`: all` first); `.gitignore` re-includes
+  `scripts/bench/*.yml` + `tests/bench_all/` (the `bench_*` rule swallowed
+  them, cf. #134); generated `results/bench_all/` stays ignored.
+- Docs: `docs/benchmark_methodology.md` "run everything" section now points
+  at the implementation; `CHANGELOG.md` Added entry; `scripts/README.md`.
+- `tests/bench_all/test_bench_all.R` — **55 GPU-free assertions, all pass**
+  (Linux R 4.6.0): corpus discovery, spec merge, status/aggregation, render
+  bucket separation (= the advisor invariant), full-spec corpus coverage.
+
+**Provenance / method (negative space):**
+- Corpus arg-contracts + output formats mapped by a 13-agent workflow over
+  all 48 bench.cu; reviewed by a 4-lens adversarial workflow. The review's
+  one actionable hit (summarise_config hardcoded `measurable=TRUE`) is fixed;
+  its "NULL-post crashes attempt_row" finding was a **false positive** —
+  empirically `NULL$gpu$throttle` returns NULL in R (the "$ invalid for
+  atomic vectors" error is for atomic vectors, not NULL).
+- **The make-or-break (advisor):** a non-perf/inferred/default parse-miss must
+  never read as a real kernel failure. Handled by the measurable/non-measurable/
+  skipped taxonomy + verified/infer flag + three segregated report buckets.
+
+**GPU validation pass DONE** (`make bench-all --min-valid 3 --max-attempts 6`,
+native, no elevation needed; run `results/bench_all/20260604T103311/`):
+ok=18, degraded=2, failed=19, non-measurable=9, skipped=2.
+- **infer parse hints confirmed** for the bulk: sgemm, conv2d_nhwc,
+  igemm_sparse_persistent, flash_attn_multihead, cross_attn_pipelined,
+  all GB/s reductions (groupnorm/layernorm/softmax) + activations +
+  timestep_emb, and the cuBLAS/cuDNN references. hgemm_aligned/epi_pad
+  parsed too (just throttled).
+- **One hint bug found + fixed:** `ref_cusparselt_igemm_sparse` was
+  `value_label: "dense-equiv TOPS"`, but the data line prints plain
+  `TOPS` (the "dense-equiv" wording is header-only) → was `parse-fail`,
+  now `170 TOPS ok` with `value_label: "TOPS"`. Folded into the feature commit.
+- **Expected throttle:** hgemm_aligned/epi_pad/igemm_cpasync/igemm_sparse_4096
+  at 4096³ `degraded`/`failed` on `SwPowerCap` at native — documented, fair
+  numbers need the host-side -lgc lock.
+- **PRE-EXISTING build-graph finding (NOT #124):** ~16 benches `failed`/
+  crashed on `cuModuleLoad ... file not found` — the BenchDriver-refactored
+  flash + resblock + attention_layer benches load ABBREVIATED cubin names the
+  build never emits (`flash_wmma`→`flash_attn_wmma`, `flash_fused`→
+  `flash_attn_fused`, `resblock`→only `resblock_fused` exists, etc.). Same
+  class as #127 (which fixed only bench_br16_regpv). bench-all surfaced it
+  exactly as designed; these were never in `make test`'s smoke loop.
+  **→ file a dedicated issue** (cubin-name realignment across the refactored
+  benches); do not fix in #124.
+
+**Next steps:**
+1. **File the cubin-name-mismatch issue** (#127-class): bench_wmma/bench_br16/
+   bench_fused/bench_split_q/bench_pipeline/bench_bc128 + resblock{,_implicit,
+   _implicit_v2} + attention_layer + flash v2_* load cubin basenames the
+   Makefile never produces. List in `results/bench_all/20260604T103311/
+   summary.md` (the `failed`/crash rows). Once fixed, those infer specs
+   re-validate via `make bench-all`.
+2. Push `feat/124-bench-all` (pre-push gate = `make test` + bench_regress,
+   GPU; watch the wedged-CUDA hang gotcha) → `gh pr create`. PR references
+   #124 WITHOUT a close keyword (epic stays open).
+3. Optional: a full `make bench-all` (default `--min-valid 5`) for
+   publication-grade medians once the cubin issue is fixed.
+4. **#135** P2-5/P2-6 grid sweep (elevated pwsh) and **#128** OC showcase
+   remain — both need the elevated Windows GPU shell.
+
+---
 
 ## ▶ SESSION END — 2026-06-03 (eve) — sparse-HGEMM measurement + INT8 convention
 
