@@ -1,10 +1,69 @@
 # Session handoff
 
-> Last updated: 2026-06-04 (#124 bench-all runner BUILT + GPU-validated on
-> branch `feat/124-bench-all` — NOT pushed/PR'd yet. Native GPU pass ran;
-> infer hints confirmed, 1 fixed (cusparselt); ~16 benches blocked by a
-> PRE-EXISTING cubin-name mismatch = candidate new issue, not #124.)
+> Last updated: 2026-06-04 (cont). **Both PRs merged to `main`**: #124
+> bench-all runner (PR #149, merge `85ee9d7`) + #148 cubin-name realignment
+> (PR #150, merge `2e753fb`, #148 CLOSED). Epic **#124 stays open** (runner
+> shipped; publication-grade full run is the remaining deliverable). Dead
+> branch `refactor/bench-driver` pruned (local + remote). **GPU recovered**
+> (WSL was restarted; `nvidia-smi` works — the earlier "wedged" note is
+> stale). Combined `main` re-verified: `make test` green, param cubins build
+> via `make cubins`. Tree clean, no open PRs.
 > Use WSL Linux R (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
+
+## ▶ SESSION — 2026-06-04 (cont) — #124 + #148 shipped & merged
+
+Picked up the non-GPU queue from the prior `feat/124-bench-all` build
+session. GPU had recovered (WSL restarted), so the queue cleared end-to-end.
+
+**Done:**
+- **PR #149 opened + MERGED** (`85ee9d7`) — `feat/124-bench-all` → `main`.
+  References #124 without a close keyword (`closingIssuesReferences == []`
+  verified); **epic #124 stays open**.
+- **`refactor/bench-driver` pruned** (local + remote). The other dead branch
+  `feat/138-comparison-harness-consolidation` was already gone on remote.
+- **#148 FIXED + MERGED** (PR #150, merge `2e753fb`, `Closes #148`, #148
+  CLOSED) — branch `fix/148-bench-cubin-names`. The cubin-name mismatch the
+  bench-all run surfaced:
+  - 16 benches' `load_kernel`/`cuModuleLoad` basenames realigned to the built
+    cubins (`flash_*`→`flash_attn_*`, `resblock`→`resblock_fused`), least-churn
+    per #127. Stale header build-command comments fixed too.
+  - `bench_br16_regpv_pad`: root-cause, not band-aid. The kernel is
+    compile-time `-D` parameterized (`KV_PAD_HALFS`/`SCORE_PAD_FLOATS`), so
+    `kv8_w0`/`kv0_w4` are genuine separate cubins. Added **explicit `-D`
+    Makefile rules** + `KERNEL_CUBINS +=`, so `make cubins`/`make all` emits
+    all three layouts (kv8_w4 = the default pattern-rule build). Verified the
+    wiring by deleting the two cubins and rebuilding via `make cubins` (advisor
+    catch: my first `make cubins` was a no-op because they were already on
+    disk; the push gate also can't catch this — the cubins exist by then).
+  - `attention_layer/bench`: distinct sub-bug, same "can't load" symptom — its
+    cross-dir paths had a redundant `kernels/` segment (`../../kernels/…` →
+    `../../…`). A name-only fix would have left it crashing.
+  - **Verified by direct per-bench runs**: all 16 affected benches load + run
+    `rc=0` (they are NOT in the smoke loop, so the gate can't cover them).
+    `bench_br16_regpv_pad` exercises all 3 pad layouts with distinct smem
+    (35/34/33 KB) — proving the param cubins are real separate builds.
+- **Combined `main` re-verified** after both merges (GitHub merges don't run
+  `make test`): `make test` green, no `file not found`, param cubins build via
+  `make cubins`.
+
+**Method note (negative space):** GitHub `mergeable=MERGEABLE` only means no
+*textual* conflict — it does not build the merged tree. Both PRs touched
+Makefile + CHANGELOG; they merged clean (different regions), but the combined
+build was still verified locally, not assumed. The recurring failure class
+here is build-graph gaps that "look right" (per-family target vs
+`KERNEL_CUBINS`, `.gitignore` swallowing sources) — closed the
+`KERNEL_CUBINS +=` link empirically.
+
+**Next steps (all remaining items need the elevated Windows GPU shell or are
+optional):**
+1. **#135** P2-5 single-Ctrl+C re-test + P2-6 full grid sweep (elevated pwsh).
+2. **#128** OC showcase (deferred; grid-sweep data is its source).
+3. Optional: publication-grade `make bench-all` (default `--min-valid 5`) now
+   that #148 is fixed — the flash/resblock/attention_layer `infer` specs that
+   were `failed`/`non-measurable` should now flip to `ok`. Then consider
+   closing epic **#124**.
+
+---
 
 ## ▶ SESSION — 2026-06-04 — #124 bench-all full-corpus runner
 
