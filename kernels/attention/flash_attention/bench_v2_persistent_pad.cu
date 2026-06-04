@@ -2,8 +2,8 @@
  * bench_v2_persistent_pad.cu — A/B test of v2_persistent vs v2_persistent_pad.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_v2_persistent.sm_86.cubin     flash_attn_v2_persistent.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_v2_persistent_pad.sm_86.cubin flash_attn_v2_persistent_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_v2_persistent.sm_86.cubin     flash_attn_v2_persistent.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_v2_persistent_pad.sm_86.cubin flash_attn_v2_persistent_pad.cu
  *   nvcc -arch=sm_86 -O2 -o bench_v2_persistent_pad bench_v2_persistent_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
@@ -167,14 +167,14 @@ int main(int argc, char **argv) {
 
     size_t smem_unpad = 2 * (size_t)Bc * d * sizeof(__half)
                       + (size_t)Br_block * Bc * sizeof(__half);
-    double gf_unpad = run_variant("flash_v2_persistent.sm_86.cubin",
+    double gf_unpad = run_variant("flash_attn_v2_persistent.sm_86.cubin",
                                    "flash_attn_v2_persistent",
                                    "v2 persistent (unpadded, 24 KB)", smem_unpad);
 
     const int D_STRIDE = 72;
     size_t smem_pad = 2 * (size_t)Bc * D_STRIDE * sizeof(__half)
                     + (size_t)Br_block * D_STRIDE * sizeof(__half);
-    double gf_pad   = run_variant("flash_v2_persistent_pad.sm_86.cubin",
+    double gf_pad   = run_variant("flash_attn_v2_persistent_pad.sm_86.cubin",
                                    "flash_attn_v2_persistent_pad",
                                    "v2 persistent_pad (+8, 27 KB)", smem_pad);
 

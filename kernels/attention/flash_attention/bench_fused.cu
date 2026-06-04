@@ -4,8 +4,8 @@
  * Eliminates transpose kernels by accepting [B,S,H,D] layout directly.
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_fused.sm_86.cubin flash_attn_fused.cu
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16.sm_86.cubin flash_attn_br16.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_fused.sm_86.cubin flash_attn_fused.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16.sm_86.cubin flash_attn_br16.cu
  *   nvcc -arch=sm_86 -O2 -o bench_fused bench_fused.cu -lcuda -I../../kernels/_common
  */
 
@@ -98,8 +98,8 @@ int main(int argc, char **argv) {
     driver.copy_h2d(dKh, hKh, nbh);
     driver.copy_h2d(dVh, hVh, nbh);
 
-    CUfunction fn_br16  = driver.load_kernel("flash_br16.sm_86.cubin",  "flash_attn_br16");
-    CUfunction fn_fused = driver.load_kernel("flash_fused.sm_86.cubin", "flash_attn_fused");
+    CUfunction fn_br16  = driver.load_kernel("flash_attn_br16.sm_86.cubin",  "flash_attn_br16");
+    CUfunction fn_fused = driver.load_kernel("flash_attn_fused.sm_86.cubin", "flash_attn_fused");
 
     size_t smem = 2 * Br_block * d * sizeof(__half) + Br_block * Br_block * sizeof(float) + Br_block * d * sizeof(float);
     CHECK_CU(cuFuncSetAttribute(fn_br16,  CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, (int)smem));

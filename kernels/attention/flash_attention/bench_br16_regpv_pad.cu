@@ -2,13 +2,17 @@
  * bench_br16_regpv_pad.cu — Padded smem variants vs unpadded regpv baseline
  *
  * Build:
- *   nvcc --cubin -arch=sm_86 -O2 -o flash_br16_regpv.sm_86.cubin flash_attn_br16_regpv.cu
- *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=8 -DSCORE_PAD_FLOATS=4 \
- *        -o flash_br16_regpv_pad_kv8_w4.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *   nvcc --cubin -arch=sm_86 -O2 -o flash_attn_br16_regpv.sm_86.cubin flash_attn_br16_regpv.cu
+ *   # kv8_w4 is the DEFAULT build (KV_PAD_HALFS=8, SCORE_PAD_FLOATS=4 are the
+ *   # kernel defaults), emitted by the Makefile %.cubin pattern rule as
+ *   # flash_attn_br16_regpv_pad.sm_86.cubin — no -D needed.
+ *   nvcc --cubin -arch=sm_86 -O2 \
+ *        -o flash_attn_br16_regpv_pad.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *   # kv8_w0 / kv0_w4 need explicit -D builds (see Makefile param rules):
  *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=8 -DSCORE_PAD_FLOATS=0 \
- *        -o flash_br16_regpv_pad_kv8_w0.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *        -o flash_attn_br16_regpv_pad_kv8_w0.sm_86.cubin flash_attn_br16_regpv_pad.cu
  *   nvcc --cubin -arch=sm_86 -O2 -DKV_PAD_HALFS=0 -DSCORE_PAD_FLOATS=4 \
- *        -o flash_br16_regpv_pad_kv0_w4.sm_86.cubin flash_attn_br16_regpv_pad.cu
+ *        -o flash_attn_br16_regpv_pad_kv0_w4.sm_86.cubin flash_attn_br16_regpv_pad.cu
  *   nvcc -arch=sm_86 -O2 -o bench_br16_regpv_pad bench_br16_regpv_pad.cu \
  *        -lcuda -I../../kernels/_common
  */
@@ -75,14 +79,14 @@ int main(int argc, char **argv) {
     }
 
     Variant variants[] = {
-        { "flash_br16_regpv.sm_86.cubin",            "flash_attn_br16_regpv",      "regpv (baseline)            ", 0, 0, false },
-        { "flash_br16_regpv_lean.sm_86.cubin",       "flash_attn_br16_regpv_lean",        "regpv_lean (4 reg state)    ", 0, 0, false },
-        { "flash_br16_regpv_lean_qcache.sm_86.cubin", "flash_attn_br16_regpv_lean_qcache", "regpv_lean + Q reg cache    ", 0, 0, false },
-        { "flash_br16_v2.sm_86.cubin",                "flash_attn_br16_v2",                "flash_attn_br16_v2 (winner) ", 0, 0, true  },
-        { "flash_br16_regpv_full.sm_86.cubin",       "flash_attn_br16_regpv_full",        "+ pad K/V/W (27 KB, no conf)", 8, 0, false },
-        { "flash_br16_regpv_pad_kv8_w4.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + KV+8 + W+4 (both)   ", 8, 4, false },
-        { "flash_br16_regpv_pad_kv8_w0.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + KV+8 only           ", 8, 0, false },
-        { "flash_br16_regpv_pad_kv0_w4.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + W+4 only            ", 0, 4, false },
+        { "flash_attn_br16_regpv.sm_86.cubin",            "flash_attn_br16_regpv",      "regpv (baseline)            ", 0, 0, false },
+        { "flash_attn_br16_regpv_lean.sm_86.cubin",       "flash_attn_br16_regpv_lean",        "regpv_lean (4 reg state)    ", 0, 0, false },
+        { "flash_attn_br16_regpv_lean_qcache.sm_86.cubin", "flash_attn_br16_regpv_lean_qcache", "regpv_lean + Q reg cache    ", 0, 0, false },
+        { "flash_attn_br16_v2.sm_86.cubin",                "flash_attn_br16_v2",                "flash_attn_br16_v2 (winner) ", 0, 0, true  },
+        { "flash_attn_br16_regpv_full.sm_86.cubin",       "flash_attn_br16_regpv_full",        "+ pad K/V/W (27 KB, no conf)", 8, 0, false },
+        { "flash_attn_br16_regpv_pad.sm_86.cubin",         "flash_attn_br16_regpv_pad",  "regpv + KV+8 + W+4 (both)   ", 8, 4, false },
+        { "flash_attn_br16_regpv_pad_kv8_w0.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + KV+8 only           ", 8, 0, false },
+        { "flash_attn_br16_regpv_pad_kv0_w4.sm_86.cubin", "flash_attn_br16_regpv_pad",  "regpv + W+4 only            ", 0, 4, false },
     };
     int n_var = sizeof(variants) / sizeof(variants[0]);
 

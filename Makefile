@@ -40,6 +40,16 @@ BENCH_CU    := $(shell find . \( -path ./tools -o -path ./experiments -o -path .
 KERNEL_CUBINS := $(KERNEL_CU:.cu=.$(SM_ARCH).cubin)
 BENCH_EXES    := $(BENCH_CU:.cu=)
 
+# Compile-time pad-sweep variants of flash_attn_br16_regpv_pad — bench_br16_regpv_pad
+# loads all three layouts. kv8_w4 is the DEFAULT build (KV_PAD_HALFS=8,
+# SCORE_PAD_FLOATS=4 are the kernel defaults), already covered by the %.cubin
+# pattern rule. kv8_w0 and kv0_w4 need explicit -D macros (dedicated rules below),
+# so they are appended to KERNEL_CUBINS here to join `make cubins` / `make all`.
+FLASH_REGPV_PAD_VARIANTS := \
+  kernels/attention/flash_attention/flash_attn_br16_regpv_pad_kv8_w0.$(SM_ARCH).cubin \
+  kernels/attention/flash_attention/flash_attn_br16_regpv_pad_kv0_w4.$(SM_ARCH).cubin
+KERNEL_CUBINS += $(FLASH_REGPV_PAD_VARIANTS)
+
 # Family-specific bench executables.
 GEMM_BENCH         := $(shell find kernels/gemm          -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
 REDUCTIONS_BENCH   := $(shell find kernels/reductions    -name 'bench*.cu' 2>/dev/null | sed 's/\.cu//')
@@ -81,6 +91,19 @@ benches: $(BENCH_EXES)
 	@echo "[CUBIN] $<"
 	@mkdir -p $(dir $@)
 	$(NVCC) $(CUBIN_FLAGS) -o $@ $<
+
+# Pad-sweep variants of flash_attn_br16_regpv_pad: same source, different
+# compile-time smem layout (see bench_br16_regpv_pad.cu). These explicit rules
+# override the %.cubin pattern (no matching .cu exists for the variant names).
+kernels/attention/flash_attention/flash_attn_br16_regpv_pad_kv8_w0.$(SM_ARCH).cubin: kernels/attention/flash_attention/flash_attn_br16_regpv_pad.cu
+	@echo "[CUBIN] $< (KV_PAD_HALFS=8 SCORE_PAD_FLOATS=0)"
+	@mkdir -p $(dir $@)
+	$(NVCC) $(CUBIN_FLAGS) -DKV_PAD_HALFS=8 -DSCORE_PAD_FLOATS=0 -o $@ $<
+
+kernels/attention/flash_attention/flash_attn_br16_regpv_pad_kv0_w4.$(SM_ARCH).cubin: kernels/attention/flash_attention/flash_attn_br16_regpv_pad.cu
+	@echo "[CUBIN] $< (KV_PAD_HALFS=0 SCORE_PAD_FLOATS=4)"
+	@mkdir -p $(dir $@)
+	$(NVCC) $(CUBIN_FLAGS) -DKV_PAD_HALFS=0 -DSCORE_PAD_FLOATS=4 -o $@ $<
 
 # Generic bench rule for kernels/<family>/<kernel>/bench.cu.
 kernels/%/bench: kernels/%/bench.cu

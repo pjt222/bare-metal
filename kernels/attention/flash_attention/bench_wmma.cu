@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
     driver.copy_h2d(dV, hV, sb);
 
     CUfunction fn_v1 = driver.load_kernel("flash_attn.sm_86.cubin", "flash_attn_multihead");
-    CUfunction fn_v2 = driver.load_kernel("flash_wmma.sm_86.cubin", "flash_attn_4warp");
+    CUfunction fn_v2 = driver.load_kernel("flash_attn_wmma.sm_86.cubin", "flash_attn_4warp");
 
     int n1 = 1;
     void *args1[] = { &dQ.ptr, &dK.ptr, &dV.ptr, &dO.ptr, &seq_len, &n1, &scale };

@@ -64,8 +64,8 @@ int main(void) {
     driver.init_context();
 
     CUmodule mod_base, mod_pipe;
-    CHECK_CU(cuModuleLoad(&mod_base, "flash_br16.sm_86.cubin"));
-    CHECK_CU(cuModuleLoad(&mod_pipe, "flash_br16_pipeline.sm_86.cubin"));
+    CHECK_CU(cuModuleLoad(&mod_base, "flash_attn_br16.sm_86.cubin"));
+    CHECK_CU(cuModuleLoad(&mod_pipe, "flash_attn_br16_pipeline.sm_86.cubin"));
     CUfunction fn_base, fn_pipe;
     CHECK_CU(cuModuleGetFunction(&fn_base, mod_base, "flash_attn_br16"));
     CHECK_CU(cuModuleGetFunction(&fn_pipe, mod_pipe, "flash_attn_br16_pipeline"));

@@ -41,6 +41,25 @@ historical reference.
   map. `Makefile` per-family `bench_%` rules collapsed to a single
   pattern.
 
+### Fixed
+- **bench↔cubin name mismatch across BenchDriver-refactored benches
+  (#148).** ~16 flash-attention, resblock, and attention-layer benches
+  called `load_kernel("<basename>.sm_86.cubin", …)` with abbreviated
+  cubin basenames the build never emits (`flash_*` instead of
+  `flash_attn_*`, `resblock` instead of `resblock_fused`), so they
+  crashed at runtime with `cuModuleLoad … file not found`. These
+  benches are outside `make test`'s smoke loop, so the breakage was
+  silent until the `make bench-all` full-corpus runner (#124) surfaced
+  it. Corrected every load basename to the actual built cubin (the
+  least-churn option, matching #127). Three further sub-fixes:
+  `bench_br16_regpv_pad`'s two compile-time pad variants (`kv8_w0`,
+  `kv0_w4`) now have explicit `-D` Makefile rules and join
+  `KERNEL_CUBINS` (the default `make` cubin is the `kv8_w4` layout);
+  `attention_layer/bench` also had a redundant `kernels/` segment in
+  its cross-directory load paths (`../../kernels/…` → `../../…`), fixed
+  so it resolves from the bench's own working directory. All 16
+  affected benches now load and run; verified by direct per-bench runs.
+
 ### Removed
 - `.github/issues/*.md` and `scripts/create_issues.sh`. All 16
   seed files corresponded to GitHub issues that have been
