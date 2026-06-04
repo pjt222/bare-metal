@@ -1,13 +1,17 @@
 # Session handoff
 
-> Last updated: 2026-06-04 (cont). **Both PRs merged to `main`**: #124
-> bench-all runner (PR #149, merge `85ee9d7`) + #148 cubin-name realignment
-> (PR #150, merge `2e753fb`, #148 CLOSED). Epic **#124 stays open** (runner
-> shipped; publication-grade full run is the remaining deliverable). Dead
-> branch `refactor/bench-driver` pruned (local + remote). **GPU recovered**
-> (WSL was restarted; `nvidia-smi` works — the earlier "wedged" note is
-> stale). Combined `main` re-verified: `make test` green, param cubins build
-> via `make cubins`. Tree clean, no open PRs.
+> Last updated: 2026-06-04 (cont). **Five PRs merged to `main`** (HEAD
+> `51b1f5c`): #124 bench-all runner (#149, `85ee9d7`) + #148 cubin-name
+> realignment (#150, `2e753fb`, #148 CLOSED) + handoff (#151) + elevated-session
+> runbook (#153) + bench-doc cross-ref (#154). Epic **#124 stays open** (runner
+> shipped; publication-grade full run is the remaining deliverable). **#152
+> filed** — convergence epic: one tool, all kernels × {native and/or
+> locked-clock grid}. Dead branches `refactor/bench-driver` +
+> `feat/performance-regression` pruned (local + remote). **GPU recovered** (WSL
+> restarted; `nvidia-smi` works — earlier "wedged" note is stale). Combined
+> `main` re-verified: `make test` green, param cubins build via `make cubins`.
+> Tree clean, 0 open PRs. Elevated work is turnkey →
+> [`elevated_session_runbook.md`](elevated_session_runbook.md).
 > Use WSL Linux R (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
 
 ## ▶ SESSION — 2026-06-04 (cont) — #124 + #148 shipped & merged
@@ -45,6 +49,19 @@ session. GPU had recovered (WSL restarted), so the queue cleared end-to-end.
 - **Combined `main` re-verified** after both merges (GitHub merges don't run
   `make test`): `make test` green, no `file not found`, param cubins build via
   `make cubins`.
+- **Doc cascade (PRs #151/#153/#154, all merged):** refreshed the stale handoff
+  (#151); wrote a turnkey elevated-session runbook
+  `docs/elevated_session_runbook.md` (#153) for the clock-locked work; wove the
+  bench-tooling docs into one cross-referenced web (#154 —
+  benchmark_methodology ↔ grid_sweep_methodology ↔ runbook ↔ index ↔ this file
+  ↔ scripts/README, #152 threaded through). `check_links.R` 0 broken.
+- **#152 filed** — the north-star convergence epic (all kernels × {native ∪
+  locked grid}), with #124 (corpus/native) and #135 (subset/locked) as its two
+  building-block halves + the 5 design questions to resolve.
+- **`feat/performance-regression` pruned** — inspected first: PR #50 (squash-
+  merged), its unique commit was a Python prototype (`bench_regress.py`) fully
+  superseded by the R rewrite; nothing in it that `main` lacks. Now only `main`
+  exists local + remote.
 
 **Method note (negative space):** GitHub `mergeable=MERGEABLE` only means no
 *textual* conflict — it does not build the merged tree. Both PRs touched
