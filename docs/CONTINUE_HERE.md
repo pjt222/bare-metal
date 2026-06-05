@@ -1,18 +1,21 @@
 # Session handoff
 
-> Last updated: 2026-06-05. **4 commits direct to `main`** (HEAD `4c820fa`,
-> tree clean, 0 open PRs): #152 convergence design RESOLVED (`cc303a5`,
-> `docs/convergence_152_design.md`, also posted as a #152 comment) + #135 P2-5
-> Ctrl+C abort root-caused & fixed (`1f4d9f7`/`1eac337`/`4c820fa`). **Both #135
-> and #152 stay OPEN.** P2-5 single-Ctrl+C abort is **VERIFIED** via the
-> non-elevated `-NoLock` self-test (Phase A0); the **load-bearing fix was the
-> renv-autoloader bypass** (Route A: R catches the SIGINT → exit 130 → sweep
-> breaks). The new-process-group "Route B" is a benign backstop that does NOT
-> fire (WSL forwards Ctrl+C to R regardless of the Windows process group).
-> **Next = elevated Phase A (locked P2-5) → Phase B (full grid sweep) → close
-> #135**, then #152 convergence implementation. Elevated work turnkey →
-> [`elevated_session_runbook.md`](elevated_session_runbook.md) (Phase A0 added).
-> Use WSL Linux R (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
+> Last updated: 2026-06-05 (eve). **#135 CLOSED — P2-5 abort fixed + P2-6 full
+> grid sweep done.** 5 commits direct to `main` (HEAD `35c5057`, tree clean, 0
+> open PRs): #152 design RESOLVED (`cc303a5`) + #135 P2-5 abort fix
+> (`1f4d9f7`/`1eac337`/`4c820fa`) + handoff (`35c5057`). **Elevated run
+> complete:** Phase A0 (`-NoLock`) + Phase A (locked) + Phase B (28-cell sweep)
+> all PASSED. Single-Ctrl+C abort works via **Route A** (renv-bypass
+> load-bearing; the new-process-group "Route B" `CancelKeyPress` is a non-firing
+> backstop — WSL delivers Ctrl+C to R regardless of the Windows process group).
+> Plateau map → `grid_sweep_results.rds` (196 samples / 177 valid;
+> `igemm_sparse_4096` peaks ~1605 = 51.2k dq-GFLOPS, rolls over at 1710; two
+> top-clock cells thin from the 150W cap). **#152 stays OPEN** (design done,
+> implementation pending). **Next = #152 convergence implementation** (Phase 2,
+> GPU-free, Claude-drivable — see `docs/convergence_152_design.md`). NB: a stray
+> `close #135` in the `35c5057` body auto-closed #135 (keyword trap, 3rd bite
+> this session — memory hardened); harmless, work was done. Use WSL Linux R
+> (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
 
 ## ▶ SESSION — 2026-06-05 — #152 design resolved + #135 P2-5 abort fixed
 
@@ -64,36 +67,56 @@ then prepare + run the elevated P2-5 test.
   lock-stranding risk) added; expected output corrected to the real Route-A
   path; Ctrl+Break recovery for the silent-no-op case.
 
+**Done — #135 elevated run (Phase A0 + A + B → #135 CLOSED):**
+- **Phase A0** (`-NoLock`, non-elevated): single Ctrl+C → clean abort via Route A.
+- **Phase A** (elevated, locked `igemm_sparse_4096`): single Ctrl+C between
+  samples → `Aborting sweep` + the `Cancelled`-flag `pkill` ran (`exit 1` = no
+  orphan present) + `-rgc OK` + `sentinel cleared`, lock released. P2-5 done.
+- **Phase B** (elevated, full 28-cell sweep, ~1h): completed clean; GPU left
+  idle (P8), no sentinel, no orphan. `grid_collect.R --print` → 196 samples /
+  177 valid → `grid_sweep_results.rds`. Known points matched
+  (`igemm_sparse_4096` 1410→44.3k / 1500→48.5k / 1605→51.2k dq-GFLOPS).
+- **Plateau map:** `igemm_sparse_4096` monotonic 1200→1605 then **rolls over at
+  1710** (peak ~1605); `igemm_sparse_2048` still climbing at 1710 (no throttle);
+  `hgemm_16warp_4096` flat 1605≈1710. **Caveat:** `igemm_cpasync_4096 @1710` n=1
+  + `igemm_sparse_4096 @1710` n=4 — 150W cap can't sustain 1710 under 4096³
+  (`unfair: SwPowerCap,SwThermalSlowdown` / clock-sag); sweep is fixed-7-attempts,
+  no min-valid backfill. Hardware finding, not a tool gap.
+- **#135 CLOSED** (COMPLETED) with a summary comment
+  ([#135 comment](https://github.com/pjt222/bare-metal/issues/135#issuecomment-4633185834)).
+  The grid data files (`eval_logs/*.jsonl`, `*.rds`) are **gitignored** — local only.
+
 **Method / negative space:**
 - Adversarial verify + advisor caught **two ship-blockers**: the
   `grid_measure.R:100` B-crack (drove the design rule) and the `system2` rc=0
   (the exit-code-based abort doesn't work). The fix that *works* is the simple
   one (renv bypass → Route A); the complex blind `CreateProcess` P/Invoke
   (Route B) is proven non-firing — a simplification candidate.
-- **Traps hit this session (do not relearn):** (a) a `resolve #152` commit
-  SUBJECT auto-closed the epic → reopened; closing keywords fire from the
-  subject too, not just the `Closes` trailer. (b) `pkill -f <pattern>` where the
-  pattern is in your own command **self-matches and kills your shell** — use
-  `pkill -x <name>` or kill by PID. (c) a new-process-group child **orphans on
-  an EXTERNAL kill** (`timeout`/parent-kill), not on Ctrl+C — don't `timeout` a
-  real measure run.
+- **Traps hit this session (do not relearn):** (a) closing keywords
+  (`resolve/close/fix #N`) auto-close from **anywhere** in a commit message —
+  the SUBJECT (`resolve #152` → closed the epic) AND plan/narrative text in the
+  BODY (`close #135` in the handoff next-steps → closed #135). Bit **3×** this
+  session; memory `feedback_github_closes_trailer` now has a pre-commit `grep`
+  guard. A `Refs #N (stays open)` disclaimer does NOT counteract it. Also: `gh
+  issue view` right after push can read a STALE replica (showed OPEN ~1s before
+  the close landed) — re-check or trust the message scan. (b) `pkill -f
+  <pattern>` where the pattern is in your own command **self-matches and kills
+  your shell** — use `pkill -x <name>` or kill by PID. (c) a new-process-group
+  child **orphans on an EXTERNAL kill** (`timeout`/parent-kill), not on Ctrl+C —
+  don't `timeout` a real measure run.
 
-**Next steps (Phases A/B need the elevated Windows GPU shell = USER):**
-1. **[USER]** Elevated **Phase A** — locked P2-5:
-   `run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096` in admin pwsh; Ctrl+C
-   during a sample → expect `Aborting sweep` + `[cleanup] -rgc OK` + `sentinel
-   cleared`, lock released, no orphan bench. Validates the LOCKED abort + the
-   mid-sample orphan-cleanup. → runbook Phase A.
-2. **[USER]** Elevated **Phase B** — full grid sweep (~1h, 28 cells) →
-   `grid_collect.R --print` → sanity-check (igemm_sparse_4096:
-   1410→~44k, 1500→~47k, 1605→~50.5k dq-GFLOPS) → **close #135**. → runbook Phase B.
-3. Optional: **simplify/revert Route B** (the `CreateProcess` new-group + C#
-   P/Invoke) — proven non-firing for WSL; the renv bypass alone carries the
-   abort. Keep only if a mid-`system2` backstop is genuinely wanted (untested).
-4. **#152 convergence implementation** — Phase 2 (GPU-free: unified
-   `bench_all.yml` `regimes`, store columns, `bench_all_collect.R`) is
-   Claude-drivable; gated on #135 P2-5/P2-6 proving the locked foundation.
-   See `docs/convergence_152_design.md` phased plan.
+**Next steps:**
+1. **#152 convergence implementation** (now unblocked — the locked foundation is
+   proven). Phase 2 is GPU-free + Claude-drivable: unified `bench_all.yml`
+   `regimes` dim, store columns `(git_head, cell_id, regime)`,
+   `bench_all_collect.R`. See `docs/convergence_152_design.md` phased plan.
+2. Optional cleanup: **simplify/revert Route B** (the `CreateProcess` new-group +
+   C# P/Invoke in `run_grid_sweep.ps1`) — empirically non-firing for WSL; the
+   renv bypass alone carries the abort. Keep only if a mid-`system2` backstop is
+   genuinely wanted (untested). Low priority.
+3. Optional: **backfill the two thin top-clock cells** (`igemm_cpasync_4096`,
+   `igemm_sparse_4096` @1710) with a higher-attempt re-run if a firm above-1605
+   number is wanted for #128 OC showcase — but expect throttle to cap it.
 
 ---
 
