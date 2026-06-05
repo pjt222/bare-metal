@@ -23,30 +23,40 @@
 # three-tuple (git_head, clock_target_mhz, cell_id) — locked at this
 # Phase 2 commit and documented in grid_sweep_methodology.md.
 
-suppressPackageStartupMessages({
-  library(here)
-  library(fs)
-  library(cli)
-  library(data.table)
-  library(yaml)
-  library(jsonlite)
-})
+# Startup (library loads + LD_LIBRARY_PATH) runs under the SAME SIGINT
+# trap as main() below (#135 P2-5). With the orchestrator bypassing the
+# renv autoloader (Rscript --no-init-file + R_LIBS_USER), this ~2-3s
+# library-load is the ONLY pre-main window; a Ctrl+C here must also exit
+# 130 so the sweep aborts cleanly. Without this wrap a SIGINT during a
+# library() load halts R with exit 1, which run_grid_sweep.ps1 reads as
+# a cell failure and CONTINUES to the next clock group instead of
+# aborting (the bug P2-5 surfaced).
+tryCatch({
+  suppressPackageStartupMessages({
+    library(here)
+    library(fs)
+    library(cli)
+    library(data.table)
+    library(yaml)
+    library(jsonlite)
+  })
 
-# WSL CUDA libs on LD_LIBRARY_PATH so a fresh Rscript can resolve
-# nvidia-smi / the CUDA driver.
-local({
-  wsl_lib <- "/usr/lib/wsl/lib"
-  cur <- Sys.getenv("LD_LIBRARY_PATH")
-  if (dir_exists(wsl_lib) && !grepl(wsl_lib, cur, fixed = TRUE)) {
-    Sys.setenv(LD_LIBRARY_PATH = if (nzchar(cur))
-                                   paste(wsl_lib, cur, sep = ":")
-                                 else wsl_lib)
-  }
-})
+  # WSL CUDA libs on LD_LIBRARY_PATH so a fresh Rscript can resolve
+  # nvidia-smi / the CUDA driver.
+  local({
+    wsl_lib <- "/usr/lib/wsl/lib"
+    cur <- Sys.getenv("LD_LIBRARY_PATH")
+    if (dir_exists(wsl_lib) && !grepl(wsl_lib, cur, fixed = TRUE)) {
+      Sys.setenv(LD_LIBRARY_PATH = if (nzchar(cur))
+                                     paste(wsl_lib, cur, sep = ":")
+                                   else wsl_lib)
+    }
+  })
 
-# GPU/host state capture now lives in the cuasmR package (issue #134;
-# was source("scripts/bench/bench_meta.R")).
-suppressMessages(library(cuasmR))
+  # GPU/host state capture now lives in the cuasmR package (issue #134;
+  # was source("scripts/bench/bench_meta.R")).
+  suppressMessages(library(cuasmR))
+}, interrupt = function(c) quit(save = "no", status = 130L))
 
 # ----------------------------------------------------------------------
 # CLI parsing

@@ -124,6 +124,25 @@ $SpecWsl  = ConvertTo-WslPath $SpecAbs
 $JsonlDirAbs = Split-Path $JsonlAbs -Parent
 $JsonlWsl    = (ConvertTo-WslPath $JsonlDirAbs) + "/" + (Split-Path $JsonlAbs -Leaf)
 
+# Resolve the project's renv Linux library ONCE — for the child
+# autoloader bypass in New-WslRscriptArgs (#135 P2-5). The glob keeps
+# it R-version / distro agnostic; an empty result makes the bypass
+# fall back to plain Rscript (correct, just slower / renv-bootstrapped).
+$renvGlobArgs = @()
+if ($Distro) { $renvGlobArgs += @("-d", $Distro) }
+$renvGlobArgs += @("--cd", $RepoWsl, "--", "bash", "-c",
+                   "ls -d renv/library/*/*/x86_64-pc-linux-gnu 2>/dev/null | head -1")
+$RenvLibWsl = (& wsl.exe @renvGlobArgs | Select-Object -First 1)
+if ($RenvLibWsl) {
+  $RenvLibWsl = "$RenvLibWsl".Trim()
+  # Glob ran under --cd $RepoWsl, so it's repo-relative; make it
+  # absolute so R_LIBS_USER is unambiguous regardless of child cwd.
+  if ($RenvLibWsl -notmatch '^/') { $RenvLibWsl = "$RepoWsl/$RenvLibWsl" }
+  Write-Host "[renv] child autoloader bypass -> R_LIBS_USER=$RenvLibWsl" -ForegroundColor DarkGray
+} else {
+  Write-Host "[renv] lib glob empty -> children use default Rscript (renv-bootstrapped, slower)" -ForegroundColor Yellow
+}
+
 # ---------------------------------------------------------------------------
 # Stale sentinel handling
 # ---------------------------------------------------------------------------
@@ -160,49 +179,146 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
 public static class GridSweepCleanup {
   public static string SentinelPath = "";
   public static bool LockApplied = false;
   public static int ChildPid = 0;
   public static bool Done = false;
+  // Substring of the WSL-side cmdline for pkill'ing an orphaned kernel
+  // bench on cancel. Set from PowerShell to "<repoWsl>/kernels/". With
+  // Route B the child runs in a new process group and does NOT receive
+  // the console Ctrl+C, so the bench keeps running until killed here --
+  // without this it orphans and wedges CUDA (the known hazard).
+  public static string BenchKillPattern = "";
 
-  public static void KillChild() {
-    int pid = ChildPid;
-    if (pid > 0) {
-      try {
-        var p = Process.GetProcessById(pid);
-        // Kill(true) terminates the Windows process tree (.NET 6+).
-        p.Kill(true);
-        p.WaitForExit(3000);
-        Console.WriteLine("[cleanup] child PID " + pid + " killed (Windows tree)");
-      } catch (Exception ex) {
-        Console.WriteLine("[cleanup] child PID " + pid + " kill skipped: " + ex.Message);
-      }
-      ChildPid = 0;
+  // --- Win32 CreateProcess in a NEW PROCESS GROUP (#135 P2-5, Route B)
+  // A console Ctrl+C is a CTRL_C_EVENT broadcast to every process in the
+  // console's process GROUP. If wsl.exe shares our group, it + R + the
+  // bench all get the signal and die in ways that defeat a clean abort
+  // (R's system2 wait returns rc=0; the sweep reads "success" and
+  // continues). Launching wsl.exe with CREATE_NEW_PROCESS_GROUP disables
+  // Ctrl+C delivery to it, so ONLY pwsh receives CTRL_C_EVENT -> OnCancel
+  // fires and OWNS the abort (kill child tree + -rgc + sentinel),
+  // independent of the child exit code. The child shares this console
+  // (no CREATE_NEW_CONSOLE) so output still streams live.
+  const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+  const uint INFINITE = 0xFFFFFFFF;
+
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct STARTUPINFO {
+    public int cb;
+    public string lpReserved, lpDesktop, lpTitle;
+    public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public short wShowWindow, cbReserved2;
+    public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta,
+    bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool CloseHandle(IntPtr h);
+
+  // Quote one argument per the CommandLineToArgvW rules.
+  static string QuoteArg(string s) {
+    if (s.Length > 0 && s.IndexOfAny(new char[] { ' ', '\t', '"' }) < 0) return s;
+    var sb = new StringBuilder();
+    sb.Append('"');
+    int bs = 0;
+    foreach (char c in s) {
+      if (c == '\\') { bs++; }
+      else if (c == '"') { sb.Append('\\', bs * 2 + 1); sb.Append('"'); bs = 0; }
+      else { if (bs > 0) { sb.Append('\\', bs); bs = 0; } sb.Append(c); }
     }
+    sb.Append('\\', bs * 2);
+    sb.Append('"');
+    return sb.ToString();
+  }
+  public static string BuildCommandLine(string exe, string[] args) {
+    var sb = new StringBuilder(QuoteArg(exe));
+    foreach (var a in args) { sb.Append(' '); sb.Append(QuoteArg(a)); }
+    return sb.ToString();
+  }
 
-    // WSL2 Linux processes are children of init inside the WSL VM,
-    // NOT Windows children of wsl.exe. Process.Kill(tree=true) does
-    // not reach them. Issue an explicit pkill inside WSL targeting
-    // our script + the kernel bench binaries. Best-effort; runs even
-    // if Windows-side kill already cleaned up cleanly.
+  // Launch the command line (wsl.exe ...) in a new process group sharing
+  // this console; block until exit; return the exit code. Sets ChildPid
+  // for the cancel handler's KillChild.
+  public static int RunNewGroup(string commandLine) {
+    var si = new STARTUPINFO();
+    si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+    PROCESS_INFORMATION pi;
+    var cmd = new StringBuilder(commandLine);
+    bool ok = CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero,
+                            true, CREATE_NEW_PROCESS_GROUP, IntPtr.Zero, null, ref si, out pi);
+    if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(),
+                       "CreateProcess(NEW_PROCESS_GROUP) failed for: " + commandLine);
+    ChildPid = pi.dwProcessId;
+    try {
+      WaitForSingleObject(pi.hProcess, INFINITE);
+      uint code;
+      if (!GetExitCodeProcess(pi.hProcess, out code)) code = 1;
+      return unchecked((int)code);
+    } finally {
+      ChildPid = 0;
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+    }
+  }
+
+  static void WslPkill(string pattern) {
     try {
       var psi = new ProcessStartInfo("wsl.exe");
       psi.ArgumentList.Add("-e");
       psi.ArgumentList.Add("pkill");
       psi.ArgumentList.Add("-9");
       psi.ArgumentList.Add("-f");
-      psi.ArgumentList.Add("grid_measure.R");
+      psi.ArgumentList.Add(pattern);
       psi.UseShellExecute = false;
       psi.CreateNoWindow = true;
       psi.RedirectStandardOutput = true;
       psi.RedirectStandardError = true;
       var p = Process.Start(psi);
       p.WaitForExit(3000);
-      Console.WriteLine("[cleanup] WSL pkill grid_measure.R: exit " + p.ExitCode);
+      Console.WriteLine("[cleanup] WSL pkill -f '" + pattern + "': exit " + p.ExitCode);
     } catch (Exception ex) {
-      Console.WriteLine("[cleanup] WSL pkill failed: " + ex.Message);
+      Console.WriteLine("[cleanup] WSL pkill -f '" + pattern + "' failed: " + ex.Message);
     }
+  }
+
+  public static void KillChild() {
+    int pid = ChildPid;
+    // pid == 0 means no child is active -- normal completion, not a
+    // cancel. Do NOT pkill in that case: the broad bench pattern could
+    // hit a concurrent unrelated kernel bench. Only tear down when we
+    // are actually killing a live child (Ctrl+C / error mid-run).
+    if (pid <= 0) return;
+    try {
+      var p = Process.GetProcessById(pid);
+      // Kill(true) terminates the Windows process tree (.NET 6+).
+      p.Kill(true);
+      p.WaitForExit(3000);
+      Console.WriteLine("[cleanup] child PID " + pid + " killed (Windows tree)");
+    } catch (Exception ex) {
+      Console.WriteLine("[cleanup] child PID " + pid + " kill skipped: " + ex.Message);
+    }
+    ChildPid = 0;
+
+    // WSL2 Linux processes are children of init inside the WSL VM, NOT
+    // Windows children of wsl.exe -- Process.Kill(tree) does not reach
+    // them. pkill the script AND the kernel bench binary (the bench is a
+    // grandchild that, in the new-process-group regime, never saw the
+    // Ctrl+C and would otherwise spin and wedge CUDA). Best-effort.
+    WslPkill("grid_measure.R");
+    if (!string.IsNullOrEmpty(BenchKillPattern)) WslPkill(BenchKillPattern);
   }
 
   public static void Run() {
@@ -251,6 +367,11 @@ public static class GridSweepCleanup {
 "@ -ErrorAction Stop
 
 [GridSweepCleanup]::SentinelPath = $SentinelPath
+# Orphan-bench kill pattern for the cancel path (Route B): any process
+# whose WSL cmdline contains "<repo>/kernels/" — i.e. a running kernel
+# bench launched by the measurer. Killed on Ctrl+C so it cannot spin and
+# wedge CUDA after the measurer is gone.
+[GridSweepCleanup]::BenchKillPattern = "$RepoWsl/kernels/"
 [Console]::add_CancelKeyPress([ConsoleCancelEventHandler]([GridSweepCleanup]::OnCancel))
 
 $Script:LockApplied = $false
@@ -268,7 +389,21 @@ function Invoke-Cleanup {
 function New-WslRscriptArgs([string[]]$RscriptArgs) {
   $a = @()
   if ($Distro) { $a += @("-d", $Distro) }
-  $a += @("--cd", $RepoWsl, "--", "Rscript") + $RscriptArgs
+  # #135 P2-5: bypass the renv autoloader in the child. `.Rprofile ->
+  # renv/activate.R` costs ~26s/child ("dependency discovery") AND a
+  # Ctrl+C during that window halts R with exit 1, NOT 130 — which the
+  # sweep loop reads as a cell failure and CONTINUES instead of
+  # aborting. `--no-init-file` skips .Rprofile (keeps .Renviron);
+  # R_LIBS_USER points packages at the renv library directly, so the
+  # child reaches grid_measure.R's SIGINT trap in ~2-3s and every
+  # Ctrl+C yields 130. Empty glob -> plain Rscript (correct, slower).
+  if ($RenvLibWsl) {
+    $a += @("--cd", $RepoWsl, "--",
+            "env", "R_LIBS_USER=$RenvLibWsl",
+            "Rscript", "--no-init-file") + $RscriptArgs
+  } else {
+    $a += @("--cd", $RepoWsl, "--", "Rscript") + $RscriptArgs
+  }
   return ,$a
 }
 
@@ -278,19 +413,13 @@ function New-WslRscriptArgs([string[]]$RscriptArgs) {
 # matters for cancel-vs-failure handling in the sweep loop.
 function Invoke-WslChild([string[]]$WslArgs, [string]$Label) {
   Write-Host "[$Label] wsl $($WslArgs -join ' ')" -ForegroundColor DarkGray
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = "wsl.exe"
-  foreach ($a in $WslArgs) { $psi.ArgumentList.Add($a) | Out-Null }
-  $psi.UseShellExecute = $false
-  # Inherit console streams — no redirection. Output appears live.
-  $proc = [System.Diagnostics.Process]::Start($psi)
-  [GridSweepCleanup]::ChildPid = $proc.Id
-  try {
-    $proc.WaitForExit()
-  } finally {
-    [GridSweepCleanup]::ChildPid = 0
-  }
-  return $proc.ExitCode
+  # Route B (#135 P2-5): launch wsl.exe in a NEW PROCESS GROUP so a
+  # console Ctrl+C is NOT delivered to the child (it would otherwise make
+  # R's system2 wait return rc=0 and the sweep continue). Only pwsh gets
+  # CTRL_C_EVENT -> OnCancel owns the abort. RunNewGroup shares this
+  # console (live output), tracks ChildPid, and returns the exit code.
+  $cmd = [GridSweepCleanup]::BuildCommandLine("wsl.exe", $WslArgs)
+  return [GridSweepCleanup]::RunNewGroup($cmd)
 }
 
 # Capture child stdout (used for planner JSON parse).

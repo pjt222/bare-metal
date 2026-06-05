@@ -6,9 +6,18 @@
 > the host-side lock applies to the whole GPU incl. WSL CUDA.
 >
 > Repo: `D:\dev\p\bare-metal`. WSL Linux R: `/usr/local/bin/Rscript` 4.6.0.
-> Pre-flight already verified (planner parses 28 cells, no stale lock sentinel,
-> GPU unlocked P8). This file is session scratch — discard or fold into
-> CONTINUE_HERE when done.
+> **Pre-flight RE-VERIFIED 2026-06-05 @ HEAD `cc303a5`** (GPU-free, from WSL):
+> planner parses **28 cells / 7 kernels** (1605×7, 1710×6, native×6, 1500/1410/1200×3);
+> **0 already-done** at this HEAD (the May-27 partial was a different git_head, so the
+> sweep runs fresh); all 5 grid bench exes built; GPU unlocked (P8, 210 MHz, idle);
+> no stale `.LOCK_HELD` sentinel; the stale partial JSONL has been **archived** to
+> `grid_sweep_samples.20260527_partial.jsonl` (Pre-step below already done — skip it).
+> This file is session scratch — discard or fold into CONTINUE_HERE when done.
+>
+> **Design context:** the #152 convergence design is now resolved
+> ([`convergence_152_design.md`](convergence_152_design.md), [#152 comment](https://github.com/pjt222/bare-metal/issues/152)).
+> Phase 1 of that plan = **prove this locked foundation on the UNMODIFIED grid code**
+> = exactly Phases A + B below. Run these first; convergence implementation waits on them.
 
 ## North star (#152)
 
@@ -52,26 +61,56 @@ otherwise — except under `-NoLock`.)
 
 ---
 
-## Phase A — #135 P2-5: single-Ctrl+C abort re-test (~3 min)
+## Phase A — #135 P2-5: single-Ctrl+C abort re-test (~3 min) — **validates a new fix**
 
-Verifies the `246c961` fix: one Ctrl+C press aborts cleanly (was needing three).
+> **2026-06-05 — the prior P2-5 run FAILED** and exposed two real bugs, now
+> fixed (commit pending). This run validates the fix. Background:
+> 1. A Ctrl+C during the child's `renv` autoloader (~26s) halted R with **exit 1**
+>    (not 130), so the sweep logged "cell failed" and **continued** instead of
+>    aborting. **Fix:** the child now bypasses the renv autoloader
+>    (`Rscript --no-init-file` + `R_LIBS_USER`), reaching the measurer in ~3s and
+>    cutting ~20 min/sweep of renv tax.
+> 2. A console Ctrl+C is a **process-group** signal — it also hits R's `system2`
+>    bench wait, which then returns **rc=0** (the sweep reads "success" and
+>    continues). The child's exit code can't be trusted for abort. **Fix
+>    (Route B):** `wsl.exe` now launches in a **new process group**, so the
+>    Ctrl+C reaches **only pwsh** → its `CancelKeyPress` handler owns the abort
+>    (kills the child tree incl. the bench, runs `-rgc`, clears the sentinel),
+>    independent of the child exit code.
+>
+> The renv-bypass + new-group launch are **verified GPU-free** (`-DryRun`: C#
+> compiles, planner runs, 28 cells, exit code captured). The **Ctrl+C abort
+> itself can only be verified here** with a real console Ctrl+C — that is the
+> point of this Phase.
 
 ```powershell
 pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096
 ```
 
-- **Wait** for the first per-sample line of any clock group, then press **Ctrl+C ONCE**.
-- **Expect:** `Bench exited 130 (SIGINT)` → `Cell cancelled by user` → cleanup → exit.
+- **Wait** for the first **per-sample line** of any clock group (now ~3s in, not
+  ~26s), then press **Ctrl+C ONCE**.
+- **Expect (the new Route-B path):**
+  `[CancelKeyPress] Ctrl+C received -- running cleanup` →
+  `[cleanup] child PID ... killed` → `[cleanup] WSL pkill -f 'grid_measure.R'` →
+  `[cleanup] WSL pkill -f '.../kernels/'` →
+  `[cleanup] restoring default clock policy (-rgc)` → `[cleanup] -rgc OK` →
+  `[cleanup] sentinel cleared` → `[CancelKeyPress] exit 130 (SIGINT)`.
+  The whole sweep stops on the **first** press (does NOT advance to the next clock group).
 - **Verify no orphans + lock released:**
 
 ```powershell
-Get-Process Rscript -ErrorAction SilentlyContinue   # expect: nothing
-wsl -- pgrep -f grid_measure.R                       # expect: nothing
+Get-Process wsl -ErrorAction SilentlyContinue        # expect: nothing of ours
+wsl -- pgrep -f grid_measure.R                        # expect: nothing
+wsl -- pgrep -f /kernels/                             # expect: nothing (bench killed)
 nvidia-smi.exe --query-gpu=clocks.sm,pstate --format=csv,noheader  # expect P0/P8 boost, not pinned
+Test-Path D:\dev\p\bare-metal\scripts\probe\eval_logs\.LOCK_HELD    # expect: False
 ```
 
-- **If single press still needs multiple** → the fix is incomplete; stop and report (do not proceed to the full sweep). Note exactly how many presses + the last lines printed.
-- **Optional dry-run first** (no GPU, validates harness): add `-DryRun`.
+- **If `[CancelKeyPress]` does NOT appear, or the sweep continues to the next clock
+  group, or a bench keeps running** → the Route-B fix is incomplete; **stop, run
+  `nvidia-smi.exe -rgc`**, and report the exact lines printed + how many presses.
+  (This is blind-implemented pwsh P/Invoke; this Phase is its first real test.)
+- **Optional dry-run first** (no GPU, exercises the new launch path): add `-DryRun`.
 
 ---
 
