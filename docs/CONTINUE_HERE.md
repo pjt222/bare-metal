@@ -1,18 +1,101 @@
 # Session handoff
 
-> Last updated: 2026-06-04 (cont). **Five PRs merged to `main`** (HEAD
-> `51b1f5c`): #124 bench-all runner (#149, `85ee9d7`) + #148 cubin-name
-> realignment (#150, `2e753fb`, #148 CLOSED) + handoff (#151) + elevated-session
-> runbook (#153) + bench-doc cross-ref (#154). Epic **#124 stays open** (runner
-> shipped; publication-grade full run is the remaining deliverable). **#152
-> filed** — convergence epic: one tool, all kernels × {native and/or
-> locked-clock grid}. Dead branches `refactor/bench-driver` +
-> `feat/performance-regression` pruned (local + remote). **GPU recovered** (WSL
-> restarted; `nvidia-smi` works — earlier "wedged" note is stale). Combined
-> `main` re-verified: `make test` green, param cubins build via `make cubins`.
-> Tree clean, 0 open PRs. Elevated work is turnkey →
-> [`elevated_session_runbook.md`](elevated_session_runbook.md).
+> Last updated: 2026-06-05. **4 commits direct to `main`** (HEAD `4c820fa`,
+> tree clean, 0 open PRs): #152 convergence design RESOLVED (`cc303a5`,
+> `docs/convergence_152_design.md`, also posted as a #152 comment) + #135 P2-5
+> Ctrl+C abort root-caused & fixed (`1f4d9f7`/`1eac337`/`4c820fa`). **Both #135
+> and #152 stay OPEN.** P2-5 single-Ctrl+C abort is **VERIFIED** via the
+> non-elevated `-NoLock` self-test (Phase A0); the **load-bearing fix was the
+> renv-autoloader bypass** (Route A: R catches the SIGINT → exit 130 → sweep
+> breaks). The new-process-group "Route B" is a benign backstop that does NOT
+> fire (WSL forwards Ctrl+C to R regardless of the Windows process group).
+> **Next = elevated Phase A (locked P2-5) → Phase B (full grid sweep) → close
+> #135**, then #152 convergence implementation. Elevated work turnkey →
+> [`elevated_session_runbook.md`](elevated_session_runbook.md) (Phase A0 added).
 > Use WSL Linux R (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
+
+## ▶ SESSION — 2026-06-05 — #152 design resolved + #135 P2-5 abort fixed
+
+Picked up from the 2026-06-04 handoff. GPU reachable from WSL all session
+(`nvidia-smi` works, RTX 3070 Ti, idle P8). User directed: resolve #152 design,
+then prepare + run the elevated P2-5 test.
+
+**Done — #152 convergence design (`cc303a5`):**
+- Resolved all 5 design questions via a 16-agent workflow (MAP both halves +
+  cuasmR API → 3-spine design panel → per-design judge + adversarial
+  API-grounding + Q2×Q4 nesting attack → synthesis). Winner: **Spine A
+  extend-in-place / R-led** — `bench_all.R` gains a `regimes` dim, lock stays
+  outside R in a generalized `run_grid_sweep.ps1`. Doc
+  `docs/convergence_152_design.md`; posted as a #152 comment.
+- The adversarial pass **cracked Spine B on a real code fact**: `grid_measure.R:100`
+  resolves an omitted `regimes` to the FULL clock grid, NOT `[native]` — which
+  became the design's key Q1 rule (converged planner must implement the
+  `[native]` default explicitly). Epic stays OPEN (design only).
+
+**Done — #135 P2-5 single-Ctrl+C abort (`1f4d9f7`, `1eac337`, `4c820fa`):**
+- Ran P2-5 elevated → **FAILED** (each Ctrl+C just advanced to the next clock
+  group). Root-caused two bugs + fixed:
+  1. **renv window:** Ctrl+C during the child's ~26s renv autoloader halted R
+     with **exit 1** (not 130) → sweep read "cell failed" + continued. **Fix
+     (load-bearing):** child runs `Rscript --no-init-file` + `R_LIBS_USER=<renv
+     lib>` (glob-resolved, absolute) — no renv bootstrap; reaches the measurer
+     in ~3s; **−~20 min/sweep** renv tax. Applies to planner + measurer.
+  2. **`system2` rc=0:** a console Ctrl+C is a process-group signal that also
+     hits R's `system2` bench wait, which returns **rc=0** — child exit code
+     can't drive the abort (reproduced GPU-free with a fake `/bin/sleep`).
+     **Fix (Route B):** `wsl.exe` launches in a NEW PROCESS GROUP (Win32
+     `CreateProcess` P/Invoke in the C# block) so only pwsh gets Ctrl+C →
+     `CancelKeyPress` owns the abort. **Empirically Route B does NOT fire** for
+     WSL children — benign backstop, not the mechanism.
+  3. **orphan-cleanup gap (`4c820fa`):** `KillChild`'s guard skipped the
+     bench-`pkill` whenever `ChildPid==0` (= the Route-A path). A **mid-sample**
+     Ctrl+C → R `quit(130)` while its bench is mid-run → orphaned bench → wedged
+     CUDA. **Fix:** a `Cancelled` flag distinguishes clean completion (skip the
+     broad bench pkill so it can't hit a concurrent bench) from a cancel (pkill).
+- **VERIFIED (Phase A0, `-NoLock -OnlyCellId hgemm_16warp_2048`, throwaway
+  jsonl):** single Ctrl+C → clean abort via **Route A** (`Interrupted by user
+  (SIGINT)` → `Cell cancelled by user (R exit 130). Aborting sweep.`). No
+  `[CancelKeyPress]` line.
+- Verified GPU-free: renv-bypass measure to completion (7 valid native samples,
+  band-reject correct); `CreateProcess` new-group launch via `-DryRun` (C#
+  compiles, planner runs, 28 cells, exit captured); `KillChild` guard skips
+  pkill on clean completion.
+- Runbook updated: **Phase A0** non-elevated cancel self-test (the arbiter, zero
+  lock-stranding risk) added; expected output corrected to the real Route-A
+  path; Ctrl+Break recovery for the silent-no-op case.
+
+**Method / negative space:**
+- Adversarial verify + advisor caught **two ship-blockers**: the
+  `grid_measure.R:100` B-crack (drove the design rule) and the `system2` rc=0
+  (the exit-code-based abort doesn't work). The fix that *works* is the simple
+  one (renv bypass → Route A); the complex blind `CreateProcess` P/Invoke
+  (Route B) is proven non-firing — a simplification candidate.
+- **Traps hit this session (do not relearn):** (a) a `resolve #152` commit
+  SUBJECT auto-closed the epic → reopened; closing keywords fire from the
+  subject too, not just the `Closes` trailer. (b) `pkill -f <pattern>` where the
+  pattern is in your own command **self-matches and kills your shell** — use
+  `pkill -x <name>` or kill by PID. (c) a new-process-group child **orphans on
+  an EXTERNAL kill** (`timeout`/parent-kill), not on Ctrl+C — don't `timeout` a
+  real measure run.
+
+**Next steps (Phases A/B need the elevated Windows GPU shell = USER):**
+1. **[USER]** Elevated **Phase A** — locked P2-5:
+   `run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096` in admin pwsh; Ctrl+C
+   during a sample → expect `Aborting sweep` + `[cleanup] -rgc OK` + `sentinel
+   cleared`, lock released, no orphan bench. Validates the LOCKED abort + the
+   mid-sample orphan-cleanup. → runbook Phase A.
+2. **[USER]** Elevated **Phase B** — full grid sweep (~1h, 28 cells) →
+   `grid_collect.R --print` → sanity-check (igemm_sparse_4096:
+   1410→~44k, 1500→~47k, 1605→~50.5k dq-GFLOPS) → **close #135**. → runbook Phase B.
+3. Optional: **simplify/revert Route B** (the `CreateProcess` new-group + C#
+   P/Invoke) — proven non-firing for WSL; the renv bypass alone carries the
+   abort. Keep only if a mid-`system2` backstop is genuinely wanted (untested).
+4. **#152 convergence implementation** — Phase 2 (GPU-free: unified
+   `bench_all.yml` `regimes`, store columns, `bench_all_collect.R`) is
+   Claude-drivable; gated on #135 P2-5/P2-6 proving the locked foundation.
+   See `docs/convergence_152_design.md` phased plan.
+
+---
 
 ## ▶ SESSION — 2026-06-04 (cont) — #124 + #148 shipped & merged
 
