@@ -73,10 +73,18 @@ pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 `
   -Jsonl $env:TEMP\p25_selftest.jsonl
 ```
 
-- Wait for the first **`sample 1/7`** line, press **Ctrl+C ONCE**.
-- **PASS:** `[CancelKeyPress] Ctrl+C received` → `[cleanup] child PID … killed`
-  → `WSL pkill … grid_measure.R` → `WSL pkill … /kernels/` →
-  `[CancelKeyPress] exit 130` — and the script **stops** (no `[2/28]`).
+- Wait for a **`sample N/7`** line, press **Ctrl+C ONCE**.
+- **PASS (verified 2026-06-05 — Route A, renv-bypass enabled):**
+  ```
+  ^CInterrupted by user (SIGINT)
+  WARNING: Cell cancelled by user (R exit 130). Aborting sweep.
+  Sweep aborted on user cancel.
+  ```
+  The sweep **stops** on the first press (no `[2/28]`). Mechanism: the child
+  reaches the interruptible measurer in ~3s (no renv window), R's top-level
+  trap catches the SIGINT → `quit(130)` → pwsh breaks the sweep. (The Route-B
+  `[CancelKeyPress]` path is a benign backstop and normally does NOT fire —
+  WSL delivers the Ctrl+C to R regardless of the Windows process group.)
 - **Verify clean:** `wsl -- pgrep -f /kernels/` → nothing; `wsl -- pgrep -f grid_measure.R` → nothing.
 - **FAIL (silent no-op):** if Ctrl+C does **nothing** (no `[CancelKeyPress]`, sample
   lines keep printing), the new process group is shielding the child and the
@@ -104,58 +112,48 @@ otherwise — except under `-NoLock`.)
 
 ## Phase A — #135 P2-5: single-Ctrl+C abort re-test (~3 min) — **validates a new fix**
 
-> **2026-06-05 — the prior P2-5 run FAILED** and exposed two real bugs, now
-> fixed (commit pending). This run validates the fix. Background:
-> 1. A Ctrl+C during the child's `renv` autoloader (~26s) halted R with **exit 1**
->    (not 130), so the sweep logged "cell failed" and **continued** instead of
->    aborting. **Fix:** the child now bypasses the renv autoloader
->    (`Rscript --no-init-file` + `R_LIBS_USER`), reaching the measurer in ~3s and
->    cutting ~20 min/sweep of renv tax.
-> 2. A console Ctrl+C is a **process-group** signal — it also hits R's `system2`
->    bench wait, which then returns **rc=0** (the sweep reads "success" and
->    continues). The child's exit code can't be trusted for abort. **Fix
->    (Route B):** `wsl.exe` now launches in a **new process group**, so the
->    Ctrl+C reaches **only pwsh** → its `CancelKeyPress` handler owns the abort
->    (kills the child tree incl. the bench, runs `-rgc`, clears the sentinel),
->    independent of the child exit code.
->
-> The renv-bypass + new-group launch are **verified GPU-free** (`-DryRun`: C#
-> compiles, planner runs, 28 cells, exit code captured). The **Ctrl+C abort
-> itself can only be verified here** with a real console Ctrl+C — that is the
-> point of this Phase.
+> **2026-06-05 — the abort itself is already VERIFIED** by Phase A0 (`-NoLock`,
+> single Ctrl+C → clean abort via Route A; the renv bypass was the load-bearing
+> fix). This elevated Phase only confirms the **locked** variant: that the same
+> abort also runs `-rgc` and clears the sentinel so the GPU is left unlocked.
+> Background on the two bugs P2-5 exposed + their fixes is in
+> `docs/convergence_152_design.md` (open-risks) and the commit
+> `grid-sweep: robust single-Ctrl+C abort`.
 
 ```powershell
 pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 -OnlyCellId igemm_sparse_4096
 ```
 
-- **Wait** for the first **per-sample line** of any clock group (now ~3s in, not
-  ~26s), then press **Ctrl+C ONCE**.
-- **Expect (the new Route-B path):**
-  `[CancelKeyPress] Ctrl+C received -- running cleanup` →
-  `[cleanup] child PID ... killed` → `[cleanup] WSL pkill -f 'grid_measure.R'` →
-  `[cleanup] WSL pkill -f '.../kernels/'` →
-  `[cleanup] restoring default clock policy (-rgc)` → `[cleanup] -rgc OK` →
-  `[cleanup] sentinel cleared` → `[CancelKeyPress] exit 130 (SIGINT)`.
-  The whole sweep stops on the **first** press (does NOT advance to the next clock group).
+- **Wait** for a **per-sample line** of any locked group (now ~3s in, not ~26s),
+  then press **Ctrl+C ONCE**.
+- **Expect (Route A — as seen in Phase A0, plus the lock release):**
+  ```
+  ^CInterrupted by user (SIGINT)
+  WARNING: Cell cancelled by user (R exit 130). Aborting sweep.
+  Sweep aborted on user cancel.
+  [cleanup] restoring default clock policy (-rgc)...
+  [cleanup] -rgc OK
+  [cleanup] sentinel cleared
+  ```
+  The sweep stops on the **first** press (no advance to the next clock group),
+  and the `finally` cleanup releases the lock. (`[CancelKeyPress]` lines are a
+  benign backstop and normally do NOT appear.)
 - **Verify no orphans + lock released:**
 
 ```powershell
-Get-Process wsl -ErrorAction SilentlyContinue        # expect: nothing of ours
 wsl -- pgrep -f grid_measure.R                        # expect: nothing
 wsl -- pgrep -f /kernels/                             # expect: nothing (bench killed)
 nvidia-smi.exe --query-gpu=clocks.sm,pstate --format=csv,noheader  # expect P0/P8 boost, not pinned
 Test-Path D:\dev\p\bare-metal\scripts\probe\eval_logs\.LOCK_HELD    # expect: False
 ```
 
-- **If `[CancelKeyPress]` does NOT appear, or the sweep continues to the next clock
-  group, or a bench keeps running** → the Route-B fix is incomplete. Note that
-  Ctrl+C is now a **silent no-op** in this failure mode (the new process group
-  shields the child), so to stop: press **Ctrl+Break** (reaches the new-group
-  child) or close the window. **Then immediately `nvidia-smi.exe -rgc`** (a lock
-  may be held), `wsl -- pkill -9 -f /kernels/`, `wsl -- pkill -9 -f grid_measure.R`,
-  and check `Test-Path …\.LOCK_HELD`. Report the exact lines + press count.
-  (Phase A0 should have caught this already, risk-free — run it first.)
-- **Optional dry-run first** (no GPU, exercises the new launch path): add `-DryRun`.
+- **If the sweep continues to the next clock group, or `-rgc OK` / `sentinel
+  cleared` do NOT appear, or `.LOCK_HELD` is True / the clock stays pinned** →
+  the locked abort is incomplete. **Immediately `nvidia-smi.exe -rgc`**, then
+  `wsl -- pkill -9 -f /kernels/`, `wsl -- pkill -9 -f grid_measure.R`, and
+  re-check `.LOCK_HELD`. Report the exact lines. (If a press is ever a no-op,
+  **Ctrl+Break** reaches the child.)
+- **Optional dry-run first** (no GPU, exercises the launch path): add `-DryRun`.
 
 ---
 

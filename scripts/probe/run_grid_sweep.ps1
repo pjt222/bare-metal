@@ -187,6 +187,11 @@ public static class GridSweepCleanup {
   public static bool LockApplied = false;
   public static int ChildPid = 0;
   public static bool Done = false;
+  // Set true on any cancel (CancelKeyPress, or pwsh seeing the child exit
+  // 130). Distinguishes a clean completion (skip the bench pkill so it
+  // cannot hit a concurrent unrelated bench) from a cancel, where we MUST
+  // pkill even if R already exited 130 mid-sample and orphaned its bench.
+  public static bool Cancelled = false;
   // Substring of the WSL-side cmdline for pkill'ing an orphaned kernel
   // bench on cancel. Set from PowerShell to "<repoWsl>/kernels/". With
   // Route B the child runs in a new process group and does NOT receive
@@ -296,27 +301,27 @@ public static class GridSweepCleanup {
 
   public static void KillChild() {
     int pid = ChildPid;
-    // pid == 0 means no child is active -- normal completion, not a
-    // cancel. Do NOT pkill in that case: the broad bench pattern could
-    // hit a concurrent unrelated kernel bench. Only tear down when we
-    // are actually killing a live child (Ctrl+C / error mid-run).
-    if (pid <= 0) return;
-    try {
-      var p = Process.GetProcessById(pid);
-      // Kill(true) terminates the Windows process tree (.NET 6+).
-      p.Kill(true);
-      p.WaitForExit(3000);
-      Console.WriteLine("[cleanup] child PID " + pid + " killed (Windows tree)");
-    } catch (Exception ex) {
-      Console.WriteLine("[cleanup] child PID " + pid + " kill skipped: " + ex.Message);
+    // Clean completion (no active child AND not a cancel): skip entirely
+    // so the broad bench pattern cannot hit a concurrent unrelated bench.
+    if (pid <= 0 && !Cancelled) return;
+    if (pid > 0) {
+      try {
+        var p = Process.GetProcessById(pid);
+        // Kill(true) terminates the Windows process tree (.NET 6+).
+        p.Kill(true);
+        p.WaitForExit(3000);
+        Console.WriteLine("[cleanup] child PID " + pid + " killed (Windows tree)");
+      } catch (Exception ex) {
+        Console.WriteLine("[cleanup] child PID " + pid + " kill skipped: " + ex.Message);
+      }
+      ChildPid = 0;
     }
-    ChildPid = 0;
 
-    // WSL2 Linux processes are children of init inside the WSL VM, NOT
-    // Windows children of wsl.exe -- Process.Kill(tree) does not reach
-    // them. pkill the script AND the kernel bench binary (the bench is a
-    // grandchild that, in the new-process-group regime, never saw the
-    // Ctrl+C and would otherwise spin and wedge CUDA). Best-effort.
+    // On a cancel, pkill the WSL-side script AND the kernel bench binary.
+    // WSL2 Linux processes are children of init inside the VM, NOT Windows
+    // children of wsl.exe -- Process.Kill(tree) does not reach them. This
+    // runs even when R already exited 130 mid-sample (pid==0 here) and
+    // left its bench orphaned, which would otherwise spin and wedge CUDA.
     WslPkill("grid_measure.R");
     if (!string.IsNullOrEmpty(BenchKillPattern)) WslPkill(BenchKillPattern);
   }
@@ -355,6 +360,7 @@ public static class GridSweepCleanup {
 
   public static void OnCancel(object sender, ConsoleCancelEventArgs e) {
     e.Cancel = true;
+    Cancelled = true;
     Console.WriteLine();
     Console.WriteLine("[CancelKeyPress] Ctrl+C received -- running cleanup");
     try { Run(); } catch (Exception ex) {
@@ -581,10 +587,13 @@ try {
       $cellExit = Invoke-WslChild (New-WslRscriptArgs $measureArgs) "measure"
 
       if ($cellExit -eq 130) {
-        # R-side SIGINT trap. User pressed Ctrl+C; the console signal
-        # reached the foreground child (wsl/R) before pwsh's C# handler.
-        # Abort the sweep cleanly — do NOT continue to the next cell.
+        # R-side SIGINT trap (Route A). User pressed Ctrl+C; R caught it
+        # and exited 130. Abort the sweep cleanly — do NOT continue. Flag
+        # the cancel so the finally's KillChild still pkills a bench R may
+        # have orphaned if the press landed mid-sample (else it spins and
+        # wedges CUDA).
         Write-Warning "Cell cancelled by user (R exit 130). Aborting sweep."
+        [GridSweepCleanup]::Cancelled = $true
         $cancelled = $true
         break groupLoop
       }
