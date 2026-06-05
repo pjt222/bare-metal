@@ -53,6 +53,47 @@ mv scripts/probe/eval_logs/grid_sweep_samples.jsonl \
    scripts/probe/eval_logs/grid_sweep_samples.20260527_partial.jsonl
 ```
 
+## Phase A0 — non-elevated cancel self-test (run FIRST, in a NORMAL pwsh) (~2 min)
+
+> **Do this before opening the admin shell.** `-NoLock` runs the **real**
+> measurement (a real child to interrupt) but applies **no `-lgc`** and **skips
+> the elevation assert** — so it exercises the entire new Route-B cancel path
+> (`CreateProcess` new-group → `CancelKeyPress` → `KillChild` + bench `pkill` →
+> exit 130) with **zero lock-stranding risk**, no admin. This is the actual
+> arbiter of "does single-Ctrl+C abort now". If it passes, the locked Phase A
+> differs only by Apply-Lock/`-rgc` (trivial). Use a **throwaway `-Jsonl`** so
+> test rows don't land in the real store at this `git_head` (the P2-6 resume
+> would treat them as already-done). Pick the **cheap** cell (hgemm 2048, no
+> throttle/heat).
+
+```powershell
+# NORMAL (non-admin) PowerShell:
+pwsh -File D:\dev\p\bare-metal\scripts\probe\run_grid_sweep.ps1 `
+  -NoLock -OnlyCellId hgemm_16warp_2048 `
+  -Jsonl $env:TEMP\p25_selftest.jsonl
+```
+
+- Wait for the first **`sample 1/7`** line, press **Ctrl+C ONCE**.
+- **PASS:** `[CancelKeyPress] Ctrl+C received` → `[cleanup] child PID … killed`
+  → `WSL pkill … grid_measure.R` → `WSL pkill … /kernels/` →
+  `[CancelKeyPress] exit 130` — and the script **stops** (no `[2/28]`).
+- **Verify clean:** `wsl -- pgrep -f /kernels/` → nothing; `wsl -- pgrep -f grid_measure.R` → nothing.
+- **FAIL (silent no-op):** if Ctrl+C does **nothing** (no `[CancelKeyPress]`, sample
+  lines keep printing), the new process group is shielding the child and the
+  cancel mechanism is still broken. **Recovery:** the child runs in its own group,
+  so **Ctrl+Break** (not Ctrl+C) reaches it — press that, or close the window;
+  then `wsl -- pkill -9 -f /kernels/` and `wsl -- pkill -9 -f grid_measure.R`.
+  No GPU lock was applied (`-NoLock`), so nothing to `-rgc`. Report the lines.
+- Throwaway store: `Remove-Item $env:TEMP\p25_selftest.jsonl` after.
+
+Only proceed to the elevated phases once Phase A0 aborts cleanly on one press.
+
+> **renv-bypass + measurement are already verified** (2026-06-05, GPU-free + a
+> `-NoLock` run to completion: 7 valid native samples, band-reject correct). A0
+> isolates the one remaining unknown: the console-Ctrl+C → CancelKeyPress abort.
+
+---
+
 ## Open the elevated shell
 
 Start menu → type "PowerShell" → right-click → **Run as administrator**.
@@ -107,9 +148,13 @@ Test-Path D:\dev\p\bare-metal\scripts\probe\eval_logs\.LOCK_HELD    # expect: Fa
 ```
 
 - **If `[CancelKeyPress]` does NOT appear, or the sweep continues to the next clock
-  group, or a bench keeps running** → the Route-B fix is incomplete; **stop, run
-  `nvidia-smi.exe -rgc`**, and report the exact lines printed + how many presses.
-  (This is blind-implemented pwsh P/Invoke; this Phase is its first real test.)
+  group, or a bench keeps running** → the Route-B fix is incomplete. Note that
+  Ctrl+C is now a **silent no-op** in this failure mode (the new process group
+  shields the child), so to stop: press **Ctrl+Break** (reaches the new-group
+  child) or close the window. **Then immediately `nvidia-smi.exe -rgc`** (a lock
+  may be held), `wsl -- pkill -9 -f /kernels/`, `wsl -- pkill -9 -f grid_measure.R`,
+  and check `Test-Path …\.LOCK_HELD`. Report the exact lines + press count.
+  (Phase A0 should have caught this already, risk-free — run it first.)
 - **Optional dry-run first** (no GPU, exercises the new launch path): add `-DryRun`.
 
 ---
