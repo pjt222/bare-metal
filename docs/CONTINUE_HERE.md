@@ -1,6 +1,14 @@
 # Session handoff
 
-> Last updated: 2026-06-05 (eve). **#135 CLOSED — P2-5 abort fixed + P2-6 full
+> Last updated: 2026-07-24. **This session did NOT touch bare-metal code — it ran a
+> NVIDIA/skills gap analysis and consolidated the outcome into agent-almanac** (report
+> PR pjt222/agent-almanac#422; skill epic agent-almanac#421 (children #413–420);
+> governance epic agent-almanac#429 (children #423–428). NVIDIA feature-request PR
+> **parked** pending user review. The GPU
+> kernel queue is unchanged — **#152 convergence implementation remains the pending
+> bare-metal next-step**. See the 2026-07-24 session entry below.
+>
+> Prior (2026-06-05, eve). **#135 CLOSED — P2-5 abort fixed + P2-6 full
 > grid sweep done.** 5 commits direct to `main` (HEAD `35c5057`, tree clean, 0
 > open PRs): #152 design RESOLVED (`cc303a5`) + #135 P2-5 abort fix
 > (`1f4d9f7`/`1eac337`/`4c820fa`) + handoff (`35c5057`). **Elevated run
@@ -16,6 +24,61 @@
 > `close #135` in the `35c5057` body auto-closed #135 (keyword trap, 3rd bite
 > this session — memory hardened); harmless, work was done. Use WSL Linux R
 > (`/usr/local/bin/Rscript` 4.6.0), not Windows Rscript.exe.
+
+## ▶ SESSION — 2026-07-24 — NVIDIA/skills gap analysis → agent-almanac consolidation
+
+Non-kernel session. User redirected from the #152 queue to research NVIDIA's
+official Agent Skills repo (`github.com/nvidia/skills`) and gap-analyse it against
+our skill sets. **No bare-metal code touched; tree clean on `main`.** All
+**agent-almanac** deliverables landed (`pjt222/agent-almanac`, our single skill
+repo); the NVIDIA feature-request is **parked**, not landed (see below).
+
+**Done (in agent-almanac, not bare-metal):**
+- 20-agent adversarially-verified gap analysis (NVIDIA 321 skills vs agent-almanac 369
+  vs the bare-metal GA104 SASS domain). Report → **PR agent-almanac#422**
+  (`docs/investigations/nvidia-skills-gap-analysis.md`, CI green). Key finding: a clean
+  abstraction ladder — NVIDIA = library / tile-DSL + SASS *read*; almanac = SASS-stall
+  *read*; **bare-metal alone owns rung 1 = SASS/cubin *authoring*** (currently docs +
+  `cuasmR` only, unpackaged).
+- **Skill-packaging epic agent-almanac#421** + 8 children (#413–420): package the GA104 SASS/CUDA
+  domain as `gpu-optimization` skills. P0 = `hand-edit-sass-cuasm` (#413),
+  `encode-ampere-control-codes` (#414).
+- **Governance-adoption epic agent-almanac#429** + 6 children (#423–428): borrow NVIDIA controls
+  (content-security self-gate P0 #423, evals #424, dedup #425, slim skill-card #426,
+  allowed-tools lint #427, SHA manifest #428) **layered on** almanac's richer body
+  contract, not traded for it.
+- Memory added: `reference_nvidia_skills`, `project_baremetal_skill_packaging`.
+
+**Parked / awaiting user:**
+- **NVIDIA feature-request PR** — a direct skill PR into `nvidia/skills` is **blocked**:
+  catalog onboarding requires the source repo be under an NVIDIA-owned GitHub org
+  (`pjt222/` fails), plus a maintainer-run internal IP review and DCO sign-off
+  (verified this session against nvidia/skills `CONTRIBUTING.md` + `PULL_REQUEST_TEMPLATE.md`
+  + `external-contributors.yml` — not covered by report PR agent-almanac#422). The only
+  viable "enhance" path is a Feature-Request issue proposing NVIDIA author the missing
+  cuTile→SASS rung. Draft written, **NOT posted** — user is reviewing. Draft lives in the
+  session scratchpad as `nvidia_feature_request_DRAFT.md`.
+
+**Working model (confirmed by user):** agent-almanac is the single skill repo and
+**implements** the skills itself; bare-metal only **reports** (issues filed) + **consumes**
+(the `.claude/skills` symlink farm). NVIDIA skills are **referenced**
+(`npx skills add nvidia/skills`), never copied into either repo.
+
+**Method note (negative space):** the workflow's verify phase re-checked 12
+high-severity/absolute seed claims and qualified 9 to PARTIAL (0 fully refuted) — e.g.
+NVIDIA *does* read SASS diagnostically
+(tilegym `ir-dump-guide.md`, even sm_120), *does* clock-lock (`nvidia-smi -lgc`), and
+agent-almanac is *not* eval-less (`tests/scenarios/`, 30 scenarios). Trust the report's
+corrected framing over the seed.
+
+**Next steps:**
+1. **[USER]** Review + decide the NVIDIA feature-request draft (post as-is / edit / drop).
+2. **[USER]** Merge report PR agent-almanac#422 (CI green) when ready.
+3. Skill implementation happens in **agent-almanac sessions** (epics agent-almanac#421, #429) — not here.
+4. Unchanged bare-metal kernel next-step: **#152 convergence implementation** (GPU-free,
+   Claude-drivable; see `docs/convergence_152_design.md`).
+
+---
 
 ## ▶ SESSION — 2026-06-05 — #152 design resolved + #135 P2-5 abort fixed
 
