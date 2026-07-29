@@ -32,11 +32,43 @@
 #               first GPU bench-all run confirms it. A parse-fail on an
 #               unverified entry is a HINT bug to fix here, NOT a real
 #               kernel failure -- do not read it as one.
+#   regimes     clock regimes worth measuring this config at: a list whose
+#               entries are `native` (no host-side lock) or an integer MHz
+#               target an elevated `nvidia-smi.exe -lgc M,M` is holding.
+#               OMITTING it means [native] -- NOT the full `clocks` grid.
+#               (grid_sweep.yml's loader defaults an omitted `regimes` to
+#               the whole grid; that is correct for a 7-cell sweep spec and
+#               wrong here, where it would silently multiply ~48 exes
+#               across 6 clocks.) Ignored + warned on a measurable:false or
+#               run:false entry -- those always run once-native, because a
+#               clock band can only gate a parseable throughput number.
+#   n_samples   per-config override of defaults.n_samples.
+#   warmup      per-config override of defaults.warmup.
+#   band_mhz    per-config override of defaults.band_mhz.
 #   note        free text (carried into the report).
 #
 # Seeds: the 5 baselined kernels (data/baselines.json) + grid_sweep.yml
 # are reproduced verbatim and marked verified: true. The rest are mapped
 # from each bench's argv parsing + throughput printf (mapping pass #124).
+
+# Sweep defaults, merged from grid_sweep.yml (#152 Q1). Overridable per
+# kernel.
+defaults:
+  # n_samples 7 comes from grid_sweep.yml and is now the corpus-wide
+  # default, RAISING bench_all's previous built-in of 5. Consequence: a
+  # plain `make bench-all` collects 7 valid samples per config instead of
+  # 5, so it takes longer and more marginal configs land in `degraded`.
+  # Precedence is per-kernel `n_samples` > `--min-valid` > this > 5, so
+  # `--min-valid 5` restores the old pass exactly.
+  n_samples: 7
+  # warmup is carried for the locked regimes (Phase 3/4) and is NOT yet
+  # consumed by bench_all's retry loop, which relies on collect_valid_samples.
+  warmup: 20
+  band_mhz: 30        # two-sided clock-band tolerance; locked regimes only
+
+# Fallback clock list. A kernel opts in explicitly by writing
+# `regimes: <clocks>`; it is NEVER applied implicitly.
+clocks: [1200, 1410, 1500, 1605, 1710, native]
 
 kernels:
   # ---------------- GEMM: hgemm ----------------
@@ -45,14 +77,20 @@ kernels:
     args: [2048, 2048, 2048]
     match: "hgemm_16warp (128x128 2blk/SM)"
     verified: true
-    note: "baselines.json 31789 GFLOPS"
+    regimes: [native, 1605, 1710]
+    note: "baselines.json 29174 GFLOPS @ clock_lock 1605 (#156). Boost-unstable:
+           its native median is 0.884 of the retired native baseline, so `native`
+           is kept here for diagnosis (#158), NOT because it is gate-fair."
 
   - id: hgemm_16warp_4096
     exe: kernels/gemm/hgemm/bench
     args: [4096, 4096, 4096]
     match: "hgemm_16warp (128x128 2blk/SM)"
     verified: true
-    note: "baselines.json 30397 GFLOPS"
+    regimes: [native, 1605, 1710]
+    note: "baselines.json 30401 GFLOPS @ clock_lock 1605 (#156). Boost-unstable:
+           native median 0.898 of the retired native baseline, and SLOWER at a
+           higher clock with no throttle flag (#158). `native` is diagnostic."
 
   - id: hgemm_aligned_4096
     exe: kernels/gemm/hgemm/bench_aligned
@@ -102,7 +140,9 @@ kernels:
     match: "igemm_cpasync"
     value_label: "TOPS"
     verified: true
-    note: "baselines.json 20227 TOPS (cp.async dbuf)"
+    regimes: [1200, 1410, 1500, 1605, 1710, native]
+    note: "baselines.json 20227 TOPS (cp.async dbuf). Throttles readily at native
+           boost -- the 2026-06-05 grid rejected 7/7 native samples on SwPowerCap."
 
   - id: igemm_sparse_2048
     exe: kernels/gemm/igemm/bench_sparse
@@ -110,6 +150,7 @@ kernels:
     match: "igemm_sparse_tiled"
     value_label: "dense-equiv GFLOPS"
     verified: true
+    regimes: [1200, 1410, 1500, 1605, 1710, native]
     note: "baselines.json 36892 dense-equiv GFLOPS"
 
   - id: igemm_sparse_4096
@@ -118,7 +159,12 @@ kernels:
     match: "igemm_sparse_tiled"
     value_label: "dense-equiv GFLOPS"
     verified: true
-    note: "power-bound: throttles at native boost (expected degraded/failed here). Fair number is 50497 @ -lgc 1605 -- use run_locked_eval.ps1"
+    regimes: [1200, 1410, 1500, 1605, 1710]
+    # Native intentionally omitted: power-bound at native boost, every
+    # sample throttles. This is the ONE config whose regime list omits
+    # native -- it has nothing diagnostic to say there, unlike hgemm.
+    note: "power-bound: draws >150 W, throttles at native boost. Fair number is
+           50497 dense-equiv GFLOPS @ clock_lock 1605 (data/baselines.json)."
 
   - id: igemm_sparse_persistent_512
     exe: kernels/gemm/igemm/bench_persistent
@@ -155,7 +201,10 @@ kernels:
     args: [1024, 8, 8]
     match: "flash_attn_br16_regpv"
     verified: true
-    note: "baselines.json 7152 GFLOPS (seq=1024 b=8 h=8)"
+    regimes: [native, 1605, 1710]
+    note: "baselines.json 7152 GFLOPS (seq=1024 b=8 h=8). Wide native tolerance
+           (0.30) there because a short bench cannot reach the boost bin; the
+           locked regimes are the way to narrow it (#125)."
 
   - id: flash_attn_fused
     exe: kernels/attention/flash_attention/bench_fused
@@ -259,6 +308,7 @@ kernels:
     match: "Implicit (single kern)"
     section: "SD 64"
     verified: true
+    regimes: [native, 1605]
     note: "baselines.json 7150 GFLOPS (SD 64x64 Cin=Cout=320)"
 
   - id: conv2d_im2col

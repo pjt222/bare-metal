@@ -41,11 +41,23 @@
 # a `failed` there means "the default args were probably wrong", NOT a real
 # kernel failure. Never read the buckets as the same kind of failure.
 #
+# REGIMES (#152 Phase 2). Each config also carries a set of clock
+# `regimes` -- "native" (no host-side lock) and/or integer MHz targets an
+# elevated `nvidia-smi.exe -lgc` is holding. A config that declares none
+# plans `[native]`, and a `measurable: false` / `run: false` config runs
+# ONCE-NATIVE whatever it declares (a clock band can only gate a
+# parseable number). The planner, the store columns and the collector are
+# regime-aware; APPLYING a lock is deliberately not R's job -- the lock
+# lifecycle lives in the pwsh orchestrator, outside R, which is what makes
+# a Ctrl+C mid-retry safe by construction. Until Phase 3 lands `--regime`,
+# this runner measures the native regime and reports the rest as deferred.
+#
 # Usage:
-#   Rscript scripts/bench/bench_all.R                  # full corpus
-#   Rscript scripts/bench/bench_all.R --list           # plan only, no GPU
+#   Rscript scripts/bench/bench_all.R                  # full corpus, native
+#   Rscript scripts/bench/bench_all.R --list           # cell plan, no GPU
 #   Rscript scripts/bench/bench_all.R --only hgemm_16warp_2048
 #   Rscript scripts/bench/bench_all.R --min-valid 3 --max-attempts 10
+#   Rscript scripts/bench/bench_all_collect.R --print  # JSONL -> RDS rollup
 
 suppressPackageStartupMessages({
   library(jsonlite)
@@ -80,6 +92,15 @@ REPO_ROOT <- {
 
 DEFAULT_SPEC   <- file.path(REPO_ROOT, "scripts", "bench", "bench_all.yml")
 BASELINES_PATH <- file.path(REPO_ROOT, "data", "baselines.json")
+
+# Sample target when neither --min-valid nor the spec's defaults$n_samples
+# says otherwise. This is the pre-#152 built-in.
+MIN_VALID_FALLBACK <- 5L
+
+# The cell a caller that predates #152 implies. Native, no band -- which
+# is the pre-#152 behaviour exactly.
+NATIVE_CELL <- list(regime = "native", clock_target_mhz = NA_integer_,
+                    band_lo = NA_integer_, band_hi = NA_integer_)
 
 # Project-wide default fairness gate, shared with the regression gate:
 # reject any sample whose pre/post GPU state shows a non-idle throttle.
@@ -127,6 +148,155 @@ exe_for_src <- function(src) sub("\\.cu$", "", src)
 #' "attention_cross_attention_bench_v2".
 auto_id <- function(exe) gsub("[/]", "_", sub("^kernels/", "", exe))
 
+# ----------------------------------------------------------------------
+# Regimes (#152 Phase 2). A *regime* is the clock the measurement runs
+# at: the string "native" (no host-side lock) or an integer MHz that an
+# elevated `nvidia-smi.exe -lgc M,M` is holding. R never applies or
+# releases a lock -- that lifecycle is owned by the pwsh orchestrator
+# outside R (design Q2). R only records which regime it was told it is
+# in and gates samples against the matching clock band.
+# ----------------------------------------------------------------------
+
+#' Normalise one regime token to an integer clock target.
+#'
+#' "native" (or NULL/NA) -> NA_integer_; an int-ish MHz in [100,5000] ->
+#' integer. Anything else is a spec bug and stops. Same contract as
+#' grid_measure.R's normalise_clock so the two specs can merge (Q1).
+normalise_clock <- function(x) {
+  if (is.null(x) || length(x) == 0L) return(NA_integer_)
+  if (length(x) > 1L) stop("normalise_clock: expected one value, got ", length(x))
+  if (is.character(x) && identical(tolower(x), "native")) return(NA_integer_)
+  if (is.na(x)) return(NA_integer_)
+  xi <- suppressWarnings(as.integer(x))
+  if (is.na(xi) || xi < 100L || xi > 5000L)
+    stop(sprintf("invalid regime/clock value: %s", as.character(x)))
+  xi
+}
+
+#' Printable label for a clock target. NA -> "native".
+regime_label <- function(clock_target_mhz) {
+  if (is.na(clock_target_mhz)) "native" else as.character(clock_target_mhz)
+}
+
+#' Two-sided clock band for a regime, or NULL for native.
+#'
+#' Native deliberately gets NULL, not a wide band: there is no clock to
+#' hold it to, and `validate_sample` treats NULL as "no band check" --
+#' preserving today's native behaviour exactly (design Q5).
+#'
+#' A LOCKED regime with no usable band is a spec error, not a
+#' degrade-to-no-check: silently dropping the band records an unchecked
+#' number under a locked key, which is exactly the leak the two-sided
+#' band exists to prevent (design Q4).
+clock_band_for <- function(clock_target_mhz, band_mhz) {
+  if (is.na(clock_target_mhz)) return(NULL)
+  b <- suppressWarnings(as.integer(band_mhz))
+  if (length(b) != 1L || is.na(b) || b <= 0L)
+    stop(sprintf(paste0("locked regime %d MHz needs a positive integer band_mhz, got: %s. ",
+                        "A locked cell must never run without a clock-band gate."),
+                 clock_target_mhz,
+                 if (is.null(band_mhz)) "NULL" else paste(as.character(band_mhz), collapse = ",")))
+  c(clock_target_mhz - b, clock_target_mhz + b)
+}
+
+#' The clock band a planned cell measures under, or NULL for native.
+#'
+#' Single source of truth for the band, shared by the planner and by
+#' measure_config. measure_config MUST NOT re-derive this from
+#' band_lo/band_hi independently -- a second derivation is a second thing
+#' that can silently disagree with the recorded row.
+cell_clock_band <- function(cell) {
+  if (is.null(cell$band_lo) || is.null(cell$band_hi) ||
+      is.na(cell$band_lo) || is.na(cell$band_hi)) return(NULL)
+  c(cell$band_lo, cell$band_hi)
+}
+
+#' The taxonomy x regime rule (design Q1).
+#'
+#' A measurable, runnable config uses its declared `regimes`, defaulting
+#' to `[native]` when it declares none. Everything else -- `run: false`
+#' or `measurable: false` -- runs ONCE-NATIVE regardless of what it
+#' declares, because a clock band can only gate a parseable throughput
+#' number; N regime-copies of a non-measurable bench would be N identical
+#' records burning elevated lock time and risking a non-measurable row
+#' leaking into a locked-perf bucket.
+#'
+#' NOTE this default differs deliberately from grid_measure.R:110, which
+#' resolves an omitted `regimes` to the FULL clocks grid. That default is
+#' right for a 7-cell sweep spec and catastrophic for a ~48-exe corpus:
+#' it would silently multiply every un-swept exe across 6 clocks.
+#'
+#' @return character vector of regime labels (never empty).
+effective_regimes <- function(cfg, warn = TRUE) {
+  runnable   <- !identical(cfg$run, FALSE)
+  measurable <- !identical(cfg$measurable, FALSE)
+  declared   <- cfg$regimes %||% NULL
+
+  if (!runnable || !measurable) {
+    if (warn && length(declared))
+      cat(sprintf("  WARN: %s declares regimes [%s] but is %s -- ignored, running once-native.\n",
+                  cfg$id, paste(vapply(declared, regime_label_raw, character(1)), collapse = ", "),
+                  if (!runnable) "run: false" else "measurable: false"))
+    return("native")
+  }
+  if (!length(declared)) return("native")
+  # unique(): a duplicated regime token would otherwise plan two cells
+  # with the SAME (git_head, cell_id, regime) store key -- the collision
+  # the three-tuple key exists to prevent (design Q3).
+  unique(vapply(declared, regime_label_raw, character(1), USE.NAMES = FALSE))
+}
+
+#' Label a raw spec regime token without normalising through integer NA
+#' (keeps "native" as "native" and 1605 as "1605").
+regime_label_raw <- function(x) regime_label(normalise_clock(x))
+
+#' Expand configs into the (config x regime) cell plan.
+#'
+#' The store key is `(git_head, cell_id, regime)` (design Q3), so a cell
+#' is exactly one row of that key for this run. `band_mhz` resolves
+#' per-config, falling back to the spec `defaults$band_mhz`.
+#'
+#' @param configs list of config records from merge_spec().
+#' @param only_regime optional regime label; keep only cells in it. This
+#'   is how a single R child measures one fixed regime -- pwsh unrolls the
+#'   regimes, R never loops them (design "Orchestration flow").
+#' @return list of cells: list(cfg, regime, clock_target_mhz, band_lo,
+#'   band_hi, band_mhz).
+plan_cells <- function(configs, only_regime = NULL, warn = TRUE) {
+  cells <- list()
+  for (cfg in configs) {
+    for (rg in effective_regimes(cfg, warn = warn)) {
+      if (!is.null(only_regime) && !identical(rg, only_regime)) next
+      ct  <- normalise_clock(rg)
+      # clock_band_for stops if a LOCKED cell has no usable band; native
+      # passes band_mhz through untouched and gets NULL.
+      bnd <- tryCatch(clock_band_for(ct, cfg$band_mhz),
+                      error = function(e) stop(sprintf("%s: %s", cfg$id, conditionMessage(e)),
+                                               call. = FALSE))
+      cells[[length(cells) + 1L]] <- list(
+        cfg = cfg, regime = rg, clock_target_mhz = ct,
+        band_mhz = if (is.null(bnd)) NA_integer_ else as.integer(cfg$band_mhz),
+        band_lo = if (is.null(bnd)) NA_integer_ else as.integer(bnd[1]),
+        band_hi = if (is.null(bnd)) NA_integer_ else as.integer(bnd[2]))
+    }
+  }
+  cells
+}
+
+#' Distinct regime labels in a cell plan, native first (the orchestrator
+#' runs the lock-free group before touching -lgc), then ascending MHz.
+#'
+#' Sorted NUMERICALLY, not lexicographically: normalise_clock accepts
+#' clocks down to 100 MHz, and a character sort would order "900" after
+#' "1200". Phase 3's --plan-regimes handshake feeds this order to the
+#' pwsh orchestrator as the clock-group sequence.
+plan_regimes <- function(cells) {
+  rg <- unique(vapply(cells, function(x) x$regime, character(1)))
+  locked <- rg[rg != "native"]
+  locked <- locked[order(vapply(locked, normalise_clock, integer(1), USE.NAMES = FALSE))]
+  c(rg[rg == "native"], locked)
+}
+
 #' Merge the discovered corpus with the YAML spec.
 #'
 #' Every spec config becomes a config record (spec_source="known"). Every
@@ -137,7 +307,8 @@ auto_id <- function(exe) gsub("[/]", "_", sub("^kernels/", "", exe))
 #' @return list of config records (id, exe, src, args, match, section,
 #'   value_label, unit, valid_when, n_samples, timeout, run, measurable,
 #'   spec_source, in_corpus, notes).
-merge_spec <- function(corpus_src, spec_kernels, default_args) {
+merge_spec <- function(corpus_src, spec_kernels, default_args,
+                       spec_defaults = list()) {
   corpus_exes <- vapply(corpus_src, exe_for_src, character(1))
   src_by_exe  <- stats::setNames(corpus_src, corpus_exes)
 
@@ -154,8 +325,21 @@ merge_spec <- function(corpus_src, spec_kernels, default_args) {
       value_label = k$value_label %||% NULL,
       unit        = k$unit %||% NA_character_,
       valid_when  = k$valid_when %||% NULL,
+      # PER-KERNEL override only. Do NOT fold spec_defaults$n_samples in
+      # here: cfg$n_samples outranks --min-valid in measure_config, so a
+      # folded default would make the CLI flag dead for every config and
+      # silently raise the sample requirement corpus-wide. The spec
+      # default is resolved at the opts level instead (see parse_args),
+      # which keeps the precedence per-kernel > --min-valid > spec
+      # default > built-in.
       n_samples   = k$n_samples %||% NULL,
       timeout     = k$timeout %||% NULL,
+      # Regime fields (#152 Phase 2). `regimes` stays NULL when the spec
+      # omits it -- effective_regimes() applies the [native] default, so
+      # "omitted" and "explicitly native" stay distinguishable here.
+      regimes     = k$regimes %||% NULL,
+      warmup      = k$warmup   %||% spec_defaults$warmup   %||% NULL,
+      band_mhz    = k$band_mhz %||% spec_defaults$band_mhz %||% NULL,
       run         = if (identical(k$run, FALSE)) FALSE else TRUE,
       measurable  = if (identical(k$measurable, FALSE)) FALSE else TRUE,
       verified    = isTRUE(k$verified),
@@ -388,7 +572,10 @@ smi_static <- function(field) {
   }, error = function(e) NA_character_)
 }
 
-build_run_meta <- function() {
+#' @param regime the clock regime this run measures ("native" or an MHz
+#'   label). A run is regime-scoped (#152 Q3): pwsh starts one R child per
+#'   clock group, so one results.json describes exactly one regime.
+build_run_meta <- function(regime = "native") {
   list(
     ts_utc         = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
     git_head       = git_head(),
@@ -401,20 +588,33 @@ build_run_meta <- function() {
     gpu_name       = smi_static("name"),
     gpu_memory_mb  = smi_static("memory.total"),
     gpu_mode       = tolower(Sys.getenv("BARE_METAL_GPU_MODE", unset = "unknown")),
-    clock_lock     = "native",
+    regime         = regime,
+    clock_lock     = regime,
     sm_arch        = "sm_86"
   )
 }
 
 #' Build a per-attempt JSONL row (also kept in results.json attempts[]).
-attempt_row <- function(cfg, s, ok, reason, attempt, run_id, gh) {
+#'
+#' Store key is `(git_head, cell_id, regime)` (#152 Q3); `attempt` is a
+#' row column, not part of the key. `cell` carries the regime context and
+#' defaults to native so a caller that predates #152 still produces a
+#' well-formed row.
+attempt_row <- function(cfg, s, ok, reason, attempt, run_id, gh, cell = NULL) {
   post <- s$r$post
+  cell <- cell %||% NATIVE_CELL
   list(
     run_id = run_id, ts_utc = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
     git_head = gh, cell_id = cfg$id, exe = cfg$exe, spec_source = cfg$spec_source,
-    args_str = paste(cfg$args, collapse = ","), attempt = as.integer(attempt),
+    measurable = !identical(cfg$measurable, FALSE), verified = isTRUE(cfg$verified),
+    args_str = paste(cfg$args, collapse = ","),
+    regime = cell$regime,
+    clock_target_mhz = as.integer(cell$clock_target_mhz),
+    band_lo = as.integer(cell$band_lo), band_hi = as.integer(cell$band_hi),
+    attempt = as.integer(attempt),
     ms = s$parsed$ms, throughput = s$parsed$throughput, unit = s$parsed$unit,
     clock_sm_mhz = as.integer((post$gpu$clock_sm %||% NA_integer_)),
+    clock_mem_mhz = as.integer((post$gpu$clock_mem %||% NA_integer_)),
     power_w = as.numeric((post$gpu$power_w %||% NA_real_)),
     temp_c = as.numeric((post$gpu$temp_c %||% NA_real_)),
     throttle = paste(setdiff(post$gpu$throttle %||% character(0), "GpuIdle"), collapse = ","),
@@ -430,8 +630,17 @@ one_run <- function(exe_abs, cfg, timeout) {
   list(r = r, parsed = parsed)
 }
 
-#' Measure one config: dispatch on run / measurable, never throw.
-measure_config <- function(cfg, opts, jsonl_path, run_id, gh) {
+#' Measure one cell (config x regime): dispatch on run / measurable,
+#' never throw.
+#'
+#' `cell` supplies the regime context (#152 Phase 2). Native cells carry
+#' `band_lo`/`band_hi` NA, which resolves to `clock_band = NULL` -- the
+#' exact pre-#152 behaviour. A locked cell passes the two-sided band that
+#' `validate_sample` has always accepted; no new measurement path.
+measure_config <- function(cfg, opts, jsonl_path, run_id, gh, cell = NULL) {
+  cell <- cell %||% NATIVE_CELL
+  clock_band <- cell_clock_band(cell)
+
   if (identical(cfg$run, FALSE))
     return(skeleton_summary(cfg, "skipped", 0L, 0L,
                             cfg$notes %||% "run: false in spec"))
@@ -456,7 +665,7 @@ measure_config <- function(cfg, opts, jsonl_path, run_id, gh) {
     if (identical(s$r$rc, 130L)) { message("SIGINT -- cancelling"); quit(save = "no", status = 130L) }
     ok <- identical(s$r$rc, 0L)
     row <- attempt_row(cfg, s, ok, if (ok) "non-measurable" else sprintf("crash(exit=%d)", s$r$rc),
-                       1L, run_id, gh)
+                       1L, run_id, gh, cell)
     append_jsonl_row(jsonl_path, row)
     note <- if (ok) (cfg$notes %||% "ran; no single-number metric")
             else sprintf("ran but exited %d", s$r$rc)
@@ -476,7 +685,7 @@ measure_config <- function(cfg, opts, jsonl_path, run_id, gh) {
 
   on_sample <- function(attempt, ok, s, reason) {
     if (identical(s$r$rc, 130L)) { message("SIGINT -- cancelling"); quit(save = "no", status = 130L) }
-    row <- attempt_row(cfg, s, ok, reason, attempt, run_id, gh)
+    row <- attempt_row(cfg, s, ok, reason, attempt, run_id, gh, cell)
     append_jsonl_row(jsonl_path, row)
     attempts[[length(attempts) + 1L]] <<- row
     cat(sprintf("    %-26s try %2d  %s %s  %s\n", cfg$id, attempt,
@@ -494,7 +703,8 @@ measure_config <- function(cfg, opts, jsonl_path, run_id, gh) {
   res <- collect_valid_samples(
     sample_fn = function() one_run(exe_abs, cfg, timeout),
     validate_fn = function(s) validate_sample(s$r$rc, s$parsed$throughput,
-                                              s$r$pre, s$r$post, valid_when = vw),
+                                              s$r$pre, s$r$post, valid_when = vw,
+                                              clock_band = clock_band),
     n_valid = n_valid, max_attempts = opts$max_attempts, on_sample = on_sample)
 
   tputs <- vapply(res$samples, function(s) s$parsed$throughput, numeric(1))
@@ -508,7 +718,10 @@ measure_config <- function(cfg, opts, jsonl_path, run_id, gh) {
 # CLI
 # ----------------------------------------------------------------------
 parse_args <- function(argv) {
-  out <- list(spec = DEFAULT_SPEC, out_dir = NULL, min_valid = 5L,
+  # min_valid starts NULL so an explicit `--min-valid 5` stays
+  # distinguishable from "not passed". main() resolves it as
+  # explicit CLI > spec defaults$n_samples > MIN_VALID_FALLBACK.
+  out <- list(spec = DEFAULT_SPEC, out_dir = NULL, min_valid = NULL,
               max_attempts = 15L, cooldown = 2, cooldown_throttle_mult = 4,
               timeout = 120L, only = NULL, default_args = character(0),
               list_only = FALSE)
@@ -529,7 +742,12 @@ parse_args <- function(argv) {
           "[--max-attempts N]\n",
           "                   [--cooldown S] [--timeout S] [--only ID]",
           "[--default-args a,b,c] [--list]\n",
-          "  --list  print the planned corpus (spec_source per exe) and exit (no GPU)\n",
+          "  --list  print the planned cell grid (config x regime) and exit (no GPU)\n",
+          "\n",
+          "Regimes (#152): a config's `regimes` in the spec lists the clocks it is\n",
+          "worth measuring at; omitting it means [native]. This runner measures the\n",
+          "NATIVE regime only -- locked regimes are planned and listed, but applying\n",
+          "a host-side clock lock is the elevated pwsh orchestrator's job (Phase 3).\n",
           sep = "")
       quit(status = 0)
     }
@@ -538,20 +756,53 @@ parse_args <- function(argv) {
   out
 }
 
-load_spec_kernels <- function(spec_path) {
+#' Load the unified spec (#152 Q1): kernels + top-level `defaults` and
+#' `clocks`.
+#'
+#' Both new top-level blocks are OPTIONAL, so a spec predating #152 still
+#' loads and behaves exactly as before (no regimes -> every config plans
+#' `[native]`). `clocks` is a fallback list a kernel opts into by writing
+#' `regimes: <clocks>`; it is never applied implicitly -- see
+#' effective_regimes() for why an implicit full-grid default is wrong for
+#' a corpus this size.
+#'
+#' @return list(defaults, clocks, kernels).
+load_spec <- function(spec_path) {
+  empty <- list(defaults = list(), clocks = list(), kernels = list())
   if (!file.exists(spec_path)) {
     cat(sprintf("WARN: spec not found (%s); every bench runs default-args.\n", spec_path))
-    return(list())
+    return(empty)
   }
-  (yaml::read_yaml(spec_path))$kernels %||% list()
+  spec <- yaml::read_yaml(spec_path)
+  defaults <- spec$defaults %||% list()
+  # Validate the regime-related defaults if present; a malformed band is a
+  # spec bug worth failing on, not something to silently default away.
+  if (!is.null(defaults$band_mhz)) {
+    b <- suppressWarnings(as.integer(defaults$band_mhz))
+    if (is.na(b) || b <= 0L)
+      stop(sprintf("spec defaults$band_mhz must be a positive integer, got: %s",
+                   as.character(defaults$band_mhz)))
+    defaults$band_mhz <- b
+  }
+  clocks <- spec$clocks %||% list()
+  for (cl in clocks) normalise_clock(cl)   # stops on a bad token
+  list(defaults = defaults, clocks = clocks, kernels = spec$kernels %||% list())
 }
+
+#' Back-compat shim: the pre-#152 loader returned just the kernel list.
+load_spec_kernels <- function(spec_path) load_spec(spec_path)$kernels
 
 main <- function() {
   opts <- parse_args(commandArgs(trailingOnly = TRUE))
 
   corpus  <- discover_corpus(REPO_ROOT)
-  spec_k  <- load_spec_kernels(opts$spec)
-  configs <- merge_spec(corpus, spec_k, opts$default_args)
+  spec    <- load_spec(opts$spec)
+  # Resolve the corpus-wide sample target: an explicit --min-valid wins,
+  # then the spec's defaults$n_samples, then the built-in fallback. A
+  # per-kernel `n_samples` still outranks all of these in measure_config.
+  opts$min_valid <- as.integer(opts$min_valid %||% spec$defaults$n_samples %||%
+                               MIN_VALID_FALLBACK)
+  configs <- merge_spec(corpus, spec$kernels, opts$default_args, spec$defaults)
   if (!is.null(opts$only))
     configs <- Filter(function(c) identical(c$id, opts$only), configs)
   if (!length(configs)) { cat("No configs to run.\n"); quit(status = 1) }
@@ -560,23 +811,73 @@ main <- function() {
   n_default <- length(configs) - n_known
   n_meas    <- sum(vapply(configs, function(c) isTRUE(c$measurable) && !identical(c$run, FALSE), logical(1)))
 
+  # The FULL cell plan (every regime any config declares) is what --list
+  # shows and what --plan-regimes will consume in Phase 3. The RUN plan is
+  # a single regime: pwsh unrolls regimes one child per clock group, R
+  # never loops them, and until Phase 3 lands --regime the only regime R
+  # can honestly measure is the lock-free one.
+  all_cells <- plan_cells(configs, warn = opts$list_only)
+  regimes   <- plan_regimes(all_cells)
+
   cat(strrep("=", 72), "\n", sep = "")
   cat("  bench-all -- full-corpus run (skip nothing, record everything)\n")
   cat(sprintf("  corpus %d exes | configs %d (known %d, default %d) | measurable %d\n",
               length(corpus), length(configs), n_known, n_default, n_meas))
+  cat(sprintf("  cells %d over %d regime(s): %s\n",
+              length(all_cells), length(regimes), paste(regimes, collapse = ", ")))
   cat(sprintf("  min-valid %d | max-attempts %d | cooldown %.1fs\n",
               opts$min_valid, opts$max_attempts, opts$cooldown))
   cat(strrep("=", 72), "\n", sep = "")
 
   if (opts$list_only) {
-    for (c in configs) {
+    for (cell in all_cells) {
+      c <- cell$cfg
       tag <- if (identical(c$run, FALSE)) "skip" else if (!isTRUE(c$measurable)) "nomeas" else "perf"
-      cat(sprintf("  [%-7s %-6s] %-30s  %s  args=[%s]\n",
-                  c$spec_source, tag, c$id, c$exe, paste(c$args, collapse = " ")))
+      band <- if (is.na(cell$band_lo)) "" else sprintf(" band=[%d,%d]", cell$band_lo, cell$band_hi)
+      cat(sprintf("  [%-7s %-6s %-6s] %-30s  %s  args=[%s]%s\n",
+                  c$spec_source, tag, cell$regime, c$id, c$exe,
+                  paste(c$args, collapse = " "), band))
     }
     cat(sprintf("\n%d configs planned (%d known, %d default, %d measurable).\n",
                 length(configs), n_known, n_default, n_meas))
+    cat(sprintf("%d cells over regimes: %s\n", length(all_cells),
+                paste(regimes, collapse = ", ")))
+    for (rg in regimes)
+      cat(sprintf("  regime %-8s : %d cell(s)\n", rg,
+                  sum(vapply(all_cells, function(x) identical(x$regime, rg), logical(1)))))
     quit(status = 0)
+  }
+
+  # Phase 2 measures the native regime only. Locked regimes are planned
+  # and reported above, but running one requires a host-side lock that
+  # only the pwsh orchestrator can apply (#152 Phase 3) -- measuring a
+  # locked cell without the lock would record a band-rejected or, worse,
+  # a silently native number under a locked key.
+  cells <- plan_cells(configs, only_regime = "native", warn = TRUE)
+  n_deferred <- length(all_cells) - length(cells)
+  if (n_deferred > 0L)
+    cat(sprintf("  NOTE: %d locked-regime cell(s) deferred to the elevated orchestrator (#152 Phase 3).\n",
+                n_deferred))
+
+  # A config whose regime list omits `native` has NO cell in this run.
+  # Say so by name. "skip nothing, record everything" is the banner
+  # directly above; a config silently vanishing from results.json while
+  # the header still counts it is the worst way to break that promise.
+  measured_ids <- unique(vapply(cells, function(x) x$cfg$id, character(1)))
+  unmeasured   <- setdiff(vapply(configs, function(c) c$id, character(1)), measured_ids)
+  if (length(unmeasured))
+    cat(sprintf(paste0("  NOTE: %d config(s) have NO native cell and are NOT measured by this run: %s\n",
+                       "        (their regimes omit `native`; measure them via the elevated orchestrator)\n"),
+                length(unmeasured), paste(unmeasured, collapse = ", ")))
+
+  if (!length(cells)) {
+    # Exiting 0 here would make `--only <locked-only-config>` a silent
+    # no-op that writes an empty report and reads as success.
+    cat("\nNothing to measure in the native regime.\n")
+    if (!is.null(opts$only))
+      cat(sprintf("  --only %s selected %d config(s), none of which has a native cell.\n",
+                  opts$only, length(configs)))
+    quit(status = 1)
   }
 
   run_id  <- format(Sys.time(), "%Y%m%dT%H%M%S")
@@ -586,7 +887,7 @@ main <- function() {
   results_path <- file.path(out_dir, "results.json")
   summary_path <- file.path(out_dir, "summary.md")
 
-  run_meta <- build_run_meta()
+  run_meta <- build_run_meta(regime = "native")
   gh <- run_meta$git_head
   .gs <- capture_gpu_state()
   if (!is.null(.gs)) {
@@ -597,10 +898,11 @@ main <- function() {
   }
 
   summaries <- list()
-  for (cfg in configs) {
-    cat(sprintf("\n[%s] %s  (args=[%s], %s)\n", cfg$id, cfg$exe,
-                paste(cfg$args, collapse = " "), cfg$spec_source))
-    s <- tryCatch(measure_config(cfg, opts, jsonl_path, run_id, gh),
+  for (cell in cells) {
+    cfg <- cell$cfg
+    cat(sprintf("\n[%s] %s  (args=[%s], %s, regime=%s)\n", cfg$id, cfg$exe,
+                paste(cfg$args, collapse = " "), cfg$spec_source, cell$regime))
+    s <- tryCatch(measure_config(cfg, opts, jsonl_path, run_id, gh, cell),
       error = function(e) {
         cat(sprintf("    ERROR (recorded, corpus continues): %s\n", conditionMessage(e)))
         skeleton_summary(cfg, "failed", 0L, 0L,
