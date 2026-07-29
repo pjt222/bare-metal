@@ -74,6 +74,15 @@ The `.Rprofile` at the repo root auto-activates the project's renv
 library on every `Rscript` invocation. No system-wide R packages are
 required; everything is pinned in `renv.lock`.
 
+That same `.Rprofile` sets
+`options(renv.config.synchronized.check = FALSE)` before activating
+(issue #162). renv's autoloader would otherwise run a full project
+dependency scan on every R startup — 33.2 s per process on this repo's
+9p `/mnt/d` mount, against 2.0 s with it off. The lockfile-vs-library
+check still happens, deliberately: `make renv-check`, `make setup`, and
+the pre-push hook all run `scripts/audit/renv_check.R`. Keep the line;
+without it every R invocation in the project pays ~31 s.
+
 ### 3. (optional, GPU profiling) Nsight Compute 2026.1+
 
 Required only for `scripts/profile/ncu_profile_all.sh` and friends.

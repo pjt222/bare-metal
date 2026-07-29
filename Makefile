@@ -73,7 +73,7 @@ REGRESS_BENCH := \
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches test clean disasm sass help \
+.PHONY: all cubins benches test clean disasm sass help renv-check \
         setup verify bench bench-all bench-reference compare-reference reference-pipeline reproduce figures \
         publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
@@ -220,6 +220,17 @@ setup:
 	@$(RSCRIPT) -e 'if (!requireNamespace("renv", quietly=TRUE)) install.packages("renv", repos="https://cloud.r-project.org"); renv::restore()'
 	@echo "=== Installing local cuasmR R package ==="
 	@$(RSCRIPT) scripts/install_cuasmR.R
+	@echo "=== Verifying renv project sync ==="
+	@$(RSCRIPT) scripts/audit/renv_check.R
+
+# renv project-synchronization check (#162). The autoloader no longer
+# runs this on every R startup (.Rprofile sets
+# options(renv.config.synchronized.check = FALSE), which took a no-op
+# Rscript call from ~33s to ~2s); this target and the hook are where it runs
+# now. Same check, unweakened -- just once per push instead of once per
+# process.
+renv-check:
+	@$(RSCRIPT) scripts/audit/renv_check.R
 
 verify:
 	@$(RSCRIPT) scripts/verify_setup.R
@@ -303,7 +314,8 @@ help:
 	@echo ""
 	@echo "Reproducibility:"
 	@echo "  make reproduce — one-stop: setup + verify + build + bench + figures"
-	@echo "  make setup     — renv::restore() + install cuasmR"
+	@echo "  make setup     — renv::restore() + install cuasmR + renv sync check"
+	@echo "  make renv-check — verify renv.lock matches the installed library"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
 	@echo "  make bench     — run benches vs data/baselines.json"
 	@echo "  make figures   — regenerate docs/figures via R scripts"

@@ -55,6 +55,32 @@ else
     echo -e "${YELLOW}WARNING: $LINK_SCRIPT not found — skipping${NC}"
 fi
 
+# renv project-synchronization check (#162).
+#
+# This check used to run implicitly inside EVERY R startup, via renv's
+# autoloader, at ~31s per process. .Rprofile now sets
+# options(renv.config.synchronized.check = FALSE) and the check lives here:
+# same check, unweakened, once per push rather than once per process.
+# If you remove it, restore the autoloader setting too — otherwise
+# nothing verifies renv.lock against the library at all.
+echo ""
+echo "--- Checking renv project sync ---"
+RENV_SCRIPT="scripts/audit/renv_check.R"
+if [ -f "$RENV_SCRIPT" ]; then
+    if Rscript "$RENV_SCRIPT"; then
+        :
+    else
+        echo ""
+        echo -e "${RED}renv PROJECT OUT OF SYNC${NC} (see above)"
+        echo ""
+        echo "Resolve with renv::restore() or renv::snapshot(), then re-push."
+        echo "To bypass (for WIP commits):  git push --no-verify"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}WARNING: $RENV_SCRIPT not found — skipping${NC}"
+fi
+
 # Run performance regression checker (R + renv)
 echo ""
 echo "--- Running $REGRESS_SCRIPT ---"

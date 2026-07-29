@@ -61,7 +61,8 @@ attention convolution elementwise memory_layout composition
 reference`.
 
 The pre-push gate is `scripts/install-hooks.sh`, which runs
-`make test`, a README link audit, and `scripts/bench/bench_regress.R`.
+`make test`, a README link audit, `scripts/audit/renv_check.R`, and
+`scripts/bench/bench_regress.R`.
 
 **CI limitations.** GitHub-hosted runners have no Ampere GPU. Cubin builds,
 benchmark runs, and anything requiring `nvcc -arch=sm_86` cannot run in CI.
@@ -101,6 +102,27 @@ make publish-hf ARGS=--dry-run
 `.Rprofile` at the repo root auto-activates the project library
 on `Rscript` startup. First-time setup is `make setup` (or
 `Rscript -e 'renv::restore()'` for renv only).
+
+**Startup cost — do not re-enable the autoloader's sync check (#162).**
+`.Rprofile` sets `options(renv.config.synchronized.check = FALSE)`
+before sourcing `renv/activate.R`. Without it,
+renv's autoloader runs a full project dependency scan on *every* R
+startup: Rprof attributes 92 % of `renv::load()` to that path, and its
+cost is filesystem stats over the 9p `/mnt/d` mount. Measured on AC, a
+no-op `Rscript -e 'invisible(1)'` went **33.2 s → 2.0 s**, and the
+GPU-free test suite went from ~1 h to ~74 s. The check is not lost — it
+runs deliberately via `scripts/audit/renv_check.R`, wired into the
+pre-push hook, `make setup` and `make renv-check`. Dependency discovery
+itself is deliberately left unweakened: there is no `.renvignore` and
+`snapshot.type` stays `implicit`, so a new R script anywhere in the tree
+still registers.
+
+**Install cuasmR with `Rscript scripts/install_cuasmR.R`, never bare
+`install.packages()`.** Only `renv::install()` writes the
+`RemoteType: local` stamp that renv matches against the lockfile; a base
+install leaves the project permanently `[Local != unknown]` out of sync.
+This regressed once already (fixed in #133, reverted by the installer
+script, re-fixed in #162) — the script now asserts the stamp landed.
 
 Required packages: `jsonlite`, `ggplot2`, `scales`, `patchwork`,
 `dplyr`, `tidyr`, `tibble`, `rmarkdown`, `yaml`, `testthat`, and
