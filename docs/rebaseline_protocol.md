@@ -9,12 +9,24 @@
 > assumed clock-locking was unavailable and that baselines would be recorded
 > at a no-lock ~1410 MHz cold-clock. That was wrong: **host-side
 > `nvidia-smi.exe -lgc` works** (#125 verdict corrected). In the executed
-> re-baseline the non-power-bound GEMM configs were recorded at **native boost**
-> (hgemm 2048³ 31789 GFLOPS @ 1740–1770 MHz, 4096³ 30397 @ 1770–1785 MHz),
-> igemm_sparse 2048³ at 36892 @ 1410 MHz, and the power-bound
+> re-baseline the GEMM configs believed to be non-power-bound were recorded at
+> **native boost** (hgemm 2048³ 31789 GFLOPS @ 1740–1770 MHz, 4096³ 30397 @
+> 1770–1785 MHz), igemm_sparse 2048³ at 36892 @ 1410 MHz, and the power-bound
 > igemm_sparse 4096³ under a **1605 MHz host-side lock** (50497 dq-GFLOPS,
 > removed from the automated gate). The `flash_attn_br16_regpv` tolerance was
-> NOT narrowed. See `docs/benchmark_methodology.md` for the host-side lock
+> NOT narrowed.
+>
+> **Superseded 2026-07-29 for hgemm (#156).** Both native hgemm numbers above
+> proved irreproducible: the 2026-06-05 grid re-measured them at native boost as
+> medians 28090 (2048³) and 27307 (4096³) — 0.884 and 0.898 of those very
+> baselines, 5 of 7 samples below the 0.90 regression floor in each case, with
+> **no throttle bit on any sample**. Both configs now carry `clock_lock: 1605`
+> and their baselines are the locked medians (0.589 ms / 29174 and 4.521 ms /
+> 30401). So the native/locked split is *not* "non-power-bound vs power-bound"
+> as this paragraph assumed — a config can need a lock without ever tripping
+> `SwPowerCap` (see #158 for the unexplained higher-clock-is-slower inversion).
+> When re-baselining, decide native-vs-locked by measuring the native spread
+> against the floor, not by predicting power draw. See `docs/benchmark_methodology.md` for the host-side lock
 > mechanism. Treat the §"Recording clock" / "-lgc rejected" framing below as
 > the pre-execution plan, not the outcome.
 

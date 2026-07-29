@@ -82,12 +82,19 @@ kernels:
     regimes: [1200, 1410, 1500, 1605, 1710]
     note: "power-bound. Fair 50497 @ -lgc 1605."
 
-  - id: hgemm_16warp_4096            # MEASURABLE + clock-sensitive
+  - id: hgemm_16warp_4096            # MEASURABLE + boost-unstable: gated at 1605, native kept for diagnosis only
     exe: kernels/gemm/hgemm/bench
     args: [4096, 4096, 4096]
     match: "hgemm_16warp (128x128 2blk/SM)"
     verified: true
     regimes: [native, 1605, 1710]
+    note: "boost-unstable (#156). Fair 30401 @ -lgc 1605. `native` stays in
+           regimes deliberately: it is not gate-fair (0.898 of its own former
+           native baseline, 5/7 samples under the floor) but it is the only way
+           to keep observing the unexplained higher-clock-is-slower inversion
+           in #158. A regime being present here does NOT imply it is gateable —
+           gate-fairness is decided by baselines.json `clock_lock`, not by
+           this list."
 
   - id: conv2d_nhwc                  # MEASURABLE, regimes omitted -> [native] ONLY
     exe: kernels/convolution/conv2d/bench

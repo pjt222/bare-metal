@@ -102,16 +102,44 @@ A bare exit code is not proof a lock took effect: always *set* a
 clock and *read it back* (`clocks.current.sm`). `bench_regress.R`
 enforces this — see the `--clock-locked` flow below.
 
-### Power-bound kernels and `--clock-locked`
+### Configs with no fair native baseline and `--clock-locked`
 
-A kernel whose own iterations draw >150 W has **no fair native-boost
-baseline**: `SwPowerCap` throttles a varying fraction of the bench's
-averaged launches, producing a bimodal average. `igemm_sparse_tiled`
-4096³ is the standing example (~1.9× spread at native boost; stable
-within ±5 % locked at 1605 MHz — `scripts/probe/clock_lock_sweep.R`).
+Some configs cannot be gated at native boost at all. The membership
+test is **empirical, not thermodynamic**: if a config's measured
+native median sits below the regression floor of its own recorded
+native baseline, that baseline is a best-case boost window the laptop
+cannot reproduce, and every ordinary push rolls dice against it.
+
+Two distinct mechanisms produce this, and it matters that they are
+kept distinct:
+
+- **Power-bound.** The kernel's own iterations draw >150 W, so
+  `SwPowerCap` throttles a varying fraction of the bench's averaged
+  launches, producing a bimodal average. `igemm_sparse_tiled` 4096³ is
+  the standing example (~1.9× spread at native boost; stable within
+  ±5 % locked at 1605 MHz — `scripts/probe/clock_lock_sweep.R`). The
+  throttle bit is observable, so `valid_when` can also catch it.
+- **Boost-unstable.** Native throughput is irreproducible even though
+  **no throttle bit is ever observed**. `hgemm_16warp` (both 2048³ and
+  4096³) is the standing example: the 2026-06-05 grid measured native
+  medians at 0.884 and 0.898 of their own native baselines — 5 of 7
+  samples below the 0.90 floor in each case — with `throttle_str` =
+  `none` on every sample and native power peaking at 122 W, never
+  within 28 W of the cap. On 4096³ the native regime is also **slower
+  at a higher clock** (27.3k GFLOPS at 1785 MHz / 118 W vs 30.4k at a
+  1605 MHz lock / 101 W). That inversion is unexplained — see #158.
+  Do not assume "higher clock is faster" anywhere in this methodology.
+
+Do **not** reach for a wider `tolerance` here. On `hgemm_16warp` 2048³
+the tolerance needed to absorb the native spread would admit anything
+above ~22 k GFLOPS against a real working range of 27–31 k — a gate
+that cannot fail is not a gate. Lock instead.
 
 Such a config carries a `clock_lock` field (integer MHz) in
-`data/baselines.json`. `bench_regress.R` handles it as follows:
+`data/baselines.json`, and its recorded `ms`/`gflops` are the **locked**
+medians, not native ones. All locked configs deliberately share **one
+lock point, 1605 MHz**, so a single elevated session gates every one of
+them. `bench_regress.R` handles it as follows:
 
 - **Without `--clock-locked`** (the default, incl. the pre-push hook):
   the config is **SKIPPED** — no false regression. The gate is
@@ -128,7 +156,7 @@ Such a config carries a `clock_lock` field (integer MHz) in
   `INSUFFICIENT` rather than reporting a bogus pass.
 - A mismatched `--clock-locked` value SKIPs that config.
 
-Workflow to gate a power-bound kernel:
+Workflow to gate every locked config in one session:
 
 ```
 # elevated Windows shell:
@@ -139,7 +167,30 @@ Rscript scripts/bench/bench_regress.R --clock-locked 1605
 nvidia-smi.exe -rgc
 ```
 
-See issue #131 for the lock-aware harness design.
+Run it bare, without `--kernel`. Scoping by `--kernel` is a footgun:
+`--kernel` selects a kernel *file*, not a config, so it can drag a
+sibling config that has no `clock_lock` onto the single-shot native
+path while the GPU is locked — measuring a native baseline at the
+wrong clock, with no warmup and no median to absorb an excursion.
+
+**Accept the coverage trade explicitly.** A `clock_lock` config
+performs **zero GPU work on every ordinary push**, and no CI job
+re-adds the check — GPU work cannot run on GitHub-hosted runners. Its
+only gate is the elevated session above, which is operator-initiated.
+That is a real loss of automatic coverage, taken deliberately: the
+alternative is a baseline that fails 5 pushes in 7 for reasons that
+have nothing to do with the code being pushed, which trains the
+operator to `--no-verify` and costs *all* the coverage, not one
+kernel's. Run the locked pass as part of any deliberate re-baseline
+and after any change to a locked kernel.
+
+Current native-gated configs: `igemm_sparse_tiled` 2048³,
+`igemm_pipelined_cpasync` 4096³, `flash_attn_br16_regpv` 1024_8_8,
+`conv2d_implicit_gemm`. Locked-only (1605 MHz): both `hgemm_16warp`
+configs and `igemm_sparse_tiled` 4096³.
+
+See issue #131 for the lock-aware harness design and #156 for the
+hgemm move.
 
 ### Cooldown — the WSL-side lever
 

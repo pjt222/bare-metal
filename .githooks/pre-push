@@ -71,7 +71,7 @@ else
     echo "  Rscript $REGRESS_SCRIPT --tolerance 0.20"
     echo ""
     echo "To update baselines after legitimate improvements:"
-    echo "  edit docs/baselines.json"
+    echo "  edit data/baselines.json"
     echo ""
     echo "To bypass (for WIP commits):"
     echo "  git push --no-verify"
