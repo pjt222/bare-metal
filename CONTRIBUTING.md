@@ -10,6 +10,25 @@ This project builds ML primitives from hand-optimized SASS on GA104 (RTX 3070 Ti
 4. Build and test your kernel
 5. Open a Pull Request
 
+## Git flow (2026-07-30 onward)
+
+**No direct pushes to `main`.** Every change goes:
+
+    commit -> topic branch -> PR -> adversarial review -> merge
+
+- **Adversarial review before merge.** Have the diff argued against, not just
+  read. Agent-assisted work should run the `advocatus-diaboli` reviewer; a human
+  reviewer plays the same role. Record what it found on the PR, including
+  findings you rejected and why.
+- **Merge with a MERGE COMMIT — never squash, never rebase-merge.** Squashing a
+  base branch makes a stacked child hit a three-way conflict on its next rebase,
+  and it destroys the individual-commit trail that makes a review auditable.
+  `gh pr merge --merge`, not `--squash`.
+- The pre-push hook runs on every branch push (`make test`, README link audit,
+  renv sync check, `bench_regress.R`). Expect a few minutes of benches; do not
+  interrupt it — an interrupted push can leave a spinning bench that wedges the
+  WSL CUDA path.
+
 ## Code Conventions
 
 ### Kernel Code

@@ -12,7 +12,8 @@
 > sweep runs fresh); all 5 grid bench exes built; GPU unlocked (P8, 210 MHz, idle);
 > no stale `.LOCK_HELD` sentinel; the stale partial JSONL has been **archived** to
 > `grid_sweep_samples.20260527_partial.jsonl` (Pre-step below already done — skip it).
-> This file is session scratch — discard or fold into CONTINUE_HERE when done.
+> This file is session scratch — discard, or fold into your local
+> `docs/CONTINUE_HERE.md` (untracked, see `.gitignore`) when done.
 >
 > **Design context:** the #152 convergence design is now resolved
 > ([`convergence_152_design.md`](convergence_152_design.md), [#152 comment](https://github.com/pjt222/bare-metal/issues/152)).

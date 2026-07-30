@@ -153,7 +153,15 @@ Primary external sources behind the kernels and tooling:
 
 ## Session handoff
 
-[`CONTINUE_HERE.md`](CONTINUE_HERE.md) is a per-author session
-scratchpad. It records the work completed in the most recent
-working session and the next concrete steps. Not durable
-documentation; expected to churn between sessions.
+`docs/CONTINUE_HERE.md` is a per-author session scratchpad. It
+records the work completed in the most recent working session and
+the next concrete steps.
+
+It is **deliberately not committed** (gitignored since 2026-07-30),
+so it is absent from a fresh clone and this text does not link to
+it. It describes mutable local state — current branch, worktree
+status, open PRs — which is stale the moment it is pushed and
+misleading to anyone who is not its author. Durable knowledge
+belongs in the docs proper; the handoff is scratch. Earlier
+revisions remain in history:
+`git log --all -- docs/CONTINUE_HERE.md`.

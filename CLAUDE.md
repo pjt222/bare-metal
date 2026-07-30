@@ -35,6 +35,13 @@ patterns, not project commands.
 ### Session handoff
 
 `docs/CONTINUE_HERE.md` is a session-scoped scratchpad. At session
-close, update it with the work completed this session and the next
-concrete steps. Treat it as the rolling handoff document, not as
+close, create or update it with the work completed this session and
+the next concrete steps (a fresh clone will not have one — it is
+gitignored). Treat it as the rolling handoff document, not as
 durable documentation.
+
+**It is gitignored — do not commit it.** It is local and per-author:
+it records mutable state (branch, worktree, open PRs) that is stale
+as soon as it is pushed. Write it, leave it untracked, and let the
+next session on this machine read it from the working tree. Anything
+worth preserving beyond that goes in the docs proper or an issue.
