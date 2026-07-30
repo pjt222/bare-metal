@@ -143,7 +143,14 @@ three `cuasmR` roundtrip tests (they need a built cubin, which is gitignored,
 and `nvdisasm` on `PATH`) and `test_meta.R`'s live-capture test (needs
 `nvidia-smi`). `make test-r` prints the skip count for exactly this reason: a
 skip is coverage that did not happen, and reporting it as a clean pass is how
-the roundtrip check would quietly stop running.
+the roundtrip check would quietly stop running. CI *asserts* that count (4);
+locally it is reported but not enforced, because a dev box with a built cubin
+legitimately skips nothing.
+
+One divergence is not a skip but a structural blind spot: the runner's
+source-vs-installed `cuasmR` check cannot fire in CI at all, since CI reinstalls
+the package from the working tree every run. A stale local install is catchable
+only by the local half of the gate.
 
 ## Publishing the corpus to Hugging Face
 

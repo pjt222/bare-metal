@@ -317,8 +317,12 @@ if (has_cuasmr) {
   # test_local() loads the package from SOURCE via pkgload, while the repo-level
   # suites load the INSTALLED cuasmR (scripts/bench/bench_meta.R does
   # library(cuasmR)). That divergence is deliberate: it is what catches an edit
-  # to R/cuasmR/ that was never reinstalled. CI must `R CMD INSTALL R/cuasmR`
-  # from the working tree so both halves see the same code.
+  # to R/cuasmR/ that was never reinstalled.
+  #
+  # Note this check is LOCAL-ONLY by construction. CI reinstalls cuasmR from the
+  # working tree on every run, so installed and source are identical there and the
+  # stale-install case cannot arise -- it is not skipped in CI, it is unreachable.
+  # The one half of the gate that can catch it is the opt-in, bypassable half.
   expr <- sprintf(
     'testthat::set_max_fails(Inf); testthat::test_local("%s", stop_on_failure = TRUE)',
     rel(dirname(dirname(cuasmr_tests))))
@@ -377,14 +381,22 @@ for (nm in names(results)) {
 }
 cat("\n")
 cat("Re-run one suite on its own, from the repo root:\n")
-cat("  Rscript ", failed[1], "\n", sep = "")
-cat("\n")
-cat("That form stops at the first failing group. To see every failure at once:\n")
-cat("  Rscript -e 'testthat::set_max_fails(Inf); testthat::test_file(\"",
-    failed[1], "\")'\n", sep = "")
-cat("  -- but note test_file() chdirs into the test's directory, so a suite that\n")
-cat("  resolves its source through a relative path may then fall through to the\n")
-cat("  hardcoded absolute candidate. Trust the plain form for pass/fail.\n")
+# The cuasmR entry is a DIRECTORY run through test_local(), not a file — printing
+# `Rscript <dir>` for it hands the reader a command that cannot work, at the one
+# moment this message exists to help.
+if (identical(failed[1], rel(cuasmr_tests))) {
+  cat("  Rscript -e 'testthat::set_max_fails(Inf); testthat::test_local(\"",
+      rel(dirname(dirname(cuasmr_tests))), "\")'\n", sep = "")
+} else {
+  cat("  Rscript ", failed[1], "\n", sep = "")
+  cat("\n")
+  cat("That form stops at the first failing group. To see every failure at once:\n")
+  cat("  Rscript -e 'testthat::set_max_fails(Inf); testthat::test_file(\"",
+      failed[1], "\")'\n", sep = "")
+  cat("  -- but note test_file() chdirs into the test's directory, so a suite that\n")
+  cat("  resolves its source through a relative path may then fall through to the\n")
+  cat("  hardcoded absolute candidate. Trust the plain form for pass/fail.\n")
+}
 cat("\n")
 cat("Do not read a suite's trailing \"All ... tests passed\" line as a verdict --\n")
 cat("those cat() calls are unconditional. The exit status above is the verdict.\n")

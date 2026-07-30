@@ -17,13 +17,19 @@ name: tests
 # and canned fixtures.
 
 on:
+  # `push` is scoped to main. A branch in this repo with an open PR fires BOTH
+  # events, and `github.ref` differs between them (refs/heads/<branch> vs
+  # refs/pull/<n>/merge), so no concurrency group can collapse them — measured on
+  # PR #175, which ran this workflow twice per push before the trigger was scoped.
+  # PRs are covered by pull_request; pushes to main verify the merge result.
   push:
+    branches: [main]
   pull_request:
 
-# A PR from a branch in this repo triggers both events; without this the whole
-# restore runs twice for every push to an open PR.
+# Collapses rapid successive pushes to the same PR. Keyed on the PR number where
+# there is one, so every event for a given PR shares a group.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -150,4 +156,45 @@ jobs:
       # authoritative for that coverage. If this number changes, something
       # changed about what the gate actually exercises — find out what.
       - name: Run the GPU-free R suites
-        run: make test-r
+        run: |
+          set -o pipefail
+          make test-r 2>&1 | tee test-r.log
+
+      # Independent verification that the gate EXECUTED, from outside the runner.
+      #
+      # Every guard inside run_r_tests.R (--expect, the skip count, the canary) is
+      # downstream of it actually running. Empty the Makefile recipe and
+      # `make test-r` exits 0; the hook and this job both read that as green and
+      # the canary is never reached. `--list --expect 3` two steps up checks
+      # discovery, not execution.
+      #
+      # So: assert on the gate's own output the same way the restore step asserts
+      # on renv's. The skip count is asserted too — CI's skip set is deterministic
+      # (3 cuasmR roundtrip, 1 test_meta live capture), so a change in it means a
+      # change in what the gate exercises, which is exactly what should not pass
+      # silently. Local runs are NOT held to this: a dev box with a built cubin
+      # legitimately skips nothing.
+      - name: Assert the gate ran the suites rather than merely exiting 0
+        run: |
+          grep -q 'GPU-free R suites:' test-r.log || {
+            echo "::error::No summary banner in the gate output — make test-r exited 0 without running the runner."
+            exit 1
+          }
+          n_ok=$(grep -c '^  ok ' test-r.log || true)
+          # Read the count off the BANNER line specifically. A bare
+          # `grep -oE '[0-9]+ skipped' | tail -1` picks the last per-suite count
+          # (3, from the cuasmR line) instead of the total (4), and fails a
+          # healthy run. The banner is printed before the per-suite rows.
+          n_skip=$(grep 'GPU-free R suites:' test-r.log | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' || echo 0)
+          [ -n "$n_skip" ] || n_skip=0
+          echo "suites reporting ok: $n_ok (expect 3) | tests skipped: $n_skip (expect 4)"
+          [ "$n_ok" -eq 3 ] || {
+            echo "::error::Expected 3 suites to report ok, saw $n_ok. Keep in step with R_SUITES in the Makefile."
+            exit 1
+          }
+          [ "$n_skip" -eq 4 ] || {
+            echo "::error::Expected 4 skipped tests on a runner, saw $n_skip."
+            echo "A skip is coverage that did not run. If this change is intended, update this"
+            echo "assertion and the note above it; if not, the gate now exercises less than it did."
+            exit 1
+          }
