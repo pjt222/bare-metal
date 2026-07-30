@@ -1,6 +1,7 @@
 test_that("byte-identical roundtrip on phase1 vector_add", {
     skip_if_not(file.exists(test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin")),
                 "cubin not built")
+    skip_if(Sys.which("nvdisasm") == "", "nvdisasm not on PATH")
     p <- test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin")
     expect_true(cuasm_roundtrip_check(p))
 })
@@ -8,6 +9,7 @@ test_that("byte-identical roundtrip on phase1 vector_add", {
 test_that("cubin layout decode handles CUDA 12.x and 13.x", {
     skip_if_not(file.exists(test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin")),
                 "cubin not built")
+    skip_if(Sys.which("nvdisasm") == "", "nvdisasm not on PATH")
     obj <- cuasm_read(test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin"))
     expect_true(obj$arch$sm_version %in% c(75, 80, 86, 87, 89, 90))
     expect_true(obj$arch$layout %in% c("cuda12", "cuda13"))
@@ -16,6 +18,7 @@ test_that("cubin layout decode handles CUDA 12.x and 13.x", {
 test_that("cuasm_set patches a single 16-byte slot only", {
     skip_if_not(file.exists(test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin")),
                 "cubin not built")
+    skip_if(Sys.which("nvdisasm") == "", "nvdisasm not on PATH")
     p <- test_path("../../../../kernels/tutorial/vector_add.sm_86.cubin")
     obj <- cuasm_read(p)
 
