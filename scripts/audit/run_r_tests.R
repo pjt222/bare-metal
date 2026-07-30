@@ -169,7 +169,10 @@ if (length(suites) == 0L && !has_cuasmr) {
 
 n_total <- length(suites) + as.integer(has_cuasmr)
 
-expect_ok <- is.na(expect_n) || identical(n_total, expect_n)
+# `==` not identical(): identical() is type-strict, so if n_total ever became a
+# double the gate would fail always, and the fix someone reaches for first is
+# deleting --expect.
+expect_ok <- is.na(expect_n) || n_total == expect_n
 
 if (list_only) {
   cat("GPU-free R suites (", n_total, "):\n", sep = "")
@@ -218,11 +221,24 @@ rscript <- file.path(R.home("bin"), "Rscript")
 #     PASS n ]" summary line.
 # Prefer the summary line where present; fall back to counting blocks.
 count_skips <- function(lines) {
-  summary_line <- grep("SKIP\\s+[0-9]+", lines, value = TRUE)
+  # Strip ANSI first. Merging stderr into a pipe means the child's stdout is not
+  # a TTY, but cli special-cases GitHub Actions and colourises anyway -- and an
+  # escape landing between "SKIP" and its digits would make the regex miss and
+  # CI silently report 0 skips.
+  lines <- gsub("\033\\[[0-9;]*m", "", lines)
+
+  # Anchored on the whole summary shape rather than a bare "SKIP n", so a test
+  # NAME containing the word cannot be mistaken for a tally. testthat prints one
+  # such line per file plus a cumulative total last, hence the final match.
+  summary_line <- grep("\\[\\s*FAIL.*SKIP\\s+[0-9]+", lines, value = TRUE)
   if (length(summary_line)) {
     n <- sub(".*SKIP\\s+([0-9]+).*", "\\1", summary_line[length(summary_line)])
     return(suppressWarnings(as.integer(n)))
   }
+  # StopReporter (the `Rscript <file>` form) has no summary line; it prints a
+  # "-- Skip: <name> --" block with the reason beneath. Verified 2026-07-30:
+  #   Rscript -e 'library(testthat); test_that("t", skip("why"))'
+  # emits "== Skip: t ===..." / "Reason: why", so this matches.
   sum(grepl("Skip:", lines, fixed = TRUE))
 }
 
@@ -255,6 +271,30 @@ run_child <- function(cmd_args, label) {
 }
 
 results <- list()
+
+# ---- plumbing canary -------------------------------------------------------
+#
+# The entire verdict flows through one shell option. run_child() relies on
+# `set -o pipefail` to stop `tee` from swallowing the child's exit status; that
+# is a bashism, so changing /bin/bash to /bin/sh on a dash system would make
+# every suite report a pass with nothing else noticing. It is the same class of
+# silent failure as reading $PIPESTATUS in zsh, where it is empty and a failing
+# command reads as passing.
+#
+# So: run one child that does nothing but exit 3, and require that it comes back
+# non-zero. --expect guards the denominator, the skip count guards coverage, and
+# this guards the verdict itself. Costs one R startup.
+canary <- run_child(c("-e", shQuote("quit(status = 3)")), "plumbing canary")
+if (canary$code == 0L) {
+  cat("\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  EXIT-STATUS PLUMBING IS BROKEN\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  A child that exited 3 was read as success, so every suite below would\n")
+  cat("  report a vacuous pass. Check the `set -o pipefail` in run_child() and\n")
+  cat("  that /bin/bash is really bash.\n")
+  quit(status = 1)
+}
 
 # Children run from the repo root so each suite's *relative* source candidate
 # resolves. See the test_file() note in the header -- this is load-bearing.

@@ -33,12 +33,16 @@ historical reference.
   a real dead suite, and a deliberate mutation of `normalise_clock`'s lower
   bound. The dead-suite demonstration is not reproducible from the resulting
   tree, since this change deletes that suite.
-  Two guards exist because "all discovered suites passed" is otherwise a ratio
-  against whatever was found, and so always 100%: `--expect N` (passed by both
-  the hook and CI) fails if the discovered suite count changes, and skipped
-  tests are counted and reported per suite rather than folded into a pass —
-  without which the `cuasmR` byte-identical roundtrip check would silently stop
-  running the moment `nvdisasm` left `PATH`.
+  Three guards exist against the gate quietly hollowing out, because every part
+  of its verdict is otherwise self-reported: `--expect N` (passed by both the
+  hook and CI) supplies the suite-count denominator from outside, since "all
+  discovered suites passed" is a ratio against whatever was found and so always
+  100%; skipped tests are counted and reported per suite rather than folded into
+  a pass, without which the `cuasmR` byte-identical roundtrip check would stop
+  running the moment `nvdisasm` left `PATH`; and a plumbing canary runs one child
+  that exits 3 and requires a non-zero back, because the whole verdict flows
+  through one `set -o pipefail` — measured, a pipeline without it reports 0 for
+  a child that exited 3, which would pass every suite silently.
 - **`make bench-all` full-corpus runner (#124).** New on-demand "run
   everything" pass: `scripts/bench/bench_all.R` discovers the whole
   `$(BENCH_EXES)` corpus, runs every bench, and records every attempt +
@@ -101,6 +105,14 @@ historical reference.
   cubins built and CUDA off `PATH` got a hard `stop()` from `disasm.R:6` — an
   environment failure blocking a push, inside a target whose whole selling point
   is that it needs no GPU.
+- **The pre-push hook's repo-identity probe no longer disables everything
+  (#177).** It tested for `scripts/bench/bench_regress.R` and `exit 0`'d the
+  entire hook on its absence — switching off the README link audit, the renv
+  sync check and the GPU-free R suites for the absence of a GPU-benchmark
+  script. A worktree, a sparse checkout or a rename of that one file was enough.
+  The probe now checks that this is the repo root at all (`Makefile` plus a
+  `.git` directory *or* file, the latter being how worktrees present), and the
+  regression step guards itself the way every other step already did.
 - **Documentation drift around the gate.** `AGENTS.md` named
   `scripts/install-hooks.sh` as the gate (that script *installs* it; the gate is
   `.githooks/pre-push`), described `make reproduce` as four steps when it is five,

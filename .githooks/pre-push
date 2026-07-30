@@ -16,14 +16,21 @@ echo "  bare-metal pre-push hook"
 echo "  (bypass with: git push --no-verify)"
 echo "========================================"
 
-# Only run on the main repo (not externals).
-# scripts/bench_regress.py was retired in favour of
-# scripts/bench/bench_regress.R (project's R-only tooling policy).
-REGRESS_SCRIPT="scripts/bench/bench_regress.R"
-if [ ! -f "$REGRESS_SCRIPT" ]; then
-    echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
+# Repo-identity probe. This used to test for scripts/bench/bench_regress.R and
+# `exit 0` on its absence, which switched off the ENTIRE hook -- including checks
+# that need neither that script nor a GPU. A worktree, a sparse checkout or a
+# rename of that one file would silently disable the link audit, the renv check
+# and the GPU-free R suites. Each step now guards itself; this only establishes
+# that we are in the repo at all (#177).
+# `.git` is a directory in a normal clone and a FILE in a worktree, so accept
+# either. Braces because shell gives || and && equal precedence and parses
+# `A || B && C` as `(A || B) && C`.
+if [ ! -f "Makefile" ] || { [ ! -d ".git" ] && [ ! -f ".git" ]; }; then
+    echo -e "${YELLOW}WARNING: not the bare-metal repo root — skipping all checks${NC}"
     exit 0
 fi
+
+REGRESS_SCRIPT="scripts/bench/bench_regress.R"
 
 # Steps run cheapest-and-most-deterministic first, so a push that is going to be
 # rejected is rejected fast and for a comprehensible reason:
@@ -138,6 +145,10 @@ fi
 # Run performance regression checker (R + renv)
 echo ""
 echo "--- Running $REGRESS_SCRIPT ---"
+if [ ! -f "$REGRESS_SCRIPT" ]; then
+    echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
+    exit 0
+fi
 if Rscript "$REGRESS_SCRIPT"; then
     echo ""
     echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"

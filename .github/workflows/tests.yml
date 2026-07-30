@@ -78,8 +78,12 @@ jobs:
         with:
           path: ~/.cache/R/renv
           key: renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-${{ hashFiles('.github/workflows/tests.yml') }}-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-${{ hashFiles('renv.lock') }}
+          # The workflow hash is in the exact key (so changing install logic
+          # invalidates) but deliberately NOT in the restore-keys prefix: with it
+          # there, editing a comment in this file would miss both the key and the
+          # prefix and force a fully cold restore.
           restore-keys: |
-            renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-${{ hashFiles('.github/workflows/tests.yml') }}-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-
+            renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-
 
       # cuasmR is excluded from the restore on purpose: renv.lock:391-394 records
       # it as Source: Local, which describes a package built from this working

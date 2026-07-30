@@ -94,10 +94,12 @@ next paragraph. Do not extrapolate one from the other; measure the thing you
 want to quote. (This note exists because the first draft predicted "roughly half
 on AC" from the startup ratio, and the measurement came back 115 s, not 70 s.)
 
-Both power figures are n=1 and were taken in run order, so a warm page cache
-biases toward the smaller penalty — treat 1.16× as a floor. The 2.0 s AC startup
-recorded under "Startup cost" below is a different day's measurement of the same
-thing; read both as "about 2–2.5 s on AC" rather than trying to reconcile them.
+Both power figures are n=1. The battery runs came first in the session and the
+AC run later, so any warm-page-cache benefit accrued to the AC number — meaning
+1.16× if anything *overstates* the battery penalty rather than understating it.
+The 2.0 s AC startup recorded under "Startup cost" below is a different day's
+measurement of the same thing; read both as "about 2–2.5 s on AC" rather than
+trying to reconcile them.
 
 **Most of that runtime is the 9p mount, not the tests.** Controlled measurement,
 2026-07-30 — the same repo copied to ext4 inside the WSL VM and run on the same
@@ -113,10 +115,13 @@ local hook cost is the mount, not the assertions. Bear that in mind before
 "optimising" the tests — there is little there to win, and the same work is
 cheap the moment it runs anywhere else.
 
-(A GitHub runner does the same work in 6 s, but do not use that as the
-comparison: it differs in CPU, disk and R build as well as filesystem. An
-earlier draft of this paragraph quoted 45× from exactly that confounded pairing.
-The ext4-on-the-same-box number above is the one that isolates the variable.)
+(A GitHub runner does similar work in ~6 s for the whole target, but do not use
+that as the comparison: it differs in CPU, disk and R build as well as
+filesystem, and it runs four fewer assertions — see "CI limitations" below. An
+earlier draft quoted 45× from exactly that confounded pairing. The
+ext4-on-the-same-box row above is the one that isolates the variable. Note the
+ext4 `test_bench_all.R` figure and that whole-run CI figure are both 6 s by
+coincidence; they are different quantities.)
 
 The suites were invoked by nothing at all before #163 — not the hook, not the
 Makefile, not CI. One of them had been dead for 58 days without anyone noticing
