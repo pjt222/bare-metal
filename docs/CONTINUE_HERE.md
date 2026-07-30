@@ -1,10 +1,11 @@
 # Session handoff
 
-> Last updated: 2026-07-30T05:03Z | Branch: `main` | tree clean, **0 commits ahead**
-> (all pushed). **#156, #162 CLOSED. #152 Phase 2 DONE.** Three commits pushed:
+> Last updated: 2026-07-30T05:03Z | Branch: `docs/session-handoff-20260730`
+> (PR #166) | `main` at `f5df70c`, worktree clean.
+> **#156, #162 CLOSED. #152 Phase 2 DONE.** Three commits pushed:
 > `c477a28` (#156 hgemm clock-lock gate), `c95bd21` (#152 Phase 2 planner/store/
-> collector), `f5df70c` (#162 renv startup cost). Seven issues filed: **#158, #159,
-> #160, #161, #163, #164, #165**. Next = **#163** (gate the now-cheap 185-assertion
+> collector), `f5df70c` (#162 renv startup cost). Eight issues filed: **#158, #159,
+> #160, #161, #163, #164, #165, #167**. Next = **#163** (gate the now-cheap 185-assertion
 > suite) then **#152 Phase 3** — but read #164 first, it is a Phase 3 blocker.
 > See the 2026-07-29/30 entry below.
 
@@ -27,10 +28,15 @@ errors or strange findings* — file them, do not offer to.
   0.898 (4096³) of their own recorded native baselines, **5 of 7 samples below the
   0.90 floor in each case**. Both configs now carry `clock_lock: 1605` with the
   measured locked medians as baselines (2048³ `0.589 ms / 29174`; 4096³
-  `4.521 ms / 30401`, which reproduces the old native number to 0.01%). Verified
+  `4.521 ms / 30401`, which reproduces the old native number to within 0.02%). Verified
   against a real push: both report SKIPPED, gate `PASSED`.
   Also fixed: `.githooks/pre-push` told the operator to edit `docs/baselines.json`,
   which does not exist (real path `data/baselines.json`).
+- **Process note: those three commits went DIRECT to `main`, no branch, no PR**
+  — contrary to `CONTRIBUTING.md:9-11`. The user then set the standing flow
+  (commit → branch/PR → `advocatus-diaboli` review → **merge commit, never
+  squash**), which starts with this handoff commit (PR #166). Published history
+  was not rewritten to retrofit it.
 - **#152 Phase 2 DONE (`c95bd21`).** Unified spec (`bench_all.yml` gained
   `defaults`/`clocks`/per-kernel `regimes`, reproducing all 7 grid cells),
   taxonomy×regime planner (`effective_regimes`/`plan_cells`/`plan_regimes`/
@@ -43,7 +49,14 @@ errors or strange findings* — file them, do not offer to.
   mount. `.Rprofile` now sets `options(renv.config.synchronized.check = FALSE)`;
   the check is **relocated** to `scripts/audit/renv_check.R`, wired into the
   pre-push hook, `make setup` and new `make renv-check`.
-  **33.2 s → 2.0 s** for a no-op `Rscript`; GPU-free suite **~1 h → 77 s**.
+  **33.2 s → 2.0 s** for a no-op `Rscript` (~16×, paid per process).
+  The 185-assertion suite now runs in **77 s** via a plain `Rscript`
+  (≈2 s startup + ≈75 s of tests). **Do not quote the "~1 h → 77 s" pairing as a
+  clean before/after** — the 1 h was one real `testthat::test_file` run
+  (`1:00:09`, with renv reporting "Dependency discovery took 3500 seconds")
+  measured on battery while four workflow agents hammered the same 9p mount.
+  Same command, wildly different conditions; the honest per-process claim is the
+  33.2 s → 2.0 s pair, both measured on AC idle.
 - **Fixed the reason the new gate would have been red on day one.**
   `scripts/install_cuasmR.R` used base `install.packages()`, which omits renv's
   `RemoteType: local` stamp → `renv::status()` reported
@@ -62,16 +75,26 @@ errors or strange findings* — file them, do not offer to.
 
 ### In Progress
 
-Nothing partially applied — tree is clean and everything is pushed. The only
-uncommitted artifact anywhere is the **NVIDIA FR draft in agent-almanac**
-(untracked; another session's concurrent work in that repo has since landed, so
-it is now safe to commit there when the user decides).
+Nothing partially applied — no half-finished edit anywhere. Two things are
+outstanding rather than in progress:
+
+- **This handoff commit itself** (`841ed7b`) is on `docs/session-handoff-20260730`
+  in **open PR #166**, not on `main`. If you are reading this from the branch, the
+  PR has not merged yet; if from `main`, it has.
+- **NVIDIA FR draft in agent-almanac** —
+  `docs/investigations/nvidia-skills-feature-request-draft.md`, **untracked in
+  that repo's git and NOT posted**. Another session's concurrent work there has
+  since landed, so it is safe to commit when the user decides.
 
 ### Next Steps
 
-1. **#163 — gate the GPU-free suite.** 185 assertions, invoked by *nothing*
-   (not the hook, not CI). The runtime objection is gone (77 s). Suggested order:
-   add a `make test-r` target first, then wire hook + CI to that one entry point.
+1. **#163 — gate the GPU-free suites.** `tests/bench_all/test_bench_all.R` has
+   185 assertions and `tests/bench_regress/` another **69** (`test_parser.R` 32 +
+   `test_meta.R` 37, per `tests/README.md:14-15`) — **254 total, all invoked by
+   nothing** (not the hook, not CI). Do not scope this to the 185 alone; #163's
+   criteria ask explicitly whether `bench_regress`'s tests are in scope. Decide
+   that first, then add one `make test-r` entry point and wire hook + CI to it.
+   The runtime objection is gone (77 s for the 185).
 2. **#164 BEFORE #152 Phase 3.** Three spec surfaces are declared but inert, and
    `warmup` is a genuine Phase 3 blocker: `grid_measure.R:244,259` runs 20 warmup
    launches to settle the GPU at the locked clock; `bench_all` carries the field
@@ -111,7 +134,9 @@ it is now safe to commit there when the user decides).
   verified: `.libPaths()` falls back to `~/R/...` and `cuasmR` reports
   `NOT FOUND`. Any bypass must pair with `R_LIBS_USER`, as
   `run_grid_sweep.ps1:139-141` already does. A bypass that loses cuasmR makes the
-  gate pass **vacuously** — worse than a slow gate.
+  gate pass **vacuously** — worse than a slow gate. (`:139-141` computes
+  `$RenvLibWsl`; the actual `--no-init-file` + `R_LIBS_USER` pairing is at
+  `run_grid_sweep.ps1:402-409`.)
 - **Stop using the `--no-init-file` + `R_LIBS_USER` bypass for ad-hoc work.** A
   plain `Rscript` is now 2.0 s. The bypass remains load-bearing only inside
   `run_grid_sweep.ps1` (for Ctrl+C reasons, `grid_measure.R:26-28`).
@@ -124,20 +149,37 @@ it is now safe to commit there when the user decides).
   the dGPU is powered down on battery. **Check power state first** (#161). No
   `wsl --shutdown`, no reboot. Not the `project_push_hang_wsl_cuda` wedge — there
   was no spinner to kill.
+- **Do NOT quote 31,910 as the canonical `hgemm_16warp` number (#167).** The
+  pinned headline table further down THIS file, `docs/inventory.md:27`, and the
+  hardcoded literal at `kernels/gemm/hgemm_sparse/bench.cu:226` all still present
+  **31,910** as canonical. After #156 the only gate-fair figures are **29,174**
+  (2048³) and **30,401** (4096³) at a 1605 lock. The derived sparse "1.33× over
+  dense" (`inventory.md:38-40`) rests on dense = 31,886, which #159 disputes —
+  but do not recompute it to 1.39× on that basis: 1.33× is a *within-session
+  matched-lock* ratio, which is the methodologically correct construction. The
+  defect is that no document says which comparison is which. Filed as **#167**.
 - **Phase 2 measures the native regime ONLY, by design.** Locked cells are planned
   and listed but deferred; applying a lock is Phase 3's orchestrator. A config
   whose `regimes` omits `native` (only `igemm_sparse_4096`) now gets named in the
   run output, and an empty plan **exits 1** rather than writing an empty report.
 - **An adversarial verify pass caught six defects in the Phase 2 first cut**,
-  before commit — including two I introduced (`--min-valid` killed corpus-wide by
-  folding `defaults$n_samples`; a locked cell with a bad `band_mhz` running with
-  no band gate at all). Assertion count went **233 → 185 on purpose**: 71 of the
-  old ones were in a loop that provably could not fail. Treat a clean-looking
-  first-cut R diff here with suspicion.
+  before commit. **All six were in this session's own diff** — none inherited.
+  Two of them regressed previously working behaviour: `--min-valid` killed
+  corpus-wide by folding `defaults$n_samples` into every config, and a locked
+  cell with a bad `band_mhz` running with no band gate at all. Full list:
+  `docs/convergence_152_design.md:145`. Assertion count went **233 → 185 on
+  purpose**: −71 (a loop that provably could not fail: `expect_silent` over
+  labels `plan_cells` had already validated) **+ ~23 new** discriminating guards
+  added in response to the review. Treat a clean-looking first-cut R diff here
+  with suspicion.
 - **#158's original framing was overstated and has a correction comment.** Native
   is *bimodal across sessions* (30,727 on 2026-06-04 vs 27,307 on 2026-06-05, same
-  reported clock, no throttle either time), not uniformly slower. Trust the
-  comment over the issue body.
+  reported 1785 MHz, no throttle either time), not uniformly slower. Trust the
+  comment over the issue body. NB the 30,727 datum lives in
+  `results/bench_all/20260604T103311/results.json`, which is **gitignored**
+  (`.gitignore:36`) — a fresh clone cannot re-derive it; it is also quoted in the
+  #158 comment. The 27,307 side is reproducible from
+  `scripts/probe/eval_logs/grid_sweep_results.rds`.
 
 ---
 
@@ -579,12 +621,13 @@ peak (174 TFLOPS). Path:
 
 ### Open GitHub issues
 
-Refreshed 2026-07-30. All optimization and build-correctness work is
+Refreshed 2026-07-30 (12 open). All optimization and build-correctness work is
 shipped; open issues are benchmark-pipeline hardening, measurement
 anomalies, and test/gate coverage — no queued kernel work.
 
 | #   | Title                                                                      | Labels |
 |-----|----------------------------------------------------------------------------|--------|
+| 167 | `hgemm_16warp` has two canonical numbers (31,910 vs locked 29,174/30,401)  | bug, documentation |
 | 165 | grid/bench_all store column names diverge (`fill=TRUE` does not align)     | bug, architecture |
 | 164 | three #152 spec surfaces declared but inert (warmup, clocks, summary.md)   | bug, architecture |
 | 163 | the 185-assertion GPU-free R suite is wired into no gate                   | testing, ci |
@@ -592,10 +635,10 @@ anomalies, and test/gate coverage — no queued kernel work.
 | 160 | grid/bench_all cell id mismatch breaks the #152 store-key join             | bug, architecture |
 | 159 | two locked-1605 sessions disagree 4.9% on `hgemm_16warp` 4096³             | bug, performance |
 | 158 | `hgemm_16warp` native boost is bimodal across sessions, no throttle flag   | bug, performance |
-| 157 | Quarto kernel compendium (per-kernel explainer + graph viz)                | documentation |
-| 152 | Unified benchmark tooling: all kernels × {native ∪ locked grid} (epic)     | enhancement, architecture |
-| 128 | Overclocked single-kernel showcase mode (deferred)                         | deprioritized |
-| 124 | `bench-all` one-click full-corpus benchmark runner (epic)                  | enhancement, architecture |
+| 157 | Quarto kernel compendium (per-kernel explainer + graph viz)                | documentation, enhancement |
+| 152 | Unified benchmark tooling: all kernels × {native ∪ locked grid} (epic)     | enhancement, performance, architecture |
+| 128 | Overclocked single-kernel showcase mode (deferred)                         | enhancement, research, deprioritized |
+| 124 | `bench-all` one-click full-corpus benchmark runner (epic)                  | enhancement, performance, architecture |
 
 Closed 2026-07-29: **#156** (`c477a28` — both `hgemm_16warp` configs
 clock-lock-gated), **#162** (`f5df70c` — renv sync check moved off the R
