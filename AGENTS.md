@@ -72,7 +72,7 @@ deterministic first so a doomed push is rejected fast and legibly:
 |------|------|--------|-------------|
 | `scripts/audit/check_links.R` | ~1 s | yes | no |
 | `scripts/audit/renv_check.R` | ~2–10 s | yes | no |
-| `make test-r` | ~2¼ min | yes | no |
+| `make test-r` | ~2 min | yes | no |
 | `make test` | minutes | no (best-effort) | yes |
 | `scripts/bench/bench_regress.R` | minutes | yes | yes |
 
@@ -86,25 +86,40 @@ on the RTX 3070 Ti laptop: `tests/bench_all/test_bench_all.R` 91 s,
 `tests/bench_regress/test_meta.R` 9 s, the `cuasmR` package suite 15 s. On
 battery the same run took 133 s / 140 s.
 
-That battery penalty is only **1.16×**, and the gap is worth knowing about
-because it is much smaller than it looks like it should be. A no-op `Rscript`
-on this box is 2.56 s on AC against 5.34 s on battery — **2.1×**, tracking the
-CPU downclock. The suites do not: they are dominated by filesystem work on the
-9p `/mnt/d` mount, which does not care about the CPU clock. Do not extrapolate
-one from the other — measure the thing you want to quote. (This note exists
-because the first draft of this paragraph predicted "roughly half on AC" from
-the startup ratio, and the measurement came back at 115 s, not 70 s.)
+That battery penalty is only **1.16×**, which is much smaller than it looks like
+it should be: a no-op `Rscript` on this box is **2.1×** slower on battery
+(2.56 s AC, 5.34 s battery), tracking the CPU downclock. The suites do not track
+it, because they are dominated by filesystem work rather than compute — see the
+next paragraph. Do not extrapolate one from the other; measure the thing you
+want to quote. (This note exists because the first draft predicted "roughly half
+on AC" from the startup ratio, and the measurement came back 115 s, not 70 s.)
 
-**Almost all of that runtime is the 9p mount, not the tests.** The same suites,
-same 185 + 37 + 131 assertions, run in **6 s** on a GitHub-hosted runner with an
-ordinary filesystem — `test_bench_all.R` alone goes from 91 s here to 2 s there,
-roughly 45×. If the local hook feels disproportionately slow for what it checks,
-that is why, and it is a property of `/mnt/d` rather than of the test suite.
-Bear it in mind before "optimising" the tests: there is very little there to
-win.
+Both power figures are n=1 and were taken in run order, so a warm page cache
+biases toward the smaller penalty — treat 1.16× as a floor. The 2.0 s AC startup
+recorded under "Startup cost" below is a different day's measurement of the same
+thing; read both as "about 2–2.5 s on AC" rather than trying to reconcile them.
+
+**Most of that runtime is the 9p mount, not the tests.** Controlled measurement,
+2026-07-30 — the same repo copied to ext4 inside the WSL VM and run on the same
+box, same R, same library, so the filesystem is the only variable:
+
+| | `make test-r` | `test_bench_all.R` |
+|---|---|---|
+| `/mnt/d` (9p) | 115 s | 91 s |
+| `~` (ext4) | **14 s** | **6 s** |
+
+**8.2× overall, 15× on the dominant suite.** So roughly seven eighths of the
+local hook cost is the mount, not the assertions. Bear that in mind before
+"optimising" the tests — there is little there to win, and the same work is
+cheap the moment it runs anywhere else.
+
+(A GitHub runner does the same work in 6 s, but do not use that as the
+comparison: it differs in CPU, disk and R build as well as filesystem. An
+earlier draft of this paragraph quoted 45× from exactly that confounded pairing.
+The ext4-on-the-same-box number above is the one that isolates the variable.)
 
 The suites were invoked by nothing at all before #163 — not the hook, not the
-Makefile, not CI. One of them had been dead for 59 days without anyone noticing
+Makefile, not CI. One of them had been dead for 58 days without anyone noticing
 (#171), which is the argument for the gate in one sentence.
 
 **CI limitations.** GitHub-hosted runners have no Ampere GPU. Cubin builds,
@@ -115,9 +130,13 @@ link validation, version-string consistency, Quarto doc rendering) and
 `renv.lock`). Local `make reproduce` remains the only path for GPU verification.
 
 `tests.yml` exists because CI is the only half of the gate a `git push
---no-verify` cannot skip. Note it is not authoritative for everything the local
-run covers: the three `cuasmR` roundtrip tests skip on a runner, since they need
-a built cubin (gitignored) and `nvdisasm` on `PATH`.
+--no-verify` cannot skip. **It is not authoritative for everything the local run
+covers**, and runs strictly fewer assertions: four tests skip on a runner — the
+three `cuasmR` roundtrip tests (they need a built cubin, which is gitignored,
+and `nvdisasm` on `PATH`) and `test_meta.R`'s live-capture test (needs
+`nvidia-smi`). `make test-r` prints the skip count for exactly this reason: a
+skip is coverage that did not happen, and reporting it as a clean pass is how
+the roundtrip check would quietly stop running.
 
 ## Publishing the corpus to Hugging Face
 

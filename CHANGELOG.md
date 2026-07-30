@@ -15,9 +15,11 @@ historical reference.
 ### Added
 - **`make test-r` — the GPU-free R suites are now a gate (#163).** They were
   invoked by nothing before this: not the pre-push hook, not the Makefile, not
-  CI. `scripts/audit/run_r_tests.R` discovers every `tests/**/test_*.R` plus the
-  `cuasmR` package suite (glob, not a manifest — a manifest would recreate the
-  bug being fixed) and runs each in its own child `Rscript`, serially. Separate
+  CI. `scripts/audit/run_r_tests.R` discovers every `tests/**/test[-_]*.R` plus
+  the `cuasmR` package suite (glob, not a manifest — a manifest would recreate
+  the bug being fixed; both separators, because `test-` is what
+  `usethis::use_test()` emits) and runs each in its own child `Rscript`,
+  serially. Separate
   processes because `scripts/bench/bench_all.R` and `bench_regress.R` both define
   `main` and `parse_args` and the suites `source()` into `globalenv()`; serially
   because concurrent R on the 9p `/mnt/d` mount is what turned a 75 s suite into
@@ -25,9 +27,18 @@ historical reference.
   and before the CUDA build) and into a new `.github/workflows/tests.yml` with an
   `renv.lock`-keyed cache. 115 s of tests on AC; AGENTS.md records the
   measurement conditions, and why the battery figure is only 1.16× higher
-  despite a 2.1× slower R startup. Proven able to fail three ways before
-  landing: a real dead suite, a deliberate mutation of `normalise_clock`'s
-  lower bound, and a clean tree passing.
+  despite a 2.1× slower R startup — and that ~7/8 of the local cost is the 9p
+  mount, measured against the same repo on ext4 on the same box (14 s vs 115 s).
+  Proven able to fail two ways before landing, against a clean tree's exit 0:
+  a real dead suite, and a deliberate mutation of `normalise_clock`'s lower
+  bound. The dead-suite demonstration is not reproducible from the resulting
+  tree, since this change deletes that suite.
+  Two guards exist because "all discovered suites passed" is otherwise a ratio
+  against whatever was found, and so always 100%: `--expect N` (passed by both
+  the hook and CI) fails if the discovered suite count changes, and skipped
+  tests are counted and reported per suite rather than folded into a pass —
+  without which the `cuasmR` byte-identical roundtrip check would silently stop
+  running the moment `nvdisasm` left `PATH`.
 - **`make bench-all` full-corpus runner (#124).** New on-demand "run
   everything" pass: `scripts/bench/bench_all.R` discovers the whole
   `$(BENCH_EXES)` corpus, runs every bench, and records every attempt +
@@ -78,7 +89,7 @@ historical reference.
 - **Retired the dead `tests/bench_regress/test_parser.R` (#171).** All 14 of its
   `test_that` groups had been erroring since `caeca97` (2026-06-02), which removed
   the `.pick_line` / `.parse_line` pair it exercises in favour of
-  `cuasmR::parse_throughput` (#134) without updating the test — 59 days dead,
+  `cuasmR::parse_throughput` (#134) without updating the test — 58 days dead,
   unnoticed because nothing ran it. Two things hid it: the file ends in an
   unconditional `cat("All bench_regress parser tests passed.")` that printed while
   every group errored, and testthat's default `max_fails` of 10 truncated the

@@ -195,8 +195,14 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 # gets its own child process (globalenv symbol collisions) run serially (the 9p
 # mount) and why it uses `Rscript <file>` rather than testthat::test_file()
 # (test_file chdirs, which masks a non-portable source path).
+# R_SUITES is the expected suite count, passed in from OUTSIDE the runner.
+# Without it "all discovered suites passed" is a ratio against whatever was
+# discovered and is therefore always 100% -- delete every suite and the gate
+# still goes green. Bump this deliberately when adding or removing a suite.
+R_SUITES ?= 3
+
 test-r:
-	@$(RSCRIPT) scripts/audit/run_r_tests.R
+	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES)
 
 # ------------------------------------------------------------------
 # Disassembly

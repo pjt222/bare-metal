@@ -117,9 +117,9 @@ first:
 4. `make test` — build and smoke-test benches (best-effort; does not block)
 5. `scripts/bench/bench_regress.R` — performance against `data/baselines.json`
 
-Steps 1, 2, 3 and 5 block the push on failure. Only step 3 needs no GPU, so it
-is the one substantial check that still works on a machine with no card
-attached.
+Steps 1, 2, 3 and 5 block the push on failure; step 4 is best-effort. Steps 1–3
+need no GPU, so on a machine with no card attached they still run — and step 3
+is the substantial one among them.
 
 **Bypass** (for WIP or when you know baseline is stale):
 ```bash

@@ -20,11 +20,18 @@ on:
   push:
   pull_request:
 
+# A PR from a branch in this repo triggers both events; without this the whole
+# restore runs twice for every push to an open PR.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   r-suites:
     name: GPU-free R suites
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       # Full checkout, not shallow or path-filtered: tests/bench_all/test_bench_all.R
@@ -59,13 +66,20 @@ jobs:
           test -n "$RSPM"   # fail loudly rather than silently falling back to source
           echo "RENV_CONFIG_REPOS_OVERRIDE=$RSPM" >> "$GITHUB_ENV"
 
+      # The key carries $RSPM (which encodes the Ubuntu codename) and runner.arch,
+      # because the cache now holds PPM *binaries* built for one distro and one
+      # architecture. renv's own cache path records R version and platform but
+      # NOT the distro, and `runner.os` is just "Linux" — so a key without the
+      # codename would hand last-LTS binaries to the next image the day
+      # ubuntu-latest rolls over, and the restore-keys prefix would make that
+      # silent. Same hazard if this job ever moves to an arm runner.
       - name: Cache renv library
         uses: actions/cache@v4
         with:
           path: ~/.cache/R/renv
-          key: renv-${{ runner.os }}-r4.6.0-${{ hashFiles('renv.lock') }}
+          key: renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-${{ hashFiles('.github/workflows/tests.yml') }}-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-${{ hashFiles('renv.lock') }}
           restore-keys: |
-            renv-${{ runner.os }}-r4.6.0-
+            renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-${{ hashFiles('.github/workflows/tests.yml') }}-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-
 
       # cuasmR is excluded from the restore on purpose: renv.lock:391-394 records
       # it as Source: Local, which describes a package built from this working
@@ -74,26 +88,51 @@ jobs:
       # since three of the four suites load the INSTALLED cuasmR while the
       # package suite loads the source tree. Installing from the working tree
       # means both halves see the same code.
+      #
+      # `test -n "$RSPM"` above proves the variable is set, NOT that PPM serves
+      # binaries for this distro/arch — public PPM has no binaries for arm64 or
+      # for a codename it has not caught up with yet, and in that case everything
+      # source-builds and `fs` dies on libuv again. The observable signal is in
+      # the restore log: a served binary prints "[installed binary]". Tee the log
+      # and assert on it, so the fallback-to-source case fails loudly here rather
+      # than mysteriously three steps later.
       - name: Restore R dependencies (excluding the local cuasmR package)
-        shell: Rscript {0}
         run: |
-          if (!requireNamespace("renv", quietly = TRUE))
-            install.packages("renv")
-          renv::restore(exclude = "cuasmR")
+          set -o pipefail
+          Rscript -e 'if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv"); renv::restore(exclude = "cuasmR")' 2>&1 | tee restore.log
+
+      - name: Assert the restore used binaries, not source builds
+        run: |
+          n_binary=$(grep -c 'installed binary' restore.log || true)
+          n_source=$(grep -c 'built from source' restore.log || true)
+          echo "installed binary: $n_binary | built from source: $n_source"
+          if [ "$n_binary" -eq 0 ] && [ "$n_source" -gt 0 ]; then
+            echo "::error::renv restored entirely from source — the PPM binary repo is not being used."
+            echo "This is how the first version of this job failed (fs -> libuv1-dev)."
+            echo "Check \$RSPM ($RENV_CONFIG_REPOS_OVERRIDE) actually serves binaries for this runner."
+            exit 1
+          fi
 
       - name: Install cuasmR from the working tree
         run: R CMD INSTALL R/cuasmR
 
+      # --expect is the outside denominator: "all discovered suites passed" is
+      # always 100% of whatever was found, so without it a vanished or renamed
+      # suite is invisible. Keep in step with R_SUITES in the Makefile.
       - name: List the suites that will run
-        run: Rscript scripts/audit/run_r_tests.R --list
+        run: Rscript scripts/audit/run_r_tests.R --list --expect 3
 
       # Runs the same entry point the pre-push hook runs. No `make` prerequisites
       # are triggered: test-r has none, by design.
       #
-      # Expect 3 skips: R/cuasmR/tests/testthat/test-roundtrip.R needs
-      # kernels/tutorial/vector_add.sm_86.cubin, which is gitignored (.gitignore:2)
-      # and cannot exist on a runner, and also needs nvdisasm on PATH. That
-      # coverage is local-only — a fact worth remembering before treating this
-      # job as authoritative for everything.
+      # Expect 4 skips on a runner, and the runner now prints the count:
+      #   3x R/cuasmR/tests/testthat/test-roundtrip.R — needs
+      #      kernels/tutorial/vector_add.sm_86.cubin (gitignored, .gitignore:2)
+      #      and nvdisasm on PATH, neither of which a runner has;
+      #   1x tests/bench_regress/test_meta.R:180-183 — live capture, needs
+      #      nvidia-smi.
+      # So CI runs strictly FEWER assertions than a local run, and is not
+      # authoritative for that coverage. If this number changes, something
+      # changed about what the gate actually exercises — find out what.
       - name: Run the GPU-free R suites
         run: make test-r

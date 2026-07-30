@@ -91,7 +91,7 @@ fi
 # suite were invoked by nothing at all -- not this hook, not the Makefile, not
 # CI. They held regression guards written because the corresponding bug had
 # already happened once, and they only ran when someone remembered. One of them
-# had been dead for 59 days without anyone noticing (#171).
+# had been dead for 58 days without anyone noticing (#171).
 #
 # This is the slowest blocking step by far. It is here rather than in CI alone
 # because CI cannot catch a `--no-verify` push, and it is GPU-free so it is the
@@ -104,8 +104,10 @@ fi
 # visible reason.
 echo ""
 echo "--- Running GPU-free R test suites (make test-r) ---"
-R_TEST_RUNNER="scripts/audit/run_r_tests.R"
-if [ -f "$R_TEST_RUNNER" ]; then
+# Guard on the Makefile, not on the runner script: `make test-r` is what runs,
+# and guarding a different artefact means renaming the runner downgrades a
+# blocking gate to a yellow "skipping" warning while the push sails through.
+if [ -f "Makefile" ]; then
     if make test-r; then
         echo -e "${GREEN}All GPU-free R suites passed.${NC}"
     else
@@ -113,12 +115,12 @@ if [ -f "$R_TEST_RUNNER" ]; then
         echo -e "${RED}GPU-FREE R TESTS FAILED${NC} (see above)"
         echo ""
         echo "Re-run locally with:  make test-r"
-        echo "List the suites:      Rscript $R_TEST_RUNNER --list"
+        echo "List the suites:      Rscript scripts/audit/run_r_tests.R --list"
         echo "To bypass (for WIP commits):  git push --no-verify"
         exit 1
     fi
 else
-    echo -e "${YELLOW}WARNING: $R_TEST_RUNNER not found — skipping${NC}"
+    echo -e "${YELLOW}WARNING: Makefile not found — skipping${NC}"
 fi
 
 # Attempt to build benchmarks (best-effort; don't block push on build failure).

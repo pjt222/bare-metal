@@ -50,11 +50,13 @@
 # that is actually portable.
 #
 # A useful side effect: under `Rscript <file>` a failing test_that aborts the
-# script, so the unconditional cat("All ... tests passed.") that each suite ends
-# with (test_parser.R:178, test_meta.R:192, test_bench_all.R:507) is never
-# reached. Under test_file() it prints even when every group in the file errored.
-# Either way the verdict here comes from the child's exit status, never from what
-# the child wrote.
+# script, so a suite's trailing top-level cat() is never reached. Under
+# test_file() it prints even when every group in the file errored -- the retired
+# test_parser.R printed "All bench_regress parser tests passed." while all 14 of
+# its groups were erroring, which is how it stayed dead for 58 days.
+# tests/bench_regress/test_meta.R:192 still ends in such a line
+# ("All bench_meta tests passed."). Either way the verdict here comes from the
+# child's exit status, never from what the child wrote.
 #
 # testthat DEFAULTS WORTH KNOWING
 #
@@ -65,23 +67,54 @@
 #     the default showed 10). Irrelevant to the `Rscript <file>` form, which stops
 #     at the first failure by design, but set explicitly for the package suite.
 #
+# WHY --expect EXISTS
+#
+# "All discovered suites passed" is a ratio against whatever was discovered, so
+# it is always 100%. Delete every suite and this script still exits 0, reporting
+# 0/0. A gate whose denominator is supplied by the thing it is checking cannot
+# detect its own erosion -- and erosion by silence is precisely the failure #163
+# was filed about. `--expect N` supplies the denominator from outside. The hook
+# and CI both pass it; changing the suite count is then a deliberate edit rather
+# than something that happens to you.
+#
 # Usage:
-#   Rscript scripts/audit/run_r_tests.R           # run every suite, report, exit 0/1
-#   Rscript scripts/audit/run_r_tests.R --list    # print the discovered suites, run nothing
-#   Rscript scripts/audit/run_r_tests.R --quiet   # only print on failure
+#   Rscript scripts/audit/run_r_tests.R             # run every suite, report, exit 0/1
+#   Rscript scripts/audit/run_r_tests.R --expect 3  # ...and fail unless exactly 3 were found
+#   Rscript scripts/audit/run_r_tests.R --list      # print the discovered suites, run nothing
+#   Rscript scripts/audit/run_r_tests.R --quiet     # suppress this script's own
+#                                                   # banners and summary table.
+#                                                   # testthat's report still
+#                                                   # prints: children stream.
 #
 # Exit codes:
 #   0  every suite passed
-#   1  at least one suite failed, errored, or could not be discovered
+#   1  a suite failed or errored, none were discovered, or the discovered count
+#      did not match --expect
 
 args  <- commandArgs(trailingOnly = TRUE)
 quiet <- "--quiet" %in% args
 list_only <- "--list" %in% args
 
+expect_n <- NA_integer_
+if ("--expect" %in% args) {
+  i <- match("--expect", args)
+  if (i == length(args)) {
+    cat("run_r_tests.R: --expect needs a value\n")
+    quit(status = 1)
+  }
+  expect_n <- suppressWarnings(as.integer(args[i + 1L]))
+  if (is.na(expect_n) || expect_n < 0L) {
+    cat("run_r_tests.R: --expect needs a non-negative integer, got: ",
+        args[i + 1L], "\n", sep = "")
+    quit(status = 1)
+  }
+  args <- args[-c(i, i + 1L)]
+}
+
 unknown <- setdiff(args, c("--quiet", "--list"))
 if (length(unknown)) {
   cat("run_r_tests.R: unknown argument(s): ", paste(unknown, collapse = " "), "\n", sep = "")
-  cat("Usage: Rscript scripts/audit/run_r_tests.R [--list] [--quiet]\n")
+  cat("Usage: Rscript scripts/audit/run_r_tests.R [--list] [--quiet] [--expect N]\n")
   quit(status = 1)
 }
 
@@ -99,10 +132,16 @@ repo_root <- if (!is.na(this_file) && nzchar(this_file)) {
 #
 # Globbed, not a hardcoded manifest. A hardcoded list reproduces the exact bug
 # #163 exists to fix: a suite added later is silently ungated. Anything matching
-# tests/**/test_*.R is picked up the day it lands.
+# tests/**/test_*.R or tests/**/test-*.R is picked up the day it lands.
+#
+# BOTH separators, deliberately. The two files under tests/ happen to use
+# `test_`, but `test-` is what testthat's own convention produces --
+# usethis::use_test() emits it, and R/cuasmR/tests/testthat/ is already all
+# `test-`. An underscore-only glob would silently skip the next suite someone
+# creates the ordinary way, which is #163 verbatim, re-armed.
 suites <- list.files(
   file.path(repo_root, "tests"),
-  pattern    = "^test_.*\\.R$",
+  pattern    = "^test[-_].*\\.R$",
   recursive  = TRUE,
   full.names = TRUE)
 suites <- sort(suites)
@@ -114,7 +153,12 @@ cuasmr_tests <- file.path(repo_root, "R", "cuasmR", "tests", "testthat")
 has_cuasmr <- dir.exists(cuasmr_tests) &&
   length(list.files(cuasmr_tests, pattern = "^test-.*\\.R$")) > 0L
 
-rel <- function(p) sub(paste0("^", repo_root, "/"), "", p)
+# fixed=TRUE, not a regex: a checkout path containing "(", "+" or "[" would
+# otherwise throw or mis-strip.
+rel <- function(p) {
+  prefix <- paste0(repo_root, "/")
+  ifelse(startsWith(p, prefix), substring(p, nchar(prefix) + 1L), p)
+}
 
 if (length(suites) == 0L && !has_cuasmr) {
   cat("run_r_tests.R: no GPU-free R suites discovered under ", rel(file.path(repo_root, "tests")), "\n", sep = "")
@@ -125,11 +169,34 @@ if (length(suites) == 0L && !has_cuasmr) {
 
 n_total <- length(suites) + as.integer(has_cuasmr)
 
+expect_ok <- is.na(expect_n) || identical(n_total, expect_n)
+
 if (list_only) {
   cat("GPU-free R suites (", n_total, "):\n", sep = "")
   for (s in suites) cat("  ", rel(s), "\n", sep = "")
   if (has_cuasmr) cat("  ", rel(cuasmr_tests), " (cuasmR package suite)\n", sep = "")
+  if (!expect_ok) {
+    cat("\nEXPECTED ", expect_n, " suite(s), DISCOVERED ", n_total, ".\n", sep = "")
+    quit(status = 1)
+  }
   quit(status = 0)
+}
+
+if (!expect_ok) {
+  cat("\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  GPU-free R suites: SUITE COUNT CHANGED\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  expected ", expect_n, ", discovered ", n_total, "\n\n", sep = "")
+  for (s in suites) cat("  found  ", rel(s), "\n", sep = "")
+  if (has_cuasmr) cat("  found  ", rel(cuasmr_tests), " (cuasmR package suite)\n", sep = "")
+  cat("\n")
+  cat("A suite was added, removed, or renamed out of the discovery pattern\n")
+  cat("(^test[-_].*\\.R$ under tests/). If that was intentional, update the\n")
+  cat("--expect value in .githooks/pre-push and .github/workflows/tests.yml.\n")
+  cat("If it was not, a suite just stopped being gated -- which is the exact\n")
+  cat("failure #163 was filed about.\n")
+  quit(status = 1)
 }
 
 if (!requireNamespace("testthat", quietly = TRUE)) {
@@ -142,6 +209,23 @@ if (!requireNamespace("testthat", quietly = TRUE)) {
 
 rscript <- file.path(R.home("bin"), "Rscript")
 
+# Count skipped tests in a captured child log.
+#
+# Two renderings, because the two invocation forms use different reporters:
+#   * `Rscript <file>` (StopReporter) prints a "-- Skip: <name> --" block per
+#     skip, with the reason on the next line.
+#   * test_local() (ProgressReporter) prints one "[ FAIL n | WARN n | SKIP n |
+#     PASS n ]" summary line.
+# Prefer the summary line where present; fall back to counting blocks.
+count_skips <- function(lines) {
+  summary_line <- grep("SKIP\\s+[0-9]+", lines, value = TRUE)
+  if (length(summary_line)) {
+    n <- sub(".*SKIP\\s+([0-9]+).*", "\\1", summary_line[length(summary_line)])
+    return(suppressWarnings(as.integer(n)))
+  }
+  sum(grepl("Skip:", lines, fixed = TRUE))
+}
+
 run_child <- function(cmd_args, label) {
   if (!quiet) {
     cat("\n", strrep("-", 72), "\n", sep = "")
@@ -149,20 +233,36 @@ run_child <- function(cmd_args, label) {
     cat(strrep("-", 72), "\n", sep = "")
   }
   started <- Sys.time()
-  # stdout/stderr inherit so a two-minute suite shows progress rather than
-  # going silent. testthat writes its whole report to stderr, so never redirect
-  # it away. The exit status is the verdict.
-  code <- system2(rscript, cmd_args)
-  list(code = as.integer(code),
-       secs = as.numeric(difftime(Sys.time(), started, units = "secs")))
+  logfile <- tempfile("r_suite_", fileext = ".log")
+  on.exit(unlink(logfile), add = TRUE)
+
+  # The output is both streamed and captured. Streamed because a suite can run
+  # for minutes on the 9p mount and a silent hook reads as a hung one; captured
+  # because the verdict needs a skip count, and a suite whose tests all skipped
+  # must not be reportable as a clean pass (that is how the roundtrip coverage
+  # would vanish the moment nvdisasm left PATH).
+  #
+  # `tee` swallows the child's exit status, so pipefail is required. testthat
+  # writes its report to stderr, hence 2>&1 -- never redirect it away.
+  cmdline <- paste(c(shQuote(rscript), cmd_args), collapse = " ")
+  code <- system2("/bin/bash", c("-c", shQuote(sprintf(
+    "set -o pipefail; %s 2>&1 | tee %s", cmdline, shQuote(logfile)))))
+
+  lines <- if (file.exists(logfile)) readLines(logfile, warn = FALSE) else character(0)
+  list(code  = as.integer(code),
+       skips = count_skips(lines),
+       secs  = as.numeric(difftime(Sys.time(), started, units = "secs")))
 }
 
 results <- list()
 
 # Children run from the repo root so each suite's *relative* source candidate
 # resolves. See the test_file() note in the header -- this is load-bearing.
-old_wd <- setwd(repo_root)
-on.exit(setwd(old_wd), add = TRUE)
+#
+# Not paired with an on.exit() restore: at top level on.exit() registers nothing,
+# and this script always ends in quit(), which does not run exit handlers anyway.
+# The cwd change dies with the process, which is the whole scope that matters.
+setwd(repo_root)
 
 for (s in suites) {
   r <- run_child(c(shQuote(rel(s))), rel(s))
@@ -186,17 +286,37 @@ if (has_cuasmr) {
 # ---- report ----------------------------------------------------------------
 
 failed <- names(results)[vapply(results, function(r) r$code != 0L, logical(1))]
-total_secs <- sum(vapply(results, function(r) r$secs, numeric(1)))
+total_secs  <- sum(vapply(results, function(r) r$secs, numeric(1)))
+total_skips <- sum(vapply(results, function(r) r$skips, integer(1)), na.rm = TRUE)
+
+# Skips are reported, always, and per suite. A skip is coverage that did not
+# happen: three of the cuasmR roundtrip tests skip without a built cubin or
+# without nvdisasm on PATH, and one test_meta.R test skips without nvidia-smi.
+# Printed only as a total, "3/3 PASSED (4 skipped)" would read as a clean run to
+# anyone not counting -- and the byte-identical roundtrip check is exactly the
+# coverage you would least want to lose without noticing.
+suite_line <- function(nm, mark) {
+  sk <- results[[nm]]$skips
+  sprintf("  %-4s %-48s %5.0f s%s\n", mark, nm, results[[nm]]$secs,
+          if (!is.na(sk) && sk > 0L) sprintf("  (%d skipped)", sk) else "")
+}
 
 if (length(failed) == 0L) {
   if (!quiet) {
     cat("\n")
     cat(strrep("=", 72), "\n", sep = "")
     cat("  GPU-free R suites: ", n_total, "/", n_total, " PASSED",
-        sprintf("  (%.0f s)", total_secs), "\n", sep = "")
+        sprintf("  (%.0f s", total_secs),
+        if (total_skips > 0L) sprintf(", %d skipped)", total_skips) else ")",
+        "\n", sep = "")
     cat(strrep("=", 72), "\n", sep = "")
-    for (nm in names(results)) {
-      cat(sprintf("  ok  %-52s %5.0f s\n", nm, results[[nm]]$secs))
+    for (nm in names(results)) cat(suite_line(nm, "ok"))
+    if (total_skips > 0L) {
+      cat("\n")
+      cat("  ", total_skips, " test(s) skipped -- that coverage did NOT run.\n", sep = "")
+      cat("  Usually: no built cubin (make cubins), nvdisasm off PATH, or no\n")
+      cat("  nvidia-smi. Expected on a CI runner; on a dev box it means the\n")
+      cat("  roundtrip and live-capture checks were not exercised.\n")
     }
   }
   quit(status = 0)
@@ -204,12 +324,12 @@ if (length(failed) == 0L) {
 
 cat("\n")
 cat(strrep("=", 72), "\n", sep = "")
-cat("  GPU-free R suites: ", length(failed), " of ", n_total, " FAILED\n", sep = "")
+cat("  GPU-free R suites: ", length(failed), " of ", n_total, " FAILED",
+    if (total_skips > 0L) sprintf("  (%d skipped)", total_skips) else "",
+    "\n", sep = "")
 cat(strrep("=", 72), "\n", sep = "")
 for (nm in names(results)) {
-  cat(sprintf("  %-3s %-52s %5.0f s\n",
-              if (results[[nm]]$code == 0L) "ok" else "FAIL",
-              nm, results[[nm]]$secs))
+  cat(suite_line(nm, if (results[[nm]]$code == 0L) "ok" else "FAIL"))
 }
 cat("\n")
 cat("Re-run one suite on its own, from the repo root:\n")
