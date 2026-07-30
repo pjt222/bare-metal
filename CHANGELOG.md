@@ -13,6 +13,21 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **`make test-r` — the GPU-free R suites are now a gate (#163).** They were
+  invoked by nothing before this: not the pre-push hook, not the Makefile, not
+  CI. `scripts/audit/run_r_tests.R` discovers every `tests/**/test_*.R` plus the
+  `cuasmR` package suite (glob, not a manifest — a manifest would recreate the
+  bug being fixed) and runs each in its own child `Rscript`, serially. Separate
+  processes because `scripts/bench/bench_all.R` and `bench_regress.R` both define
+  `main` and `parse_args` and the suites `source()` into `globalenv()`; serially
+  because concurrent R on the 9p `/mnt/d` mount is what turned a 75 s suite into
+  an hour (#162). Wired into `.githooks/pre-push` (blocking, after the renv check
+  and before the CUDA build) and into a new `.github/workflows/tests.yml` with an
+  `renv.lock`-keyed cache. 115 s of tests on AC; AGENTS.md records the
+  measurement conditions, and why the battery figure is only 1.16× higher
+  despite a 2.1× slower R startup. Proven able to fail three ways before
+  landing: a real dead suite, a deliberate mutation of `normalise_clock`'s
+  lower bound, and a clean tree passing.
 - **`make bench-all` full-corpus runner (#124).** New on-demand "run
   everything" pass: `scripts/bench/bench_all.R` discovers the whole
   `$(BENCH_EXES)` corpus, runs every bench, and records every attempt +
@@ -60,6 +75,30 @@ historical reference.
   pattern.
 
 ### Fixed
+- **Retired the dead `tests/bench_regress/test_parser.R` (#171).** All 14 of its
+  `test_that` groups had been erroring since `caeca97` (2026-06-02), which removed
+  the `.pick_line` / `.parse_line` pair it exercises in favour of
+  `cuasmR::parse_throughput` (#134) without updating the test — 59 days dead,
+  unnoticed because nothing ran it. Two things hid it: the file ends in an
+  unconditional `cat("All bench_regress parser tests passed.")` that printed while
+  every group errored, and testthat's default `max_fails` of 10 truncated the
+  tally so four groups never even executed. The behaviours it covered that nothing
+  else does — 8 of 14, including the only section-filter case that can actually
+  detect a broken filter — are tracked in #172.
+- **`cuasmR` roundtrip tests now skip when `nvdisasm` is off `PATH`.** They
+  guarded on the cubin existing but not on the disassembler, so a developer with
+  cubins built and CUDA off `PATH` got a hard `stop()` from `disasm.R:6` — an
+  environment failure blocking a push, inside a target whose whole selling point
+  is that it needs no GPU.
+- **Documentation drift around the gate.** `AGENTS.md` named
+  `scripts/install-hooks.sh` as the gate (that script *installs* it; the gate is
+  `.githooks/pre-push`), described `make reproduce` as four steps when it is five,
+  and omitted `renv-check`, `bench-all` and `figures` from the target list.
+  `tests/README.md` omitted `tests/bench_all/` entirely, described `test_meta.R`
+  as testing "cuasmR GPU-state functions" when it sources
+  `scripts/bench/bench_meta.R`, and advertised the dead parser suite as live with
+  exact assertion counts. `CONTRIBUTING.md`'s hook list was missing two of the
+  four steps it already had.
 - **bench↔cubin name mismatch across BenchDriver-refactored benches
   (#148).** ~16 flash-attention, resblock, and attention-layer benches
   called `load_kernel("<basename>.sm_86.cubin", …)` with abbreviated

@@ -46,12 +46,16 @@ from `LD_LIBRARY_PATH` unless re-added, which existing
 Single entry points, all defined in the root `Makefile`:
 
 ```
-make reproduce   # setup + verify + all + bench
-make setup       # renv::restore() + install local cuasmR
+make reproduce   # setup + verify + all + bench + figures
+make setup       # renv::restore() + install local cuasmR + renv sync check
 make verify      # CUDA, GPU, cuasmR, renv health check
+make renv-check  # verify renv.lock matches the installed library
 make all         # compile every .cu to .cubin and every bench
 make bench       # run benches vs data/baselines.json
+make bench-all   # full-corpus run, records to results/bench_all/
 make test        # smoke-test compiled GEMM/reductions/elementwise
+make test-r      # GPU-free R test suites (needs no CUDA, no GPU)
+make figures     # regenerate docs/figures via R scripts
 make clean       # remove cubins, sass dumps, bench executables
 make disasm      # disassemble all cubins via scripts/build.R
 ```
@@ -60,15 +64,52 @@ Family-narrow targets exist: `make tutorial gemm reductions
 attention convolution elementwise memory_layout composition
 reference`.
 
-The pre-push gate is `scripts/install-hooks.sh`, which runs
-`make test`, a README link audit, `scripts/audit/renv_check.R`, and
-`scripts/bench/bench_regress.R`.
+The pre-push gate is `.githooks/pre-push` (installed by
+`scripts/install-hooks.sh`). It runs five steps, ordered cheapest and most
+deterministic first so a doomed push is rejected fast and legibly:
+
+| Step | Runs | Blocks | Needs a GPU |
+|------|------|--------|-------------|
+| `scripts/audit/check_links.R` | ~1 s | yes | no |
+| `scripts/audit/renv_check.R` | ~2–10 s | yes | no |
+| `make test-r` | ~2¼ min | yes | no |
+| `make test` | minutes | no (best-effort) | yes |
+| `scripts/bench/bench_regress.R` | minutes | yes | yes |
+
+`renv_check` precedes `test-r` because every R suite needs `cuasmR` loadable, so
+an out-of-sync library should produce renv's diagnosis rather than a confusing
+testthat error. `make test` precedes `bench_regress.R` because it builds the
+executables that get measured.
+
+**`make test-r` runtime.** 115 s of tests / 124 s wall on AC, measured 2026-07-30
+on the RTX 3070 Ti laptop: `tests/bench_all/test_bench_all.R` 91 s,
+`tests/bench_regress/test_meta.R` 9 s, the `cuasmR` package suite 15 s. On
+battery the same run took 133 s / 140 s.
+
+That battery penalty is only **1.16×**, and the gap is worth knowing about
+because it is much smaller than it looks like it should be. A no-op `Rscript`
+on this box is 2.56 s on AC against 5.34 s on battery — **2.1×**, tracking the
+CPU downclock. The suites do not: they are dominated by filesystem work on the
+9p `/mnt/d` mount, which does not care about the CPU clock. Do not extrapolate
+one from the other — measure the thing you want to quote. (This note exists
+because the first draft of this paragraph predicted "roughly half on AC" from
+the startup ratio, and the measurement came back at 115 s, not 70 s.)
+
+The suites were invoked by nothing at all before #163 — not the hook, not the
+Makefile, not CI. One of them had been dead for 59 days without anyone noticing
+(#171), which is the argument for the gate in one sentence.
 
 **CI limitations.** GitHub-hosted runners have no Ampere GPU. Cubin builds,
 benchmark runs, and anything requiring `nvcc -arch=sm_86` cannot run in CI.
-The `.github/workflows/docs.yml` workflow covers only GPU-free checks: markdown
-link validation, version-string consistency, and Quarto doc rendering. Local
-`make reproduce` remains the only path for GPU verification.
+Two workflows cover the GPU-free surface: `.github/workflows/docs.yml` (markdown
+link validation, version-string consistency, Quarto doc rendering) and
+`.github/workflows/tests.yml` (`make test-r`, against an renv library cached on
+`renv.lock`). Local `make reproduce` remains the only path for GPU verification.
+
+`tests.yml` exists because CI is the only half of the gate a `git push
+--no-verify` cannot skip. Note it is not authoritative for everything the local
+run covers: the three `cuasmR` roundtrip tests skip on a runner, since they need
+a built cubin (gitignored) and `nvdisasm` on `PATH`.
 
 ## Publishing the corpus to Hugging Face
 

@@ -23,7 +23,10 @@ The `make reproduce` target runs:
 
 A clean run on a healthy GPU ends with `RESULT: PASSED -- all
 benchmarks within tolerance`. The pre-push git hook calls the same
-regression check, so what passes locally also passes the hook.
+regression check, plus checks this command does not: a README link
+audit, an renv sync check, and the GPU-free R test suites
+(`make test-r`, #163). Run `make test-r` before pushing if you have
+touched anything under `scripts/bench/`, `R/cuasmR/` or `tests/`.
 
 ## System prerequisites (one-time)
 
