@@ -1,0 +1,200 @@
+name: tests
+
+# GPU-free R test suites (#163).
+#
+# These suites were, until #163, invoked by nothing at all — not the pre-push
+# hook, not the Makefile, not CI. This workflow is the half of the gate that a
+# `git push --no-verify` cannot skip.
+#
+# Kept separate from docs.yml deliberately: that workflow is named `docs` and its
+# header scopes it to markdown links, version strings and Quarto rendering. Test
+# execution is a different concern with a different (much heavier) dependency
+# set, and mixing them would make a slow renv restore a prerequisite for a 30 s
+# link check.
+#
+# As with docs.yml, nothing GPU-dependent runs here: hosted runners have no
+# Ampere card. Everything below drives pure R functions over checked-in sources
+# and canned fixtures.
+
+on:
+  # `push` is scoped to main. A branch in this repo with an open PR fires BOTH
+  # events, and `github.ref` differs between them (refs/heads/<branch> vs
+  # refs/pull/<n>/merge), so no concurrency group can collapse them — measured on
+  # PR #175, which ran this workflow twice per push before the trigger was scoped.
+  # PRs are covered by pull_request; pushes to main verify the merge result.
+  push:
+    branches: [main]
+  pull_request:
+
+# Collapses rapid successive pushes to the same PR. Keyed on the PR number where
+# there is one, so every event for a given PR shares a group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  r-suites:
+    name: GPU-free R suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # Full checkout, not shallow or path-filtered: tests/bench_all/test_bench_all.R
+      # asserts the discovered bench corpus has >= 40 entries (currently 48, all
+      # tracked), so a partial checkout fails the suite for the wrong reason.
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.0"
+          use-public-rspm: true
+
+      # renv.lock pins cloud.r-project.org (renv.lock:3-8), which serves source
+      # tarballs only. Left alone, every cache miss source-builds the locked
+      # dependency set: that is slow, and it fails outright on any package
+      # needing a system library the runner lacks — `fs` wants libuv1-dev, and
+      # it drags bslib, sass, pkgload, rmarkdown and testthat down with it.
+      # docs.yml:94-95 documents the same trap from the other direction.
+      #
+      # setup-r with use-public-rspm exports the Posit Package Manager binary
+      # repo for this runner's distro as $RSPM. Use that env var directly.
+      #
+      # Do NOT try to read this out of R with getOption("repos")[["CRAN"]]:
+      # this repo's .Rprofile activates renv, which resets `repos` from the
+      # lockfile, so R reports cloud.r-project.org and the override silently
+      # becomes a no-op that reinstates the source-only repo it was meant to
+      # replace. Measured: that is exactly how the first version of this job
+      # failed.
+      - name: Point renv at the binary repo setup-r configured
+        run: |
+          echo "Binary repo: $RSPM"
+          test -n "$RSPM"   # fail loudly rather than silently falling back to source
+          echo "RENV_CONFIG_REPOS_OVERRIDE=$RSPM" >> "$GITHUB_ENV"
+
+      # The key carries $RSPM (which encodes the Ubuntu codename) and runner.arch,
+      # because the cache now holds PPM *binaries* built for one distro and one
+      # architecture. renv's own cache path records R version and platform but
+      # NOT the distro, and `runner.os` is just "Linux" — so a key without the
+      # codename would hand last-LTS binaries to the next image the day
+      # ubuntu-latest rolls over, and the restore-keys prefix would make that
+      # silent. Same hazard if this job ever moves to an arm runner.
+      - name: Cache renv library
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/R/renv
+          key: renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-${{ hashFiles('.github/workflows/tests.yml') }}-${{ env.RENV_CONFIG_REPOS_OVERRIDE }}-${{ hashFiles('renv.lock') }}
+          # The workflow hash is in the exact key (so changing install logic
+          # invalidates) but deliberately NOT in the restore-keys prefix: with it
+          # there, editing a comment in this file would miss both the key and the
+          # prefix and force a fully cold restore.
+          restore-keys: |
+            renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-
+
+      # cuasmR is excluded from the restore on purpose: renv.lock:391-394 records
+      # it as Source: Local, which describes a package built from this working
+      # tree rather than one fetchable from a repository. It is installed from
+      # source in the next step instead — which is also what keeps CI honest,
+      # since three of the four suites load the INSTALLED cuasmR while the
+      # package suite loads the source tree. Installing from the working tree
+      # means both halves see the same code.
+      #
+      # `test -n "$RSPM"` above proves the variable is set, NOT that PPM serves
+      # binaries for this distro/arch — public PPM has no binaries for arm64 or
+      # for a codename it has not caught up with yet, and in that case everything
+      # source-builds and `fs` dies on libuv again. The observable signal is in
+      # the restore log: a served binary prints "[installed binary]". Tee the log
+      # and assert on it, so the fallback-to-source case fails loudly here rather
+      # than mysteriously three steps later.
+      - name: Restore R dependencies (excluding the local cuasmR package)
+        run: |
+          set -o pipefail
+          Rscript -e 'if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv"); renv::restore(exclude = "cuasmR")' 2>&1 | tee restore.log
+
+      - name: Assert the restore used binaries, not source builds
+        run: |
+          n_binary=$(grep -c 'installed binary' restore.log || true)
+          n_source=$(grep -c 'built from source' restore.log || true)
+          echo "installed binary: $n_binary | built from source: $n_source"
+          if [ "$n_binary" -eq 0 ] && [ "$n_source" -eq 0 ]; then
+            # Cache hit: renv installed nothing, so there is nothing to verify.
+            # Said out loud, because "0 | 0" passing silently is indistinguishable
+            # from a check that ran and confirmed something — which is the exact
+            # failure mode this workflow exists to prevent elsewhere.
+            echo "Cache hit — no packages installed this run, so nothing to verify here."
+            echo "The binary-vs-source assertion is only meaningful on a cache miss."
+          elif [ "$n_binary" -eq 0 ]; then
+            echo "::error::renv restored entirely from source — the PPM binary repo is not being used."
+            echo "This is how the first version of this job failed (fs -> libuv1-dev)."
+            echo "Check \$RSPM ($RENV_CONFIG_REPOS_OVERRIDE) actually serves binaries for this runner."
+            exit 1
+          else
+            # Report both counts: "Verified" alone would overstate a run that
+            # installed 1 binary and source-built 60.
+            echo "$n_binary installed as binaries, $n_source built from source."
+          fi
+
+      - name: Install cuasmR from the working tree
+        run: R CMD INSTALL R/cuasmR
+
+      # --expect is the outside denominator: "all discovered suites passed" is
+      # always 100% of whatever was found, so without it a vanished or renamed
+      # suite is invisible. Keep in step with R_SUITES in the Makefile.
+      - name: List the suites that will run
+        run: Rscript scripts/audit/run_r_tests.R --list --expect 3
+
+      # Runs the same entry point the pre-push hook runs. No `make` prerequisites
+      # are triggered: test-r has none, by design.
+      #
+      # Expect 4 skips on a runner, and the runner now prints the count:
+      #   3x R/cuasmR/tests/testthat/test-roundtrip.R — needs
+      #      kernels/tutorial/vector_add.sm_86.cubin (gitignored, .gitignore:2)
+      #      and nvdisasm on PATH, neither of which a runner has;
+      #   1x tests/bench_regress/test_meta.R:180-183 — live capture, needs
+      #      nvidia-smi.
+      # So CI runs strictly FEWER assertions than a local run, and is not
+      # authoritative for that coverage. If this number changes, something
+      # changed about what the gate actually exercises — find out what.
+      - name: Run the GPU-free R suites
+        run: |
+          set -o pipefail
+          make test-r 2>&1 | tee test-r.log
+
+      # Independent verification that the gate EXECUTED, from outside the runner.
+      #
+      # Every guard inside run_r_tests.R (--expect, the skip count, the canary) is
+      # downstream of it actually running. Empty the Makefile recipe and
+      # `make test-r` exits 0; the hook and this job both read that as green and
+      # the canary is never reached. `--list --expect 3` two steps up checks
+      # discovery, not execution.
+      #
+      # So: assert on the gate's own output the same way the restore step asserts
+      # on renv's. The skip count is asserted too — CI's skip set is deterministic
+      # (3 cuasmR roundtrip, 1 test_meta live capture), so a change in it means a
+      # change in what the gate exercises, which is exactly what should not pass
+      # silently. Local runs are NOT held to this: a dev box with a built cubin
+      # legitimately skips nothing.
+      - name: Assert the gate ran the suites rather than merely exiting 0
+        run: |
+          grep -q 'GPU-free R suites:' test-r.log || {
+            echo "::error::No summary banner in the gate output — make test-r exited 0 without running the runner."
+            exit 1
+          }
+          n_ok=$(grep -c '^  ok ' test-r.log || true)
+          # Read the count off the BANNER line specifically. A bare
+          # `grep -oE '[0-9]+ skipped' | tail -1` picks the last per-suite count
+          # (3, from the cuasmR line) instead of the total (4), and fails a
+          # healthy run. The banner is printed before the per-suite rows.
+          n_skip=$(grep 'GPU-free R suites:' test-r.log | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' || echo 0)
+          [ -n "$n_skip" ] || n_skip=0
+          echo "suites reporting ok: $n_ok (expect 3) | tests skipped: $n_skip (expect 4)"
+          [ "$n_ok" -eq 3 ] || {
+            echo "::error::Expected 3 suites to report ok, saw $n_ok. Keep in step with R_SUITES in the Makefile."
+            exit 1
+          }
+          [ "$n_skip" -eq 4 ] || {
+            echo "::error::Expected 4 skipped tests on a runner, saw $n_skip."
+            echo "A skip is coverage that did not run. If this change is intended, update this"
+            echo "assertion and the note above it; if not, the gate now exercises less than it did."
+            exit 1
+          }

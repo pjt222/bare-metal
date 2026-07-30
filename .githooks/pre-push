@@ -16,24 +16,38 @@ echo "  bare-metal pre-push hook"
 echo "  (bypass with: git push --no-verify)"
 echo "========================================"
 
-# Only run on the main repo (not externals).
-# scripts/bench_regress.py was retired in favour of
-# scripts/bench/bench_regress.R (project's R-only tooling policy).
-REGRESS_SCRIPT="scripts/bench/bench_regress.R"
-if [ ! -f "$REGRESS_SCRIPT" ]; then
-    echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
+# Repo-identity probe. This used to test for scripts/bench/bench_regress.R and
+# `exit 0` on its absence, which switched off the ENTIRE hook -- including checks
+# that need neither that script nor a GPU. A worktree, a sparse checkout or a
+# rename of that one file would silently disable the link audit, the renv check
+# and the GPU-free R suites. Each step now guards itself; this only establishes
+# that we are in the repo at all (#177).
+# `.git` is a directory in a normal clone and a FILE in a worktree, so accept
+# either. Braces because shell gives || and && equal precedence and parses
+# `A || B && C` as `(A || B) && C`.
+# GIT_DIR covers `git --git-dir=X --work-tree=Y push`, which leaves no `.git`
+# entry in the worktree at all -- without it this probe would fail OPEN and skip
+# every check, which is the failure mode #163 exists to remove.
+if [ ! -f "Makefile" ] || { [ ! -d ".git" ] && [ ! -f ".git" ] && [ -z "${GIT_DIR:-}" ]; }; then
+    echo -e "${YELLOW}WARNING: not the bare-metal repo root — skipping all checks${NC}"
     exit 0
 fi
 
-# Attempt to build benchmarks (best-effort; don't block push on build failure)
-echo ""
-echo "--- Building benchmarks (make test) ---"
-if make test 2>/dev/null; then
-    echo -e "${GREEN}Build + smoke tests passed${NC}"
-else
-    echo -e "${YELLOW}WARNING: make test failed or some benches unbuildable."
-    echo "  Regression check will still run on already-built executables.${NC}"
-fi
+REGRESS_SCRIPT="scripts/bench/bench_regress.R"
+
+# Steps run cheapest-and-most-deterministic first, so a push that is going to be
+# rejected is rejected fast and for a comprehensible reason:
+#
+#   1. check_links.R   ~1 s     GPU-free, deterministic, blocking
+#   2. renv_check.R    ~2-10 s  GPU-free, deterministic, blocking
+#   3. make test-r     ~2 min   GPU-free, deterministic, blocking      (#163)
+#   4. make test       minutes  CUDA build, best-effort, NON-blocking
+#   5. bench_regress.R minutes  needs the GPU, blocking, power-sensitive
+#
+# renv_check must precede test-r: every R suite needs cuasmR loadable, so an
+# out-of-sync library should produce renv's diagnosis, not a confusing testthat
+# error. `make test` must precede bench_regress: it builds the executables the
+# regression check measures (see Makefile:160-163).
 
 # Static doc audit: every relative link in every README must resolve.
 # Cheap (~1s), catches the typical link-rot from directory reorganisations.
@@ -81,9 +95,67 @@ else
     echo -e "${YELLOW}WARNING: $RENV_SCRIPT not found — skipping${NC}"
 fi
 
+# GPU-free R test suites (#163).
+#
+# Before this, tests/bench_all/, tests/bench_regress/ and the cuasmR package
+# suite were invoked by nothing at all -- not this hook, not the Makefile, not
+# CI. They held regression guards written because the corresponding bug had
+# already happened once, and they only ran when someone remembered. One of them
+# had been dead for 58 days without anyone noticing (#171).
+#
+# This is the slowest blocking step by far. It is here rather than in CI alone
+# because CI cannot catch a `--no-verify` push, and it is GPU-free so it is the
+# one substantial check that works on any machine, on battery, in a WSL shell
+# with no card attached.
+#
+# `make test-r` has no prerequisites, so this does not trigger a CUDA build.
+# Do NOT add `2>/dev/null` here the way the make-test step below does: testthat
+# writes its entire report to stderr, so discarding it leaves a failure with no
+# visible reason.
+echo ""
+echo "--- Running GPU-free R test suites (make test-r) ---"
+# Guard on the Makefile, not on the runner script: `make test-r` is what runs,
+# and guarding a different artefact means renaming the runner downgrades a
+# blocking gate to a yellow "skipping" warning while the push sails through.
+# NOTE: the identity probe at the top of this file already exits unless the
+# Makefile exists, so this branch cannot currently be false. Kept so the step
+# stays self-guarding if that probe is ever relaxed -- but do not read it as
+# active protection today.
+if [ -f "Makefile" ]; then
+    if make test-r; then
+        echo -e "${GREEN}All GPU-free R suites passed.${NC}"
+    else
+        echo ""
+        echo -e "${RED}GPU-FREE R TESTS FAILED${NC} (see above)"
+        echo ""
+        echo "Re-run locally with:  make test-r"
+        echo "List the suites:      Rscript scripts/audit/run_r_tests.R --list"
+        echo "To bypass (for WIP commits):  git push --no-verify"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}WARNING: Makefile not found — skipping${NC}"
+fi
+
+# Attempt to build benchmarks (best-effort; don't block push on build failure).
+# Must stay ahead of the regression check: it leaves the cubins and executables
+# that bench_regress.R measures.
+echo ""
+echo "--- Building benchmarks (make test) ---"
+if make test 2>/dev/null; then
+    echo -e "${GREEN}Build + smoke tests passed${NC}"
+else
+    echo -e "${YELLOW}WARNING: make test failed or some benches unbuildable."
+    echo "  Regression check will still run on already-built executables.${NC}"
+fi
+
 # Run performance regression checker (R + renv)
 echo ""
 echo "--- Running $REGRESS_SCRIPT ---"
+if [ ! -f "$REGRESS_SCRIPT" ]; then
+    echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
+    exit 0
+fi
 if Rscript "$REGRESS_SCRIPT"; then
     echo ""
     echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"

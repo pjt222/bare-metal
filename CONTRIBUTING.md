@@ -24,10 +24,10 @@ This project builds ML primitives from hand-optimized SASS on GA104 (RTX 3070 Ti
   base branch makes a stacked child hit a three-way conflict on its next rebase,
   and it destroys the individual-commit trail that makes a review auditable.
   `gh pr merge --merge`, not `--squash`.
-- The pre-push hook runs on every branch push (`make test`, README link audit,
-  renv sync check, `bench_regress.R`). Expect a few minutes of benches; do not
-  interrupt it — an interrupted push can leave a spinning bench that wedges the
-  WSL CUDA path.
+- The pre-push hook runs on every branch push (README link audit, renv sync
+  check, `make test-r`, `make test`, `bench_regress.R`). Expect a few minutes of
+  benches; do not interrupt it — an interrupted push can leave a spinning bench
+  that wedges the WSL CUDA path.
 
 ## Code Conventions
 
@@ -108,10 +108,18 @@ Install the pre-push hook to catch performance regressions before they reach CI:
 bash scripts/install-hooks.sh
 ```
 
-This configures a `pre-push` hook that:
-1. Runs `make test` to build and smoke-test benches
-2. Runs `scripts/bench/bench_regress.R` to detect performance regressions against `data/baselines.json`
-3. Blocks the push if any kernel regresses beyond tolerance
+This configures a `pre-push` hook that runs, cheapest and most deterministic
+first:
+
+1. `scripts/audit/check_links.R` — every relative link in every README resolves
+2. `scripts/audit/renv_check.R` — `renv.lock` matches the installed library
+3. `make test-r` — the GPU-free R test suites (#163)
+4. `make test` — build and smoke-test benches (best-effort; does not block)
+5. `scripts/bench/bench_regress.R` — performance against `data/baselines.json`
+
+Steps 1, 2, 3 and 5 block the push on failure; step 4 is best-effort. Steps 1–3
+need no GPU, so on a machine with no card attached they still run — and step 3
+is the substantial one among them.
 
 **Bypass** (for WIP or when you know baseline is stale):
 ```bash

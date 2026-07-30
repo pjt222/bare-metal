@@ -46,12 +46,16 @@ from `LD_LIBRARY_PATH` unless re-added, which existing
 Single entry points, all defined in the root `Makefile`:
 
 ```
-make reproduce   # setup + verify + all + bench
-make setup       # renv::restore() + install local cuasmR
+make reproduce   # setup + verify + all + bench + figures
+make setup       # renv::restore() + install local cuasmR + renv sync check
 make verify      # CUDA, GPU, cuasmR, renv health check
+make renv-check  # verify renv.lock matches the installed library
 make all         # compile every .cu to .cubin and every bench
 make bench       # run benches vs data/baselines.json
+make bench-all   # full-corpus run, records to results/bench_all/
 make test        # smoke-test compiled GEMM/reductions/elementwise
+make test-r      # GPU-free R test suites (needs no CUDA, no GPU)
+make figures     # regenerate docs/figures via R scripts
 make clean       # remove cubins, sass dumps, bench executables
 make disasm      # disassemble all cubins via scripts/build.R
 ```
@@ -60,15 +64,93 @@ Family-narrow targets exist: `make tutorial gemm reductions
 attention convolution elementwise memory_layout composition
 reference`.
 
-The pre-push gate is `scripts/install-hooks.sh`, which runs
-`make test`, a README link audit, `scripts/audit/renv_check.R`, and
-`scripts/bench/bench_regress.R`.
+The pre-push gate is `.githooks/pre-push` (installed by
+`scripts/install-hooks.sh`). It runs five steps, ordered cheapest and most
+deterministic first so a doomed push is rejected fast and legibly:
+
+| Step | Runs | Blocks | Needs a GPU |
+|------|------|--------|-------------|
+| `scripts/audit/check_links.R` | ~1 s | yes | no |
+| `scripts/audit/renv_check.R` | ~2–10 s | yes | no |
+| `make test-r` | ~2 min | yes | no |
+| `make test` | minutes | no (best-effort) | yes |
+| `scripts/bench/bench_regress.R` | minutes | yes | yes |
+
+`renv_check` precedes `test-r` because every R suite needs `cuasmR` loadable, so
+an out-of-sync library should produce renv's diagnosis rather than a confusing
+testthat error. `make test` precedes `bench_regress.R` because it builds the
+executables that get measured.
+
+**`make test-r` runtime.** 115 s of tests / 124 s wall on AC, measured 2026-07-30
+on the RTX 3070 Ti laptop (the wall figure predates the plumbing canary, which
+adds one R startup — the per-suite total is unaffected, since the canary is
+deliberately excluded from it): `tests/bench_all/test_bench_all.R` 91 s,
+`tests/bench_regress/test_meta.R` 9 s, the `cuasmR` package suite 15 s. On
+battery the same run took 133 s / 140 s.
+
+That battery penalty is only **1.16×**, which is much smaller than it looks like
+it should be: a no-op `Rscript` on this box is **2.1×** slower on battery
+(2.56 s AC, 5.34 s battery), tracking the CPU downclock. The suites do not track
+it, because they are dominated by filesystem work rather than compute — see the
+next paragraph. Do not extrapolate one from the other; measure the thing you
+want to quote. (This note exists because the first draft predicted "roughly half
+on AC" from the startup ratio, and the measurement came back 115 s, not 70 s.)
+
+Both power figures are n=1. The battery runs came first in the session and the
+AC run later, so any warm-page-cache benefit accrued to the AC number — meaning
+1.16× if anything *overstates* the battery penalty rather than understating it.
+The 2.0 s AC startup recorded under "Startup cost" below is a different day's
+measurement of the same thing; read both as "about 2–2.5 s on AC" rather than
+trying to reconcile them.
+
+**Most of that runtime is the 9p mount, not the tests.** Controlled measurement,
+2026-07-30 — the same repo copied to ext4 inside the WSL VM and run on the same
+box, same R, same library, so the filesystem is the only variable:
+
+| | `make test-r` | `test_bench_all.R` |
+|---|---|---|
+| `/mnt/d` (9p) | 115 s | 91 s |
+| `~` (ext4) | **14 s** | **6 s** |
+
+**8.2× overall, 15× on the dominant suite.** So roughly seven eighths of the
+local hook cost is the mount, not the assertions. Bear that in mind before
+"optimising" the tests — there is little there to win, and the same work is
+cheap the moment it runs anywhere else.
+
+(A GitHub runner does similar work in ~6 s for the whole target, but do not use
+that as the comparison: it differs in CPU, disk and R build as well as
+filesystem, and it runs four fewer assertions — see "CI limitations" below. An
+earlier draft quoted 45× from exactly that confounded pairing. The
+ext4-on-the-same-box row above is the one that isolates the variable. Note the
+ext4 `test_bench_all.R` figure and that whole-run CI figure are both 6 s by
+coincidence; they are different quantities.)
+
+The suites were invoked by nothing at all before #163 — not the hook, not the
+Makefile, not CI. One of them had been dead for 58 days without anyone noticing
+(#171), which is the argument for the gate in one sentence.
 
 **CI limitations.** GitHub-hosted runners have no Ampere GPU. Cubin builds,
 benchmark runs, and anything requiring `nvcc -arch=sm_86` cannot run in CI.
-The `.github/workflows/docs.yml` workflow covers only GPU-free checks: markdown
-link validation, version-string consistency, and Quarto doc rendering. Local
-`make reproduce` remains the only path for GPU verification.
+Two workflows cover the GPU-free surface: `.github/workflows/docs.yml` (markdown
+link validation, version-string consistency, Quarto doc rendering) and
+`.github/workflows/tests.yml` (`make test-r`, against an renv library cached on
+`renv.lock`). Local `make reproduce` remains the only path for GPU verification.
+
+`tests.yml` exists because CI is the only half of the gate a `git push
+--no-verify` cannot skip. **It is not authoritative for everything the local run
+covers**, and runs strictly fewer assertions: four tests skip on a runner — the
+three `cuasmR` roundtrip tests (they need a built cubin, which is gitignored,
+and `nvdisasm` on `PATH`) and `test_meta.R`'s live-capture test (needs
+`nvidia-smi`). `make test-r` prints the skip count for exactly this reason: a
+skip is coverage that did not happen, and reporting it as a clean pass is how
+the roundtrip check would quietly stop running. CI *asserts* that count (4);
+locally it is reported but not enforced, because a dev box with a built cubin
+legitimately skips nothing.
+
+One divergence is not a skip but a structural blind spot: the runner's
+source-vs-installed `cuasmR` check cannot fire in CI at all, since CI reinstalls
+the package from the working tree every run. A stale local install is catchable
+only by the local half of the gate.
 
 ## Publishing the corpus to Hugging Face
 

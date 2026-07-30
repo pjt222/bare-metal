@@ -13,6 +13,36 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **`make test-r` — the GPU-free R suites are now a gate (#163).** They were
+  invoked by nothing before this: not the pre-push hook, not the Makefile, not
+  CI. `scripts/audit/run_r_tests.R` discovers every `tests/**/test[-_]*.R` plus
+  the `cuasmR` package suite (glob, not a manifest — a manifest would recreate
+  the bug being fixed; both separators, because `test-` is what
+  `usethis::use_test()` emits) and runs each in its own child `Rscript`,
+  serially. Separate
+  processes because `scripts/bench/bench_all.R` and `bench_regress.R` both define
+  `main` and `parse_args` and the suites `source()` into `globalenv()`; serially
+  because concurrent R on the 9p `/mnt/d` mount is what turned a 75 s suite into
+  an hour (#162). Wired into `.githooks/pre-push` (blocking, after the renv check
+  and before the CUDA build) and into a new `.github/workflows/tests.yml` with an
+  `renv.lock`-keyed cache. 115 s of tests on AC; AGENTS.md records the
+  measurement conditions, and why the battery figure is only 1.16× higher
+  despite a 2.1× slower R startup — and that ~7/8 of the local cost is the 9p
+  mount, measured against the same repo on ext4 on the same box (14 s vs 115 s).
+  Proven able to fail two ways before landing, against a clean tree's exit 0:
+  a real dead suite, and a deliberate mutation of `normalise_clock`'s lower
+  bound. The dead-suite demonstration is not reproducible from the resulting
+  tree, since this change deletes that suite.
+  Three guards exist against the gate quietly hollowing out, because every part
+  of its verdict is otherwise self-reported: `--expect N` (passed by both the
+  hook and CI) supplies the suite-count denominator from outside, since "all
+  discovered suites passed" is a ratio against whatever was found and so always
+  100%; skipped tests are counted and reported per suite rather than folded into
+  a pass, without which the `cuasmR` byte-identical roundtrip check would stop
+  running the moment `nvdisasm` left `PATH`; and a plumbing canary runs one child
+  that exits 3 and requires a non-zero back, because the whole verdict flows
+  through one `set -o pipefail` — measured, a pipeline without it reports 0 for
+  a child that exited 3, which would pass every suite silently.
 - **`make bench-all` full-corpus runner (#124).** New on-demand "run
   everything" pass: `scripts/bench/bench_all.R` discovers the whole
   `$(BENCH_EXES)` corpus, runs every bench, and records every attempt +
@@ -60,6 +90,38 @@ historical reference.
   pattern.
 
 ### Fixed
+- **Retired the dead `tests/bench_regress/test_parser.R` (#171).** All 14 of its
+  `test_that` groups had been erroring since `caeca97` (2026-06-02), which removed
+  the `.pick_line` / `.parse_line` pair it exercises in favour of
+  `cuasmR::parse_throughput` (#134) without updating the test — 58 days dead,
+  unnoticed because nothing ran it. Two things hid it: the file ends in an
+  unconditional `cat("All bench_regress parser tests passed.")` that printed while
+  every group errored, and testthat's default `max_fails` of 10 truncated the
+  tally so four groups never even executed. The behaviours it covered that nothing
+  else does — 8 of 14, including the only section-filter case that can actually
+  detect a broken filter — are tracked in #172.
+- **`cuasmR` roundtrip tests now skip when `nvdisasm` is off `PATH`.** They
+  guarded on the cubin existing but not on the disassembler, so a developer with
+  cubins built and CUDA off `PATH` got a hard `stop()` from `disasm.R:6` — an
+  environment failure blocking a push, inside a target whose whole selling point
+  is that it needs no GPU.
+- **The pre-push hook's repo-identity probe no longer disables everything
+  (#177).** It tested for `scripts/bench/bench_regress.R` and `exit 0`'d the
+  entire hook on its absence — switching off the README link audit, the renv
+  sync check and the GPU-free R suites for the absence of a GPU-benchmark
+  script. A worktree, a sparse checkout or a rename of that one file was enough.
+  The probe now checks that this is the repo root at all (`Makefile` plus a
+  `.git` directory *or* file, the latter being how worktrees present), and the
+  regression step guards itself the way every other step already did.
+- **Documentation drift around the gate.** `AGENTS.md` named
+  `scripts/install-hooks.sh` as the gate (that script *installs* it; the gate is
+  `.githooks/pre-push`), described `make reproduce` as four steps when it is five,
+  and omitted `renv-check`, `bench-all` and `figures` from the target list.
+  `tests/README.md` omitted `tests/bench_all/` entirely, described `test_meta.R`
+  as testing "cuasmR GPU-state functions" when it sources
+  `scripts/bench/bench_meta.R`, and advertised the dead parser suite as live with
+  exact assertion counts. `CONTRIBUTING.md`'s hook list was missing two of the
+  four steps it already had.
 - **bench↔cubin name mismatch across BenchDriver-refactored benches
   (#148).** ~16 flash-attention, resblock, and attention-layer benches
   called `load_kernel("<basename>.sm_86.cubin", …)` with abbreviated
