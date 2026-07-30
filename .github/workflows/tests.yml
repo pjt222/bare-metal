@@ -39,17 +39,25 @@ jobs:
 
       # renv.lock pins cloud.r-project.org (renv.lock:3-8), which serves source
       # tarballs only. Left alone, every cache miss source-builds the locked
-      # dependency set — data.table alone dominates the job. setup-r with
-      # use-public-rspm has already configured a Posit Package Manager binary
-      # repo for this runner's distro; hand that URL to renv rather than
-      # hardcoding a distro codename that goes stale when ubuntu-latest moves.
+      # dependency set: that is slow, and it fails outright on any package
+      # needing a system library the runner lacks — `fs` wants libuv1-dev, and
+      # it drags bslib, sass, pkgload, rmarkdown and testthat down with it.
+      # docs.yml:94-95 documents the same trap from the other direction.
+      #
+      # setup-r with use-public-rspm exports the Posit Package Manager binary
+      # repo for this runner's distro as $RSPM. Use that env var directly.
+      #
+      # Do NOT try to read this out of R with getOption("repos")[["CRAN"]]:
+      # this repo's .Rprofile activates renv, which resets `repos` from the
+      # lockfile, so R reports cloud.r-project.org and the override silently
+      # becomes a no-op that reinstates the source-only repo it was meant to
+      # replace. Measured: that is exactly how the first version of this job
+      # failed.
       - name: Point renv at the binary repo setup-r configured
-        shell: Rscript {0}
         run: |
-          repo <- getOption("repos")[["CRAN"]]
-          cat("Using repo:", repo, "\n")
-          cat(sprintf("RENV_CONFIG_REPOS_OVERRIDE=%s\n", repo),
-              file = Sys.getenv("GITHUB_ENV"), append = TRUE)
+          echo "Binary repo: $RSPM"
+          test -n "$RSPM"   # fail loudly rather than silently falling back to source
+          echo "RENV_CONFIG_REPOS_OVERRIDE=$RSPM" >> "$GITHUB_ENV"
 
       - name: Cache renv library
         uses: actions/cache@v4
