@@ -73,7 +73,7 @@ REGRESS_BENCH := \
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches test clean disasm sass help renv-check \
+.PHONY: all cubins benches test test-r clean disasm sass help renv-check \
         setup verify bench bench-all bench-reference compare-reference reference-pipeline reproduce figures \
         publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
@@ -180,6 +180,23 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 		fi; \
 	done
 	@echo "=== Smoke tests complete ==="
+
+# GPU-free R test suites (#163).
+#
+# Deliberately has NO prerequisites: the whole point of this target is that it
+# runs on a machine with no CUDA, no GPU and no built corpus. Adding `cubins`
+# so the cuasmR roundtrip tests stop skipping would drag nvcc into a GPU-free
+# target -- those three tests skip cleanly instead (the cubin is gitignored, and
+# they now also skip when nvdisasm is off PATH).
+#
+# The runner discovers suites rather than listing them, so a test file added
+# later is gated the day it lands. Listing them here would recreate the exact
+# bug #163 was filed about. See scripts/audit/run_r_tests.R for why each suite
+# gets its own child process (globalenv symbol collisions) run serially (the 9p
+# mount) and why it uses `Rscript <file>` rather than testthat::test_file()
+# (test_file chdirs, which masks a non-portable source path).
+test-r:
+	@$(RSCRIPT) scripts/audit/run_r_tests.R
 
 # ------------------------------------------------------------------
 # Disassembly
@@ -332,6 +349,7 @@ help:
 	@echo "  make cubins    — compile all .cu files to .cubin"
 	@echo "  make benches   — compile all bench*.cu to executables"
 	@echo "  make test      — run smoke tests on compiled benches"
+	@echo "  make test-r    — run the GPU-free R test suites (no CUDA needed)"
 	@echo "  make disasm    — disassemble all cubins to .sass"
 	@echo "  make clean     — remove all generated artifacts"
 	@echo ""

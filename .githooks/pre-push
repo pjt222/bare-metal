@@ -25,15 +25,19 @@ if [ ! -f "$REGRESS_SCRIPT" ]; then
     exit 0
 fi
 
-# Attempt to build benchmarks (best-effort; don't block push on build failure)
-echo ""
-echo "--- Building benchmarks (make test) ---"
-if make test 2>/dev/null; then
-    echo -e "${GREEN}Build + smoke tests passed${NC}"
-else
-    echo -e "${YELLOW}WARNING: make test failed or some benches unbuildable."
-    echo "  Regression check will still run on already-built executables.${NC}"
-fi
+# Steps run cheapest-and-most-deterministic first, so a push that is going to be
+# rejected is rejected fast and for a comprehensible reason:
+#
+#   1. check_links.R   ~1 s     GPU-free, deterministic, blocking
+#   2. renv_check.R    ~2-10 s  GPU-free, deterministic, blocking
+#   3. make test-r     ~2 min   GPU-free, deterministic, blocking      (#163)
+#   4. make test       minutes  CUDA build, best-effort, NON-blocking
+#   5. bench_regress.R minutes  needs the GPU, blocking, power-sensitive
+#
+# renv_check must precede test-r: every R suite needs cuasmR loadable, so an
+# out-of-sync library should produce renv's diagnosis, not a confusing testthat
+# error. `make test` must precede bench_regress: it builds the executables the
+# regression check measures (see Makefile:160-163).
 
 # Static doc audit: every relative link in every README must resolve.
 # Cheap (~1s), catches the typical link-rot from directory reorganisations.
@@ -79,6 +83,54 @@ if [ -f "$RENV_SCRIPT" ]; then
     fi
 else
     echo -e "${YELLOW}WARNING: $RENV_SCRIPT not found — skipping${NC}"
+fi
+
+# GPU-free R test suites (#163).
+#
+# Before this, tests/bench_all/, tests/bench_regress/ and the cuasmR package
+# suite were invoked by nothing at all -- not this hook, not the Makefile, not
+# CI. They held regression guards written because the corresponding bug had
+# already happened once, and they only ran when someone remembered. One of them
+# had been dead for 59 days without anyone noticing (#171).
+#
+# This is the slowest blocking step by far. It is here rather than in CI alone
+# because CI cannot catch a `--no-verify` push, and it is GPU-free so it is the
+# one substantial check that works on any machine, on battery, in a WSL shell
+# with no card attached.
+#
+# `make test-r` has no prerequisites, so this does not trigger a CUDA build.
+# Do NOT add `2>/dev/null` here the way the make-test step below does: testthat
+# writes its entire report to stderr, so discarding it leaves a failure with no
+# visible reason.
+echo ""
+echo "--- Running GPU-free R test suites (make test-r) ---"
+R_TEST_RUNNER="scripts/audit/run_r_tests.R"
+if [ -f "$R_TEST_RUNNER" ]; then
+    if make test-r; then
+        echo -e "${GREEN}All GPU-free R suites passed.${NC}"
+    else
+        echo ""
+        echo -e "${RED}GPU-FREE R TESTS FAILED${NC} (see above)"
+        echo ""
+        echo "Re-run locally with:  make test-r"
+        echo "List the suites:      Rscript $R_TEST_RUNNER --list"
+        echo "To bypass (for WIP commits):  git push --no-verify"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}WARNING: $R_TEST_RUNNER not found — skipping${NC}"
+fi
+
+# Attempt to build benchmarks (best-effort; don't block push on build failure).
+# Must stay ahead of the regression check: it leaves the cubins and executables
+# that bench_regress.R measures.
+echo ""
+echo "--- Building benchmarks (make test) ---"
+if make test 2>/dev/null; then
+    echo -e "${GREEN}Build + smoke tests passed${NC}"
+else
+    echo -e "${YELLOW}WARNING: make test failed or some benches unbuildable."
+    echo "  Regression check will still run on already-built executables.${NC}"
 fi
 
 # Run performance regression checker (R + renv)
