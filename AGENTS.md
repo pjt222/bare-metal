@@ -95,6 +95,14 @@ one from the other — measure the thing you want to quote. (This note exists
 because the first draft of this paragraph predicted "roughly half on AC" from
 the startup ratio, and the measurement came back at 115 s, not 70 s.)
 
+**Almost all of that runtime is the 9p mount, not the tests.** The same suites,
+same 185 + 37 + 131 assertions, run in **6 s** on a GitHub-hosted runner with an
+ordinary filesystem — `test_bench_all.R` alone goes from 91 s here to 2 s there,
+roughly 45×. If the local hook feels disproportionately slow for what it checks,
+that is why, and it is a property of `/mnt/d` rather than of the test suite.
+Bear it in mind before "optimising" the tests: there is very little there to
+win.
+
 The suites were invoked by nothing at all before #163 — not the hook, not the
 Makefile, not CI. One of them had been dead for 59 days without anyone noticing
 (#171), which is the argument for the gate in one sentence.
