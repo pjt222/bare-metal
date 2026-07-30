@@ -110,11 +110,20 @@ jobs:
           n_binary=$(grep -c 'installed binary' restore.log || true)
           n_source=$(grep -c 'built from source' restore.log || true)
           echo "installed binary: $n_binary | built from source: $n_source"
-          if [ "$n_binary" -eq 0 ] && [ "$n_source" -gt 0 ]; then
+          if [ "$n_binary" -eq 0 ] && [ "$n_source" -eq 0 ]; then
+            # Cache hit: renv installed nothing, so there is nothing to verify.
+            # Said out loud, because "0 | 0" passing silently is indistinguishable
+            # from a check that ran and confirmed something — which is the exact
+            # failure mode this workflow exists to prevent elsewhere.
+            echo "Cache hit — no packages installed this run, so nothing to verify here."
+            echo "The binary-vs-source assertion is only meaningful on a cache miss."
+          elif [ "$n_binary" -eq 0 ]; then
             echo "::error::renv restored entirely from source — the PPM binary repo is not being used."
             echo "This is how the first version of this job failed (fs -> libuv1-dev)."
             echo "Check \$RSPM ($RENV_CONFIG_REPOS_OVERRIDE) actually serves binaries for this runner."
             exit 1
+          else
+            echo "Verified: $n_binary package(s) installed as binaries."
           fi
 
       - name: Install cuasmR from the working tree
