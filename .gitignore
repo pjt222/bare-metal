@@ -112,3 +112,12 @@ experiments/rust-experiments/vecadd_oxide/
 # Large data files inside phase6 sub-experiments (regenerable from R scripts)
 experiments/rust-experiments/**/perm.bin
 experiments/rust-experiments/**/traces.bin
+
+# Session handoff scratchpad — local and intra-session only, never committed.
+# docs/CONTINUE_HERE.md is a rolling per-author handoff: it records the last
+# session's state and next steps for the next session on THIS machine. It churns
+# every session and describes mutable local state (branch, worktree, open PRs),
+# so a committed copy is stale the moment it lands and misleads anyone who is not
+# its author. Untracked 2026-07-30; the 48 commits that previously carried it stay
+# in history (`git log --all -- docs/CONTINUE_HERE.md`).
+docs/CONTINUE_HERE.md

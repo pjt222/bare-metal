@@ -254,7 +254,8 @@ for the observations behind each.
 - `docs/inventory.md` — kernel inventory grouped by family.
 - `docs/gpu_reflections.md` — observation catalogue (first-person
   format is a deliberate stylistic experiment; see preamble).
-- `docs/CONTINUE_HERE.md` — session handoff scratchpad.
+- `docs/CONTINUE_HERE.md` — session handoff scratchpad. **Gitignored** (local,
+  per-author, intra-session); absent from a fresh clone.
 - `docs/tutorial/` — six-chapter prose walkthrough.
 - `CHANGELOG.md` — structural reorganizations and audit history.
 
@@ -264,4 +265,5 @@ All five development phases are complete (vector add, GEMM family,
 Flash Attention, diffusion primitives, sparse / INT8 / epilogue
 optimization). Active optimization queue is near-empty; remaining
 items are research-grade scope and tracked under GitHub issues
-#103–#105. See `docs/CONTINUE_HERE.md` for the working handoff.
+#103–#105. See `docs/CONTINUE_HERE.md` for the working handoff, if present —
+it is gitignored and local to whoever last worked in the tree.
