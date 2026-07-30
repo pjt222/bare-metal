@@ -73,9 +73,11 @@
 # it is always 100%. Delete every suite and this script still exits 0, reporting
 # 0/0. A gate whose denominator is supplied by the thing it is checking cannot
 # detect its own erosion -- and erosion by silence is precisely the failure #163
-# was filed about. `--expect N` supplies the denominator from outside. The hook
-# and CI both pass it; changing the suite count is then a deliberate edit rather
-# than something that happens to you.
+# was filed about. `--expect N` supplies the denominator from outside. CI passes
+# it directly; the hook passes it transitively through `make test-r`, so the
+# value itself lives in exactly two places -- Makefile's R_SUITES and tests.yml.
+# Changing the suite count is then a deliberate edit rather than something that
+# happens to you.
 #
 # Usage:
 #   Rscript scripts/audit/run_r_tests.R             # run every suite, report, exit 0/1
@@ -196,7 +198,9 @@ if (!expect_ok) {
   cat("\n")
   cat("A suite was added, removed, or renamed out of the discovery pattern\n")
   cat("(^test[-_].*\\.R$ under tests/). If that was intentional, update the\n")
-  cat("--expect value in .githooks/pre-push and .github/workflows/tests.yml.\n")
+  cat("expected count in BOTH places that supply it:\n")
+  cat("  Makefile                     R_SUITES ?= <n>\n")
+  cat("  .github/workflows/tests.yml  --expect <n>\n")
   cat("If it was not, a suite just stopped being gated -- which is the exact\n")
   cat("failure #163 was filed about.\n")
   quit(status = 1)
@@ -225,7 +229,7 @@ count_skips <- function(lines) {
   # a TTY, but cli special-cases GitHub Actions and colourises anyway -- and an
   # escape landing between "SKIP" and its digits would make the regex miss and
   # CI silently report 0 skips.
-  lines <- gsub("\033\\[[0-9;]*m", "", lines)
+  lines <- gsub("\033\\[[0-9;]*m", "", lines, useBytes = TRUE)
 
   # Anchored on the whole summary shape rather than a bare "SKIP n", so a test
   # NAME containing the word cannot be mistaken for a tally. testthat prints one
@@ -239,7 +243,7 @@ count_skips <- function(lines) {
   # "-- Skip: <name> --" block with the reason beneath. Verified 2026-07-30:
   #   Rscript -e 'library(testthat); test_that("t", skip("why"))'
   # emits "== Skip: t ===..." / "Reason: why", so this matches.
-  sum(grepl("Skip:", lines, fixed = TRUE))
+  sum(grepl("Skip:", lines, fixed = TRUE, useBytes = TRUE))
 }
 
 run_child <- function(cmd_args, label) {

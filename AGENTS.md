@@ -82,7 +82,9 @@ testthat error. `make test` precedes `bench_regress.R` because it builds the
 executables that get measured.
 
 **`make test-r` runtime.** 115 s of tests / 124 s wall on AC, measured 2026-07-30
-on the RTX 3070 Ti laptop: `tests/bench_all/test_bench_all.R` 91 s,
+on the RTX 3070 Ti laptop (the wall figure predates the plumbing canary, which
+adds one R startup — the per-suite total is unaffected, since the canary is
+deliberately excluded from it): `tests/bench_all/test_bench_all.R` 91 s,
 `tests/bench_regress/test_meta.R` 9 s, the `cuasmR` package suite 15 s. On
 battery the same run took 133 s / 140 s.
 

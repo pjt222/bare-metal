@@ -25,7 +25,10 @@ echo "========================================"
 # `.git` is a directory in a normal clone and a FILE in a worktree, so accept
 # either. Braces because shell gives || and && equal precedence and parses
 # `A || B && C` as `(A || B) && C`.
-if [ ! -f "Makefile" ] || { [ ! -d ".git" ] && [ ! -f ".git" ]; }; then
+# GIT_DIR covers `git --git-dir=X --work-tree=Y push`, which leaves no `.git`
+# entry in the worktree at all -- without it this probe would fail OPEN and skip
+# every check, which is the failure mode #163 exists to remove.
+if [ ! -f "Makefile" ] || { [ ! -d ".git" ] && [ ! -f ".git" ] && [ -z "${GIT_DIR:-}" ]; }; then
     echo -e "${YELLOW}WARNING: not the bare-metal repo root — skipping all checks${NC}"
     exit 0
 fi
@@ -114,6 +117,10 @@ echo "--- Running GPU-free R test suites (make test-r) ---"
 # Guard on the Makefile, not on the runner script: `make test-r` is what runs,
 # and guarding a different artefact means renaming the runner downgrades a
 # blocking gate to a yellow "skipping" warning while the push sails through.
+# NOTE: the identity probe at the top of this file already exits unless the
+# Makefile exists, so this branch cannot currently be false. Kept so the step
+# stays self-guarding if that probe is ever relaxed -- but do not read it as
+# active protection today.
 if [ -f "Makefile" ]; then
     if make test-r; then
         echo -e "${GREEN}All GPU-free R suites passed.${NC}"

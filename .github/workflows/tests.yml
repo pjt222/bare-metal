@@ -123,7 +123,9 @@ jobs:
             echo "Check \$RSPM ($RENV_CONFIG_REPOS_OVERRIDE) actually serves binaries for this runner."
             exit 1
           else
-            echo "Verified: $n_binary package(s) installed as binaries."
+            # Report both counts: "Verified" alone would overstate a run that
+            # installed 1 binary and source-built 60.
+            echo "$n_binary installed as binaries, $n_source built from source."
           fi
 
       - name: Install cuasmR from the working tree
