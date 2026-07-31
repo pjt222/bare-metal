@@ -185,7 +185,11 @@ fi
 case "$regress_rc" in
 0)
     echo ""
-    echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"
+    # Not "All benchmarks within tolerance" -- that sentence is the one #176 was
+    # filed about. A pass here means every config that was MEASURED was within
+    # tolerance, and on this machine that is routinely 3 of 7.
+    echo -e "${GREEN}Every measured benchmark was within tolerance. Push allowed.${NC}"
+    echo "Skipped configs were not checked — see the Measured count above."
     exit 0
     ;;
 2)
