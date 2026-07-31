@@ -287,7 +287,7 @@ the `.cuasm`.
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal
+cd /path/to/bare-metal   # your clone
 
 # Verify toolchain
 Rscript scripts/verify_setup.R

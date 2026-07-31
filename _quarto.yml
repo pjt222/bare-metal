@@ -16,6 +16,10 @@ project:
     - CHANGELOG.md
     - docs/index.md
     - docs/*.md
+    # Session scratch, not documentation: it says so in its own opening lines
+    # ("This file is session scratch — discard"), and it records one machine's
+    # transient state. Linked from docs/index.md at its GitHub URL instead.
+    - "!docs/elevated_session_runbook.md"
     - docs/tutorial/*.md
     - docs/analysis/*.qmd
     - "!docs/CONTINUE_HERE.md"

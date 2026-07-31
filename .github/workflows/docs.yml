@@ -22,6 +22,14 @@ on:
 permissions:
   contents: read
 
+# Pages accepts one deployment at a time. Without this, two pushes to main
+# landing close together race in the deploy job and the loser fails. Keyed on
+# the workflow + ref, NOT on `github.head_ref || github.ref` -- see the note
+# above about why that key does not work here.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
 
   # ---------------------------------------------------------------------------
@@ -170,6 +178,11 @@ jobs:
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
+      # actions/deploy-pages needs the Pages configuration established in the
+      # run that produced the artifact. Harmless on PR builds, which upload but
+      # never deploy.
+      - uses: actions/configure-pages@v5
+
       - name: Render the site
         run: quarto render --to html
 
@@ -178,11 +191,26 @@ jobs:
       # deploy step will happily publish an empty directory.
       - name: Assert the site was built
         run: |
-          test -f _site/index.html || { echo "::error::no _site/index.html"; exit 1; }
+          # Name the pages that must exist. A bare count is satisfied by any 30
+          # pages, so it cannot notice the tutorial or the analysis silently
+          # dropping out of the render list -- which is the failure that matters.
+          missing=0
+          for page in \
+            index.html README.html SETUP.html AGENTS.html CONTRIBUTING.html \
+            CHANGELOG.html docs/index.html docs/inventory.html \
+            docs/benchmark_methodology.html docs/ampere_sass_reference.html \
+            docs/tutorial/01-sass-hello-world.html \
+            docs/tutorial/06-the-four-laws.html \
+            docs/analysis/kernel_architecture.html
+          do
+            [ -f "_site/$page" ] || { echo "::error::missing _site/$page"; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || exit 1
           n=$(find _site -name '*.html' | wc -l)
           echo "pages built: $n"
-          [ "$n" -ge 30 ] || {
-            echo "::error::only $n pages built; expected the full docs set (>=30)."
+          # Floor set just under the current build (36) so a real loss trips it.
+          [ "$n" -ge 34 ] || {
+            echo "::error::only $n pages built; expected the full docs set (>=34)."
             echo "Either _quarto.yml's render list shrank or a document failed to render."
             exit 1
           }
@@ -212,10 +240,24 @@ jobs:
                       t = urllib.parse.unquote(ref.split("#")[0].split("?")[0])
                       if not t: continue
                       checked += 1
-                      if not os.path.exists(os.path.normpath(os.path.join(dp, t))):
+                      full = os.path.normpath(os.path.join(dp, t))
+                      # A directory is NOT a servable target: GitHub Pages does
+                      # not list directories, it serves index.html or 404s. A
+                      # bare os.path.exists() call passes those, which is how
+                      # two directory links survived the first local run of this
+                      # check.
+                      if os.path.isdir(full):
+                          if not os.path.exists(os.path.join(full, "index.html")):
+                              broken.append(f"{os.path.relpath(p, root)} -> {ref} (directory with no index.html)")
+                      elif not os.path.exists(full):
                           broken.append(f"{os.path.relpath(p, root)} -> {ref}")
           print(f"internal links checked: {checked}, broken: {len(broken)}")
           for b in broken[:20]: print("  ", b)
+          # A checker that examined nothing must not report success -- the same
+          # failure this repo keeps finding in its own gates.
+          if checked == 0:
+              print("::error::the link checker found no internal links at all")
+              sys.exit(1)
           sys.exit(1 if broken else 0)
           PY
 

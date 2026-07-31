@@ -101,7 +101,7 @@ for (int i = 0; i < acc_frag.num_elements; i++)
 wmma::store_matrix_sync(C, out_frag, N, wmma::mem_row_major);
 ```
 
-**Performance**: 10,897 TOPS at 4096³. About 3.1% of INT8 peak.
+**Performance**: 10,897 GOPS (10.9 TOPS) at 4096³. About 3.1% of INT8 peak.
 
 Same shape as the naive HGEMM relationship to peak: simple WMMA wrapping
 gets you to single-digit % of peak; the optimization is in the
@@ -268,7 +268,7 @@ block sizes, smem padding) must be re-derived for each instruction.
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/kernels/gemm/igemm
+cd kernels/gemm/igemm
 
 # Build the variants
 nvcc --cubin -arch=sm_86 -O2 -o igemm.sm_86.cubin igemm.cu

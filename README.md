@@ -52,7 +52,7 @@ documentation map and follow the dependency order from there.
   measured gap to local cuBLAS / cuDNN / cuSPARSELt.
 - [`docs/roofline_measured.md`](docs/roofline_measured.md) —
   NCU-measured roofline per profiled kernel.
-- [`docs/tutorial/`](docs/tutorial/) — six-chapter prose walkthrough
+- [`docs/tutorial/`](docs/tutorial/01-sass-hello-world.md) — six-chapter prose walkthrough
   (~20K words); suggested order 02 → 03/04 → 05 with 06 as synthesis.
 - [`docs/gpu_reflections.md`](docs/gpu_reflections.md) — observation
   catalogue. The first-person voice is a deliberate stylistic
