@@ -199,7 +199,7 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 # Without it "all discovered suites passed" is a ratio against whatever was
 # discovered and is therefore always 100% -- delete every suite and the gate
 # still goes green. Bump this deliberately when adding or removing a suite.
-R_SUITES ?= 3
+R_SUITES ?= 4
 
 test-r:
 	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES)

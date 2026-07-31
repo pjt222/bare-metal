@@ -141,7 +141,7 @@ jobs:
       # always 100% of whatever was found, so without it a vanished or renamed
       # suite is invisible. Keep in step with R_SUITES in the Makefile.
       - name: List the suites that will run
-        run: Rscript scripts/audit/run_r_tests.R --list --expect 3
+        run: Rscript scripts/audit/run_r_tests.R --list --expect 4
 
       # Runs the same entry point the pre-push hook runs. No `make` prerequisites
       # are triggered: test-r has none, by design.
@@ -187,9 +187,9 @@ jobs:
           # healthy run. The banner is printed before the per-suite rows.
           n_skip=$(grep 'GPU-free R suites:' test-r.log | grep -oE '[0-9]+ skipped' | grep -oE '^[0-9]+' || echo 0)
           [ -n "$n_skip" ] || n_skip=0
-          echo "suites reporting ok: $n_ok (expect 3) | tests skipped: $n_skip (expect 4)"
-          [ "$n_ok" -eq 3 ] || {
-            echo "::error::Expected 3 suites to report ok, saw $n_ok. Keep in step with R_SUITES in the Makefile."
+          echo "suites reporting ok: $n_ok (expect 4) | tests skipped: $n_skip (expect 4)"
+          [ "$n_ok" -eq 4 ] || {
+            echo "::error::Expected 4 suites to report ok, saw $n_ok. Keep in step with R_SUITES in the Makefile."
             exit 1
           }
           [ "$n_skip" -eq 4 ] || {
