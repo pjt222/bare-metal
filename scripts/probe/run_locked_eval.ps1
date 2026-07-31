@@ -222,11 +222,35 @@ try {
   "cmd: $($wslCmd -join ' ')" | Add-Content $LogPath
   "" | Add-Content $LogPath
 
-  # Stream stdout+stderr line-by-line into the log AND the console.
-  & $wslCmd[0] $wslCmd[1..($wslCmd.Length - 1)] 2>&1 | ForEach-Object {
-    $_ | Tee-Object -FilePath $LogPath -Append | Write-Host
+  # A non-zero bench exit is DATA here, not an error (#176). bench_regress.R
+  # exits 1 on a measured regression and 2 when it measured nothing at all, and
+  # both belong in $BenchExit, in bench_exit_code, in the results record and in
+  # this script's own exit status.
+  #
+  # $PSNativeCommandUseErrorActionPreference (set at the top of this file) makes
+  # PS 7 throw NativeCommandExitException on any non-zero native exit, which
+  # aborts the pipeline below before $LASTEXITCODE is ever read: the capture, the
+  # post-restore snapshot, the JSONL record and `exit $BenchExit` are all skipped
+  # and the script exits 1. That collapses INCONCLUSIVE into the code that means
+  # FAILED, and drops the record for exactly the runs that measured nothing.
+  # Measured on pwsh 7.6.3: native exit 2 -> script exit 1, no record written.
+  # It went unnoticed while the script only ever emitted 0 and 1.
+  #
+  # So disable it for this one call and read $LASTEXITCODE by hand. Restored
+  # immediately after, so nvidia-smi.exe -rgc in the finally block keeps throwing
+  # on failure. No-op on PS 5.1, which never threw and always propagated.
+  $prevNativeEap = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    # Stream stdout+stderr line-by-line into the log AND the console.
+    & $wslCmd[0] $wslCmd[1..($wslCmd.Length - 1)] 2>&1 | ForEach-Object {
+      $_ | Tee-Object -FilePath $LogPath -Append | Write-Host
+    }
+    $BenchExit = $LASTEXITCODE
   }
-  $BenchExit = $LASTEXITCODE
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $prevNativeEap
+  }
   "" | Add-Content $LogPath
   "bench_exit_code: $BenchExit" | Add-Content $LogPath
 }

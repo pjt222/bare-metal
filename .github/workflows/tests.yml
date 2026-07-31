@@ -165,7 +165,7 @@ jobs:
       # Every guard inside run_r_tests.R (--expect, the skip count, the canary) is
       # downstream of it actually running. Empty the Makefile recipe and
       # `make test-r` exits 0; the hook and this job both read that as green and
-      # the canary is never reached. `--list --expect 3` two steps up checks
+      # the canary is never reached. `--list --expect 4` two steps up checks
       # discovery, not execution.
       #
       # So: assert on the gate's own output the same way the restore step asserts

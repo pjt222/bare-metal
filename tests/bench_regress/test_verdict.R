@@ -158,3 +158,94 @@ test_that("every verdict carries a status, an exit code and a message", {
     expect_true(startsWith(v$msg, v$status))
   }
 })
+
+# ---- end-to-end: the wiring, not just the decision ---------------------
+#
+# Everything above tests summarise_verdict() in isolation. That is not enough on
+# its own: the verdict function could be perfect and never consulted, or fed the
+# wrong counters, and every group above would still pass. #176 was a wiring bug
+# -- the decision code was three lines and they were all reachable.
+#
+# So these run the real script as a subprocess against a throwaway repo: a
+# renv.lock (the marker REPO_ROOT walks up to), a data/baselines.json, and a copy
+# of bench_regress.R. No GPU, no nvcc, no built corpus -- the "benchmark" is a
+# shell script printing one bench-shaped line, and the fixture switches off the
+# fairness check (default_valid_when: require_no_throttle false) so the result
+# does not depend on what this machine's GPU happens to be doing at the time.
+#
+# The child runs with the working directory left at the repo root so that the
+# repo's .Rprofile activates renv and cuasmR is loadable; REPO_ROOT comes from
+# the script's own path, which is inside the fixture.
+
+.fixture_root <- function(throughput = NULL, baseline_gflops = 1000) {
+  root <- file.path(tempfile("bench_regress_fixture"))
+  dir.create(file.path(root, "scripts", "bench"), recursive = TRUE)
+  dir.create(file.path(root, "data"), recursive = TRUE)
+  # REPO_ROOT walks up until it finds .git or renv.lock.
+  file.create(file.path(root, "renv.lock"))
+  file.copy(.src, file.path(root, "scripts", "bench", "bench_regress.R"))
+
+  # throughput = NULL means "leave the executable missing", which is the
+  # unbuilt-corpus case: the configs must still be counted.
+  exe <- file.path(root, "fake_bench")
+  if (!is.null(throughput)) {
+    writeLines(c("#!/bin/sh",
+                 sprintf('echo "  fixture 1.000 ms  %s GFLOPS"', throughput)),
+               exe)
+    Sys.chmod(exe, "0755")
+  }
+
+  baselines <- list(
+    recorded_date = "fixture",
+    platform = "fixture",
+    default_valid_when = list(require_no_throttle = FALSE),
+    kernels = list(`kernels/fixture/fake.cu` = list(
+      exe = exe,
+      `1_2` = list(ms = 1.0, gflops = baseline_gflops))))
+  writeLines(jsonlite::toJSON(baselines, auto_unbox = TRUE, pretty = TRUE),
+             file.path(root, "data", "baselines.json"))
+  root
+}
+
+.run_gate <- function(root) {
+  rscript <- file.path(R.home("bin"), "Rscript")
+  out <- suppressWarnings(system2(
+    rscript, file.path(root, "scripts", "bench", "bench_regress.R"),
+    stdout = TRUE, stderr = TRUE))
+  status <- attr(out, "status")
+  list(status = if (is.null(status)) 0L else as.integer(status),
+       text = paste(out, collapse = "\n"))
+}
+
+test_that("end to end: a run that skips everything exits 2 and says INCONCLUSIVE", {
+  # This is #176 itself. Against the code as it was, this exits 0 and prints
+  # "PASSED -- all benchmarks within tolerance".
+  r <- .run_gate(.fixture_root(throughput = NULL))
+  expect_equal(r$status, 2L)
+  expect_match(r$text, "INCONCLUSIVE", fixed = TRUE)
+  expect_false(grepl("within tolerance", r$text, fixed = TRUE))
+})
+
+test_that("end to end: configs of an unbuilt kernel stay in the denominator", {
+  # The emptier version of the same bug: the missing-executable branch used to
+  # skip the whole kernel before any counter moved, reporting `Total: 0`.
+  r <- .run_gate(.fixture_root(throughput = NULL))
+  expect_match(r$text, "Total: 1", fixed = TRUE)
+  expect_match(r$text, "Measured: 0", fixed = TRUE)
+  expect_match(r$text, "0 of 1", fixed = TRUE)
+})
+
+test_that("end to end: a config that measures cleanly exits 0 and is counted", {
+  r <- .run_gate(.fixture_root(throughput = 1000))
+  expect_equal(r$status, 0L)
+  expect_match(r$text, "Measured: 1", fixed = TRUE)
+  expect_match(r$text, "1 of 1 config(s) measured", fixed = TRUE)
+})
+
+test_that("end to end: a measured regression exits 1", {
+  # Half of baseline, far outside the 10% default tolerance.
+  r <- .run_gate(.fixture_root(throughput = 500))
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "FAILED", fixed = TRUE)
+  expect_match(r$text, "Measured: 1", fixed = TRUE)
+})

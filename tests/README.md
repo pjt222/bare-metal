@@ -44,10 +44,14 @@ silently.
 
 Two notes on reading the output:
 
-- `test_meta.R` ends with an unconditional `cat("All ... tests passed.")`. That
-  line prints regardless of the result. **The exit status is the verdict**,
-  which is why the runner reports its own table. Do not add such a line to a new
-  suite — `test_verdict.R` deliberately has none.
+- `test_meta.R` ends with an unconditional `cat("All ... tests passed.")` — a
+  line that asserts success without checking it. Under the runner's `Rscript
+  <file>` form a failing `test_that` aborts the script before it prints, so it
+  is currently harmless; under `testthat::test_file()` it prints even when every
+  group errored, which is how the retired `test_parser.R` looked green for 58
+  days (#171). **The exit status is the verdict**, which is why the runner
+  reports its own table rather than echoing what a suite claims about itself. Do
+  not add such a line to a new suite — `test_verdict.R` deliberately has none.
 - Three of the `cuasmR` roundtrip tests skip unless `kernels/tutorial/vector_add.sm_86.cubin`
   has been built (it is gitignored) *and* `nvdisasm` is on `PATH`. They therefore
   always skip in CI. Run `make cubins` locally for that coverage.

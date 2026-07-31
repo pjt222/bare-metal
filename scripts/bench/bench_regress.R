@@ -277,7 +277,11 @@ measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
 #   scripts/probe/run_locked_eval.ps1
 #                                 propagates it verbatim, which is right: a
 #                                 deliberate locked evaluation that measured
-#                                 nothing must not report success.
+#                                 nothing must not report success. That script
+#                                 had to be repaired to do so -- PowerShell 7
+#                                 was throwing on any non-zero native exit and
+#                                 skipping its own capture, so it reported 1 for
+#                                 both outcomes and wrote no record at all.
 #
 # `measured` counts configs that reached a verdict other than SKIPPED. CRASH
 # and NO_DATA count as measured and also land in `regressions`, so they report

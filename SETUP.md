@@ -23,8 +23,11 @@ The `make reproduce` target runs:
 
 A clean run on a healthy GPU ends with `RESULT: PASSED -- N of M
 config(s) measured, all within tolerance`. If the GPU state let it
-measure nothing at all, it ends with `RESULT: INCONCLUSIVE` and exit
-code 2 instead — a warning, not a failure (#176). The pre-push git hook calls the same
+measure nothing at all, it ends with `RESULT: INCONCLUSIVE` instead:
+the script exits 2, and `make bench` reports that as a warning and
+still exits 0, so `make reproduce` continues (#176). Read the RESULT
+line — a run that measured nothing is not a run that found nothing
+wrong. The pre-push git hook calls the same
 regression check, plus checks this command does not: a README link
 audit and the GPU-free R test suites (`make test-r`, #163). The renv
 sync check runs in both — `make reproduce` reaches it via `make setup`.

@@ -112,7 +112,17 @@ historical reference.
   reject ordinary pushes on this machine and its escape hatch, `git push
   --no-verify`, disables all five hook steps including the #163 R suites. All
   three callers read the same code: hook warns, `make bench` warns,
-  `run_locked_eval.ps1` propagates. Proven both ways on real runs before landing
+  `run_locked_eval.ps1` propagates. Two of those callers needed repairing before
+  that sentence was true, and both failed the same way the gate did — treating
+  "no measurement happened" as a measurement. `run_locked_eval.ps1` sets
+  `$PSNativeCommandUseErrorActionPreference`, so on PowerShell 7 any non-zero
+  exit from its `wsl.exe … Rscript` call threw before `$BenchExit =
+  $LASTEXITCODE` ran: it reported 1 for both FAILED and INCONCLUSIVE and wrote no
+  results record at all for the runs that measured nothing (measured on pwsh
+  7.6.3; a no-op on PS 5.1). And `Rscript` exits 2 when it cannot open the script
+  file, which is INCONCLUSIVE's code, so `make bench` now guards on `test -r`
+  first — a missing gate is an error, not an empty measurement.
+  Proven both ways on real runs before landing
   — an all-skip (`Total: 2 | Measured: 0` → INCONCLUSIVE, exit 2, where the same
   command on the parent commit printed PASSED and exited 0) and a live one
   (`Total: 7 | Measured: 3` → PASSED, exit 0). The verdict is a pure function of

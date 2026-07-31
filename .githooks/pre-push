@@ -42,7 +42,10 @@ REGRESS_SCRIPT="scripts/bench/bench_regress.R"
 #   2. renv_check.R    ~2-10 s  GPU-free, deterministic, blocking
 #   3. make test-r     ~2 min   GPU-free, deterministic, blocking      (#163)
 #   4. make test       minutes  CUDA build, best-effort, NON-blocking
-#   5. bench_regress.R minutes  needs the GPU, blocking, power-sensitive
+#   5. bench_regress.R minutes  needs the GPU, power-sensitive, blocking ONLY on
+#                               a measured regression -- exit 2 (INCONCLUSIVE,
+#                               nothing measured) warns and allows the push, see
+#                               the case block at the end of this file (#176)
 #
 # renv_check must precede test-r: every R suite needs cuasmR loadable, so an
 # out-of-sync library should produce renv's diagnosis, not a confusing testthat

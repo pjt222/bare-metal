@@ -263,7 +263,19 @@ verify:
 # it into a hard error. Without this branch `make bench` would newly fail
 # whenever the laptop is warm, which is not what the third exit code is for.
 # Exit 1 (a measured regression) still fails the target.
+#
+# The `test -r` guard is load-bearing, not decoration: `Rscript` itself exits 2
+# when it cannot open the script file ("Fatal error: cannot open file"), which is
+# the same code bench_regress.R uses for INCONCLUSIVE. Without the guard, a
+# renamed, deleted or unreadable bench_regress.R would be laundered into
+# "nothing was measured" and `make bench` would report success having run no R at
+# all. A missing gate is an error here, not a warning.
 bench:
+	@test -r scripts/bench/bench_regress.R || { \
+	  echo "ERROR: scripts/bench/bench_regress.R is missing or unreadable."; \
+	  echo "Nothing was run. This is not the same as measuring nothing."; \
+	  exit 1; \
+	}
 	@$(RSCRIPT) scripts/bench/bench_regress.R; rc=$$?; \
 	if [ $$rc -eq 2 ]; then \
 	  echo ""; \

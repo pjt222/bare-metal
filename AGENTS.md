@@ -111,15 +111,36 @@ right for a deliberate locked evaluation, where measuring nothing must not read
 as success. If a binding signal is ever wanted here, that is #179, and it should
 be decided for the whole gate rather than by tightening one exit code.
 
+Two traps found while wiring those callers up, both of which had turned a
+non-verdict into a verdict:
+
+- **PowerShell 7 eats native exit codes.** `run_locked_eval.ps1` sets
+  `$PSNativeCommandUseErrorActionPreference = $true`, so a non-zero exit from its
+  `wsl.exe … Rscript` call threw `NativeCommandExitException` and skipped its own
+  `$BenchExit = $LASTEXITCODE`, its results record and its `exit $BenchExit`
+  entirely — reporting 1 for *both* FAILED and INCONCLUSIVE, and writing no
+  record for exactly the runs that measured nothing. It is now disabled around
+  that one call and restored immediately after. Measured on pwsh 7.6.3; a no-op
+  on Windows PowerShell 5.1, which never threw.
+- **`Rscript` itself exits 2 when it cannot open the script file.** That is the
+  same code as INCONCLUSIVE, so `make bench` guards on `test -r` before running:
+  a missing or unreadable `bench_regress.R` is an error, not "measured nothing".
+
+Both are the same shape as the bug being fixed — a signal that means "no
+measurement happened" arriving somewhere that reads it as a measurement.
+
 To actually measure the locked configs, lock the clock host-side first (elevated
 Windows shell: `nvidia-smi.exe -lgc 1605,1605`), run
 `Rscript scripts/bench/bench_regress.R --clock-locked 1605`, then release it
 with `nvidia-smi.exe -rgc`.
 
-**`make test-r` runtime.** 117 s of tests on AC, measured 2026-07-31 on the
-RTX 3070 Ti laptop across four suites: `tests/bench_all/test_bench_all.R` 83 s,
-`tests/bench_regress/test_meta.R` 9 s, `tests/bench_regress/test_verdict.R` 9 s
-(added by #176), the `cuasmR` package suite 16 s. The 2026-07-30 three-suite run
+**`make test-r` runtime.** 127 s of tests on AC, measured 2026-07-31 on the
+RTX 3070 Ti laptop across four suites: `tests/bench_all/test_bench_all.R` 80 s,
+`tests/bench_regress/test_meta.R` 8 s, `tests/bench_regress/test_verdict.R` 23 s
+(added by #176; 14 s of it is four end-to-end groups that each start a child R
+process to run the real gate against a throwaway fixture — the price of covering
+the wiring rather than only the decision), the `cuasmR` package suite 15 s. The
+2026-07-30 three-suite run
 was 115 s of tests / 124 s wall on AC and 133 s / 140 s on battery; the wall
 figure predates the plumbing canary, which adds one R startup without changing
 the per-suite total, since the canary is deliberately excluded from it. Both are
