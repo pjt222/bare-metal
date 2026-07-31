@@ -169,6 +169,19 @@ And three run-level verdicts, one per exit code (#176):
   The pre-push hook and `make bench` report it as a warning and do not
   block; `scripts/probe/run_locked_eval.ps1` propagates it.
 
+Every run appends to `results/bench_regress/gate_runs.jsonl` — one row per
+config plus a run summary, including the GPU state at measurement time (#186).
+It is gitignored and local. When a push is rejected, that file is where the
+failing config and the conditions it was measured under stay after the terminal
+is gone:
+
+```bash
+jq 'select(.type=="run_summary")' results/bench_regress/gate_runs.jsonl | tail -20
+```
+
+Check the `meta` fields — throttle, temperature, power — before concluding a
+kernel got slower.
+
 To list recorded baselines without running:
 
 ```bash

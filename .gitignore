@@ -14,6 +14,11 @@ scripts/probe/eval_logs/
 # Compiled executables (not source files)
 bench
 bench_*
+# The gate's run record (#186) is machine-specific measurement, so it stays
+# local. It is already swallowed by `bench_*` above, but only by accident of
+# the directory name -- stated explicitly so narrowing that rule cannot start
+# committing one developer's thermal history.
+results/bench_regress/
 !bench_*.cu
 !scripts/bench_*.R
 !scripts/bench_*.py

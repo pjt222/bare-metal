@@ -13,7 +13,7 @@ These files validate hardware assumptions, fragment layouts, and race conditions
 | `flash_attention/verify_wmma_layout.cu` | WMMA accumulator fragment layout (sm_86) |
 | `bench_all/test_bench_all.R` | GPU-free unit tests for `scripts/bench/bench_all.R` and `bench_all_collect.R` (#124, #152): corpus discovery, spec merge, the taxonomy×regime planner, status classification, summary aggregation, markdown render |
 | `bench_regress/test_meta.R`   | Metadata tests for `scripts/bench/bench_meta.R` — throttle-reason decode and `classify_meta` policies against canned snapshots; the live-capture smoke test skips without `nvidia-smi` |
-| `bench_regress/test_verdict.R` | The run verdict in `scripts/bench/bench_regress.R` (#176): PASSED / FAILED / INCONCLUSIVE and their three exit codes, pinning that an all-skipped run can never print "all benchmarks within tolerance" again |
+| `bench_regress/test_verdict.R` | The run verdict and run record in `scripts/bench/bench_regress.R`. #176: PASSED / FAILED / INCONCLUSIVE and their three exit codes, pinning that an all-skipped run can never print "all benchmarks within tolerance" again. #186: the append-only `gate_runs.jsonl`, including that a record which cannot be written leaves the verdict untouched. Both are covered end to end by running the real script against a throwaway repo fixture — no GPU, no built corpus |
 
 Build any CUDA test individually with the same `nvcc` commands used for production kernels.
 
