@@ -215,9 +215,26 @@ jobs:
             echo "::error::the viz build produced no index.html"; exit 1; }
           # The app must not reach off-origin to render: the rest of the site
           # does not, and a docs page should not require a third party to be up.
-          if grep -rqE 'https?://(fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg|jsdelivr)' \
-               _site/viz/research-map/index.html _site/viz/research-map/assets/*.css; then
-            echo "::error::the published viz references a third-party origin"
+          #
+          # Scanned with find rather than a glob. `assets/*.css` matching nothing
+          # does not fail the step -- it prints "No such file or directory" and
+          # the guard reports success having read one file -- so a renamed asset
+          # layout would quietly narrow this to index.html alone.
+          #
+          # The JS bundle is included: an import from a CDN would never appear in
+          # the HTML or the CSS. The host pattern stays specific rather than
+          # "any URL" because the bundle legitimately contains http://www.w3.org
+          # (SVG namespace literals), which is not a network request.
+          viz_files=$(find _site/viz/research-map -type f \
+                        \( -name '*.html' -o -name '*.css' -o -name '*.js' \))
+          [ -n "$viz_files" ] || {
+            echo "::error::no viz html/css/js to scan — the copy produced nothing"
+            exit 1
+          }
+          echo "scanning $(echo "$viz_files" | wc -l) viz files for third-party origins"
+          if echo "$viz_files" | xargs grep -lE \
+               'https?://(fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg\.|jsdelivr)'; then
+            echo "::error::the published viz references a third-party origin (files above)"
             exit 1
           fi
 
