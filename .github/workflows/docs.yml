@@ -186,6 +186,41 @@ jobs:
       - name: Render the site
         run: quarto render --to html
 
+      # The interactive knowledge graph is a Vite + three.js app, published as a
+      # subdirectory of this site (#192). It is built here rather than committed:
+      # viz/research-map/dist/ is gitignored (viz/.gitignore:2).
+      #
+      # GITHUB_ACTIONS is what switches vite.config.js to the /bare-metal/ base,
+      # so the emitted asset paths resolve under a project page. The same
+      # env-driven switch is what the sibling project ez-ar2diff uses.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viz/research-map/package-lock.json
+
+      - name: Build the research-map knowledge graph
+        working-directory: viz/research-map
+        run: |
+          npm ci
+          npm run build
+
+      # Into _site BEFORE the assertions and the link check below, so the
+      # published bundle is covered by both rather than bolted on afterwards.
+      - name: Place the knowledge graph in the site
+        run: |
+          mkdir -p _site/viz/research-map
+          cp -r viz/research-map/dist/. _site/viz/research-map/
+          test -f _site/viz/research-map/index.html || {
+            echo "::error::the viz build produced no index.html"; exit 1; }
+          # The app must not reach off-origin to render: the rest of the site
+          # does not, and a docs page should not require a third party to be up.
+          if grep -rqE 'https?://(fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg|jsdelivr)' \
+               _site/viz/research-map/index.html _site/viz/research-map/assets/*.css; then
+            echo "::error::the published viz references a third-party origin"
+            exit 1
+          fi
+
       # Assert the build produced a site rather than exiting 0 having produced
       # nothing — the same reasoning as the gate assertions in tests.yml. A
       # deploy step will happily publish an empty directory.
@@ -201,7 +236,8 @@ jobs:
             docs/benchmark_methodology.html docs/ampere_sass_reference.html \
             docs/tutorial/01-sass-hello-world.html \
             docs/tutorial/06-the-four-laws.html \
-            docs/analysis/kernel_architecture.html
+            docs/analysis/kernel_architecture.html \
+            viz/research-map/index.html
           do
             [ -f "_site/$page" ] || { echo "::error::missing _site/$page"; missing=1; }
           done
@@ -225,6 +261,17 @@ jobs:
           from html.parser import HTMLParser
           root = "_site"; broken = []; checked = 0
           SOURCE_EXT = {".md", ".qmd", ".rmd", ".r", ".ipynb"}
+          # This is a GitHub *project* page, so the served root is /bare-metal/,
+          # not /. A site-absolute href (the Vite bundle emits
+          # /bare-metal/viz/research-map/assets/...) has to be resolved against
+          # _site with that prefix stripped, or every correctly-built asset
+          # reads as missing.
+          BASE_PATH = "/bare-metal"
+          def resolve(dirpath, target):
+              if target.startswith("/"):
+                  rel = target[len(BASE_PATH):] if target.startswith(BASE_PATH + "/") else target
+                  return os.path.normpath(os.path.join(root, rel.lstrip("/")))
+              return os.path.normpath(os.path.join(dirpath, target))
           class P(HTMLParser):
               def __init__(s): super().__init__(); s.refs = []
               def handle_starttag(s, t, a):
@@ -241,7 +288,7 @@ jobs:
                       t = urllib.parse.unquote(ref.split("#")[0].split("?")[0])
                       if not t: continue
                       checked += 1
-                      full = os.path.normpath(os.path.join(dp, t))
+                      full = resolve(dp, t)
                       # A directory is NOT a servable target: GitHub Pages does
                       # not list directories, it serves index.html or 404s. A
                       # bare os.path.exists() call passes those, which is how

@@ -16,8 +16,15 @@
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-mono: #a5f3fc;
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  /* System stacks, deliberately (#192): Inter and JetBrains Mono were loaded
+     from fonts.googleapis.com, and this page is now served from the project's
+     own documentation site, which makes no third-party requests. Both stacks
+     already ended in a generic family, so the rendered result was always these
+     faces for anyone the webfont failed to reach. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+               Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", "Courier New", monospace;
 
   /* Phase colors */
   --phase1: #6366f1;

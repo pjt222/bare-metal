@@ -59,6 +59,12 @@ website:
           - docs/tutorial/06-the-four-laws.md
       - text: "Analysis"
         href: docs/analysis/kernel_architecture.qmd
+      # Absolute URL on purpose: a relative link would make Quarto resolve the
+      # app against the SOURCE tree and copy its unbuilt index.html into the
+      # site, which is exactly how #187 ended up publishing a broken copy. The
+      # bundle is placed into _site by the workflow, after the render.
+      - text: "Knowledge graph"
+        href: "https://pjt222.github.io/bare-metal/viz/research-map/"
     right:
       - icon: github
         href: https://github.com/pjt222/bare-metal
