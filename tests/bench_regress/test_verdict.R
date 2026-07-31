@@ -1,20 +1,23 @@
 # tests/bench_regress/test_verdict.R
 #
-# GPU-free unit tests for the run verdict in scripts/bench/bench_regress.R
-# (issue #176).
+# GPU-free tests for the run verdict (#176) and the run record (#186) in
+# scripts/bench/bench_regress.R.
 #
-# The bug these pin: the verdict branched on `regressions > 0L` alone, so a
+# The bug the verdict groups pin: it branched on `regressions > 0L` alone, so a
 # run in which every config SKIPPED printed "PASSED -- all benchmarks within
 # tolerance" and exited 0 having measured nothing. It did that on five
 # consecutive real pushes at 7 of 7 skipped, and the pre-push hook rendered it
 # as a green "All benchmarks within tolerance. Push allowed."
 #
-# summarise_verdict() is a pure function of four counters, so the whole
-# decision is testable here with no GPU, no baselines file and no bench
-# executables. What is NOT covered here is the wiring -- whether main() feeds
-# it the right counters. That needs a real run; the two recorded on PR for
-# #176 are an all-skip (Total 2, Measured 0 -> INCONCLUSIVE, exit 2) and a
-# live one (Total 7, Measured 3 -> PASSED, exit 0).
+# The bug the record groups pin: a push was rejected by a measured regression on
+# 2026-07-31 and which config regressed could not be recovered, because the gate
+# printed its verdicts and kept nothing.
+#
+# Two layers, deliberately. summarise_verdict() is a pure function of four
+# counters and is tested directly. But a pure function can be perfect and never
+# consulted -- #176 was a wiring bug -- so the end-to-end groups run the real
+# script as a subprocess against a throwaway repo fixture and assert on its exit
+# code, its output and the record it wrote. Still no GPU, no nvcc, no corpus.
 #
 # Run:
 #   Rscript tests/bench_regress/test_verdict.R
@@ -214,13 +217,41 @@ test_that("every verdict carries a status, an exit code and a message", {
     stdout = TRUE, stderr = TRUE))
   status <- attr(out, "status")
   list(status = if (is.null(status)) 0L else as.integer(status),
-       text = paste(out, collapse = "\n"))
+       text = paste(out, collapse = "\n"),
+       record = file.path(root, "results", "bench_regress", "gate_runs.jsonl"))
 }
+
+# Rows of the run record, in write order.
+.record_rows <- function(run) {
+  expect_true(file.exists(run$record))
+  lapply(readLines(run$record, warn = FALSE), jsonlite::fromJSON,
+         simplifyVector = FALSE)
+}
+
+# Each distinct scenario is run ONCE and its result shared by every group that
+# asserts on it. Written the obvious way -- one .run_gate() per test_that -- this
+# suite started twelve child R processes and cost 79 s of a blocking pre-push
+# gate, most of it R startup on the 9p mount, re-deriving results it already had.
+# Scenarios are keyed by name; the groups below read, they do not run.
+.scenarios <- local({
+  cache <- list()
+  function(name) {
+    if (!is.null(cache[[name]])) return(cache[[name]])
+    run <- switch(
+      name,
+      skipped    = .run_gate(.fixture_root(throughput = NULL)),
+      measured   = .run_gate(.fixture_root(throughput = 1000)),
+      regressed  = .run_gate(.fixture_root(throughput = 500)),
+      stop("unknown scenario: ", name))
+    cache[[name]] <<- run
+    run
+  }
+})
 
 test_that("end to end: a run that skips everything exits 2 and says INCONCLUSIVE", {
   # This is #176 itself. Against the code as it was, this exits 0 and prints
   # "PASSED -- all benchmarks within tolerance".
-  r <- .run_gate(.fixture_root(throughput = NULL))
+  r <- .scenarios("skipped")
   expect_equal(r$status, 2L)
   expect_match(r$text, "INCONCLUSIVE", fixed = TRUE)
   expect_false(grepl("within tolerance", r$text, fixed = TRUE))
@@ -229,14 +260,14 @@ test_that("end to end: a run that skips everything exits 2 and says INCONCLUSIVE
 test_that("end to end: configs of an unbuilt kernel stay in the denominator", {
   # The emptier version of the same bug: the missing-executable branch used to
   # skip the whole kernel before any counter moved, reporting `Total: 0`.
-  r <- .run_gate(.fixture_root(throughput = NULL))
+  r <- .scenarios("skipped")
   expect_match(r$text, "Total: 1", fixed = TRUE)
   expect_match(r$text, "Measured: 0", fixed = TRUE)
   expect_match(r$text, "0 of 1", fixed = TRUE)
 })
 
 test_that("end to end: a config that measures cleanly exits 0 and is counted", {
-  r <- .run_gate(.fixture_root(throughput = 1000))
+  r <- .scenarios("measured")
   expect_equal(r$status, 0L)
   expect_match(r$text, "Measured: 1", fixed = TRUE)
   expect_match(r$text, "1 of 1 config(s) measured", fixed = TRUE)
@@ -244,8 +275,93 @@ test_that("end to end: a config that measures cleanly exits 0 and is counted", {
 
 test_that("end to end: a measured regression exits 1", {
   # Half of baseline, far outside the 10% default tolerance.
-  r <- .run_gate(.fixture_root(throughput = 500))
+  r <- .scenarios("regressed")
   expect_equal(r$status, 1L)
   expect_match(r$text, "FAILED", fixed = TRUE)
   expect_match(r$text, "Measured: 1", fixed = TRUE)
+})
+
+# ---- the run record (#186) ---------------------------------------------
+#
+# A push was rejected by a measured regression on 2026-07-31 and which config
+# regressed could not be recovered: stdout was the only record, and a re-run ten
+# minutes later passed. These pin the record that now outlives the terminal.
+
+test_that("every run leaves a record, including one that measured nothing", {
+  rows <- .record_rows(.scenarios("skipped"))
+  expect_equal(length(rows), 2L)                       # 1 config + 1 summary
+  expect_equal(vapply(rows, function(r) r$type, ""),
+               c("config", "run_summary"))
+})
+
+test_that("the record names the configs behind a FAILED verdict", {
+  # The whole point of #186: after the terminal is gone, this is what says
+  # which kernel and which config were responsible.
+  rows <- .record_rows(.scenarios("regressed"))
+  summary_row <- rows[[length(rows)]]
+  expect_equal(summary_row$verdict, "FAILED")
+  expect_equal(summary_row$exit, 1L)
+  expect_equal(length(summary_row$failed), 1L)
+  expect_equal(summary_row$failed[[1]]$kernel, "kernels/fixture/fake.cu")
+  expect_equal(summary_row$failed[[1]]$config, "1_2")
+  expect_match(summary_row$failed[[1]]$msg, "REGRESSION", fixed = TRUE)
+})
+
+test_that("a measured config records its number, its baseline and the GPU state", {
+  rows <- .record_rows(.scenarios("measured"))
+  cfg <- rows[[1]]
+  expect_equal(cfg$verdict, "OK")
+  expect_true(cfg$measured)
+  expect_equal(cfg$throughput, 1000)
+  expect_equal(cfg$baseline_gflops, 1000)
+  expect_equal(cfg$tolerance, 0.1)
+  expect_equal(cfg$returncode, 0L)
+  # meta is NULL off-GPU (no nvidia-smi on a runner) and populated on this
+  # box. Either is fine; what must hold is that the field exists as a slot and
+  # that a populated one carries the fields a thermal false positive is judged
+  # on. That distinction is why #176's unreproducible regression stayed a
+  # mystery.
+  if (!is.null(cfg$meta)) {
+    for (field in c("clock_sm", "temp_c", "power_w", "pstate", "ac_state")) {
+      expect_true(field %in% names(cfg$meta))
+    }
+  }
+})
+
+test_that("a skipped config records why, not merely that", {
+  rows <- .record_rows(.scenarios("skipped"))
+  cfg <- rows[[1]]
+  expect_equal(cfg$verdict, "SKIPPED")
+  expect_false(cfg$measured)
+  expect_match(cfg$msg, "executable not found", fixed = TRUE)
+})
+
+test_that("the record is append-only across runs, with distinct run ids", {
+  # Two runs against one fixture: the second must not truncate the first.
+  # A store that overwrites answers "what happened just now" and nothing else,
+  # which is the failure being fixed.
+  root <- .fixture_root(throughput = NULL)
+  first <- .record_rows(.run_gate(root))
+  both  <- .record_rows(.run_gate(root))
+  expect_equal(length(both), 2L * length(first))
+  ids <- unique(vapply(both, function(r) r$run_id, ""))
+  expect_equal(length(ids), 2L)
+})
+
+test_that("a record that cannot be written does not change the verdict", {
+  # Recording is evidence, not enforcement. On a read-only checkout the gate
+  # must still reach the same conclusion and the same exit code -- and say
+  # plainly that it kept nothing.
+  root <- .fixture_root(throughput = NULL)
+  dir.create(file.path(root, "results", "bench_regress"), recursive = TRUE)
+  Sys.chmod(file.path(root, "results", "bench_regress"), "0500")
+  on.exit(Sys.chmod(file.path(root, "results", "bench_regress"), "0755"),
+          add = TRUE)
+  skip_if(file.access(file.path(root, "results", "bench_regress"), 2L) == 0L,
+          "filesystem ignores the read-only bit (running as root?)")
+
+  r <- .run_gate(root)
+  expect_equal(r$status, 2L)                       # unchanged by the failure
+  expect_match(r$text, "INCONCLUSIVE", fixed = TRUE)
+  expect_match(r$text, "NOT WRITTEN", fixed = TRUE)
 })
