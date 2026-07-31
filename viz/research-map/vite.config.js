@@ -21,6 +21,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Sourcemaps locally, not in the published bundle. The map is 1.99 MB
+    // against a 490 KB bundle — 80% of what a reader downloads — and the
+    // unminified source it reconstructs is a click away in the repository this
+    // page links to. Keep them for local debugging, where that trade does not
+    // apply.
+    sourcemap: !isGitHubPages,
   },
 });

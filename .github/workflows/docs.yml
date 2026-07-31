@@ -283,10 +283,20 @@ jobs:
           # /bare-metal/viz/research-map/assets/...) has to be resolved against
           # _site with that prefix stripped, or every correctly-built asset
           # reads as missing.
+          # Must match `PAGES_BASE` in viz/research-map/vite.config.js. Two
+          # copies of one deployment prefix; if the repository is renamed both
+          # move, and the assertion below is what notices if only one does.
           BASE_PATH = "/bare-metal"
+          SITE_URL = "https://pjt222.github.io" + BASE_PATH
           def resolve(dirpath, target):
               if target.startswith("/"):
-                  rel = target[len(BASE_PATH):] if target.startswith(BASE_PATH + "/") else target
+                  # A site-absolute href WITHOUT the project prefix 404s on a
+                  # project page: the served root is /bare-metal/, not /. Return
+                  # a path that cannot exist so it is reported rather than
+                  # silently resolved against _site and passed.
+                  if not target.startswith(BASE_PATH + "/") and target != BASE_PATH:
+                      return os.path.join(root, "__missing_project_prefix__", target.lstrip("/"))
+                  rel = target[len(BASE_PATH):]
                   return os.path.normpath(os.path.join(root, rel.lstrip("/")))
               return os.path.normpath(os.path.join(dirpath, target))
           class P(HTMLParser):
@@ -301,6 +311,20 @@ jobs:
                   p = os.path.join(dp, f)
                   pr = P(); pr.feed(open(p, encoding="utf-8", errors="replace").read())
                   for ref in pr.refs:
+                      # An absolute URL pointing back at this site is a
+                      # link we can and should verify: the navbar's only entry
+                      # for the knowledge graph is one, so nothing would notice
+                      # if it were wrong.
+                      if ref.startswith(SITE_URL):
+                          checked += 1
+                          rel = ref[len(SITE_URL):].split("#")[0].split("?")[0].lstrip("/")
+                          cand = os.path.normpath(os.path.join(root, rel)) if rel else root
+                          if os.path.isdir(cand):
+                              if not os.path.exists(os.path.join(cand, "index.html")):
+                                  broken.append(f"{os.path.relpath(p, root)} -> {ref} (self URL, no index.html)")
+                          elif not os.path.exists(cand):
+                              broken.append(f"{os.path.relpath(p, root)} -> {ref} (self URL, missing)")
+                          continue
                       if re.match(r'^(https?:|mailto:|#|data:|//)', ref): continue
                       t = urllib.parse.unquote(ref.split("#")[0].split("?")[0])
                       if not t: continue
