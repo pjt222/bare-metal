@@ -3,6 +3,10 @@
 > **Hand-optimized SASS assembly kernels targeting RTX 3070 Ti (GA104, sm_86, Ampere).**
 > No cuBLAS, no cuDNN, no PyTorch. Just nvcc, cuobjdump, and our R-native cubin patcher (cuasmR).
 
+**Documentation site: <https://pjt222.github.io/bare-metal/>** — the same
+documents rendered and cross-linked, including the six-chapter tutorial and the
+kernel architecture analysis.
+
 This repository builds a library of ML kernels — GEMM, Flash
 Attention, convolution, normalization, sparse 2:4 and INT8 variants —
 from `nvcc` down to native SASS, with no vendor library in the
@@ -43,6 +47,13 @@ derived empirically and explained in
 The repository is organized like a paper: this README is the
 abstract; the detailed sections live under `docs/`. Start at the
 documentation map and follow the dependency order from there.
+
+Everything below is published at
+**<https://pjt222.github.io/bare-metal/>**, built from these same files on
+every push to `main` — read it there if you would rather not clone. The
+performance figures carry the project's own caveats: one laptop-bin RTX 3070 Ti
+under a 150 W VBIOS cap, several results `n=1`, and where the repository
+disputes one of its own numbers there is an open issue and a footnote saying so.
 
 - [`docs/index.md`](docs/index.md) — full documentation map, read this first.
 - [`docs/inventory.md`](docs/inventory.md) — kernel inventory by
