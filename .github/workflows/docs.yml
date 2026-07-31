@@ -186,6 +186,58 @@ jobs:
       - name: Render the site
         run: quarto render --to html
 
+      # The interactive knowledge graph is a Vite + three.js app, published as a
+      # subdirectory of this site (#192). It is built here rather than committed:
+      # viz/research-map/dist/ is gitignored (viz/.gitignore:2).
+      #
+      # GITHUB_ACTIONS is what switches vite.config.js to the /bare-metal/ base,
+      # so the emitted asset paths resolve under a project page. The same
+      # env-driven switch is what the sibling project ez-ar2diff uses.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: viz/research-map/package-lock.json
+
+      - name: Build the research-map knowledge graph
+        working-directory: viz/research-map
+        run: |
+          npm ci
+          npm run build
+
+      # Into _site BEFORE the assertions and the link check below, so the
+      # published bundle is covered by both rather than bolted on afterwards.
+      - name: Place the knowledge graph in the site
+        run: |
+          mkdir -p _site/viz/research-map
+          cp -r viz/research-map/dist/. _site/viz/research-map/
+          test -f _site/viz/research-map/index.html || {
+            echo "::error::the viz build produced no index.html"; exit 1; }
+          # The app must not reach off-origin to render: the rest of the site
+          # does not, and a docs page should not require a third party to be up.
+          #
+          # Scanned with find rather than a glob. `assets/*.css` matching nothing
+          # does not fail the step -- it prints "No such file or directory" and
+          # the guard reports success having read one file -- so a renamed asset
+          # layout would quietly narrow this to index.html alone.
+          #
+          # The JS bundle is included: an import from a CDN would never appear in
+          # the HTML or the CSS. The host pattern stays specific rather than
+          # "any URL" because the bundle legitimately contains http://www.w3.org
+          # (SVG namespace literals), which is not a network request.
+          viz_files=$(find _site/viz/research-map -type f \
+                        \( -name '*.html' -o -name '*.css' -o -name '*.js' \))
+          [ -n "$viz_files" ] || {
+            echo "::error::no viz html/css/js to scan — the copy produced nothing"
+            exit 1
+          }
+          echo "scanning $(echo "$viz_files" | wc -l) viz files for third-party origins"
+          if echo "$viz_files" | xargs grep -lE \
+               'https?://(fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg\.|jsdelivr)'; then
+            echo "::error::the published viz references a third-party origin (files above)"
+            exit 1
+          fi
+
       # Assert the build produced a site rather than exiting 0 having produced
       # nothing — the same reasoning as the gate assertions in tests.yml. A
       # deploy step will happily publish an empty directory.
@@ -201,7 +253,8 @@ jobs:
             docs/benchmark_methodology.html docs/ampere_sass_reference.html \
             docs/tutorial/01-sass-hello-world.html \
             docs/tutorial/06-the-four-laws.html \
-            docs/analysis/kernel_architecture.html
+            docs/analysis/kernel_architecture.html \
+            viz/research-map/index.html
           do
             [ -f "_site/$page" ] || { echo "::error::missing _site/$page"; missing=1; }
           done
@@ -225,6 +278,27 @@ jobs:
           from html.parser import HTMLParser
           root = "_site"; broken = []; checked = 0
           SOURCE_EXT = {".md", ".qmd", ".rmd", ".r", ".ipynb"}
+          # This is a GitHub *project* page, so the served root is /bare-metal/,
+          # not /. A site-absolute href (the Vite bundle emits
+          # /bare-metal/viz/research-map/assets/...) has to be resolved against
+          # _site with that prefix stripped, or every correctly-built asset
+          # reads as missing.
+          # Must match `PAGES_BASE` in viz/research-map/vite.config.js. Two
+          # copies of one deployment prefix; if the repository is renamed both
+          # move, and the assertion below is what notices if only one does.
+          BASE_PATH = "/bare-metal"
+          SITE_URL = "https://pjt222.github.io" + BASE_PATH
+          def resolve(dirpath, target):
+              if target.startswith("/"):
+                  # A site-absolute href WITHOUT the project prefix 404s on a
+                  # project page: the served root is /bare-metal/, not /. Return
+                  # a path that cannot exist so it is reported rather than
+                  # silently resolved against _site and passed.
+                  if not target.startswith(BASE_PATH + "/") and target != BASE_PATH:
+                      return os.path.join(root, "__missing_project_prefix__", target.lstrip("/"))
+                  rel = target[len(BASE_PATH):]
+                  return os.path.normpath(os.path.join(root, rel.lstrip("/")))
+              return os.path.normpath(os.path.join(dirpath, target))
           class P(HTMLParser):
               def __init__(s): super().__init__(); s.refs = []
               def handle_starttag(s, t, a):
@@ -237,11 +311,25 @@ jobs:
                   p = os.path.join(dp, f)
                   pr = P(); pr.feed(open(p, encoding="utf-8", errors="replace").read())
                   for ref in pr.refs:
+                      # An absolute URL pointing back at this site is a
+                      # link we can and should verify: the navbar's only entry
+                      # for the knowledge graph is one, so nothing would notice
+                      # if it were wrong.
+                      if ref.startswith(SITE_URL):
+                          checked += 1
+                          rel = ref[len(SITE_URL):].split("#")[0].split("?")[0].lstrip("/")
+                          cand = os.path.normpath(os.path.join(root, rel)) if rel else root
+                          if os.path.isdir(cand):
+                              if not os.path.exists(os.path.join(cand, "index.html")):
+                                  broken.append(f"{os.path.relpath(p, root)} -> {ref} (self URL, no index.html)")
+                          elif not os.path.exists(cand):
+                              broken.append(f"{os.path.relpath(p, root)} -> {ref} (self URL, missing)")
+                          continue
                       if re.match(r'^(https?:|mailto:|#|data:|//)', ref): continue
                       t = urllib.parse.unquote(ref.split("#")[0].split("?")[0])
                       if not t: continue
                       checked += 1
-                      full = os.path.normpath(os.path.join(dp, t))
+                      full = resolve(dp, t)
                       # A directory is NOT a servable target: GitHub Pages does
                       # not list directories, it serves index.html or 404s. A
                       # bare os.path.exists() call passes those, which is how
