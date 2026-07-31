@@ -89,7 +89,7 @@ Current documents:
 
 ## Visualizations
 
-`../viz/` holds interactive visualizations built with web tooling.
+[`viz/`](https://github.com/pjt222/bare-metal/tree/main/viz) holds interactive visualizations built with web tooling.
 Each subdirectory is a standalone application with its own
 `package.json`.
 

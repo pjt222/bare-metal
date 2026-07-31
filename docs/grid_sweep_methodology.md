@@ -31,7 +31,7 @@ The full-corpus, **native** counterpart is `bench_all.R` / `make bench-all`
 across *locked* clocks. Converging the two — all kernels × {native and/or a
 locked-clock grid} — is tracked in issue #152. For the operational
 elevated-session runbook, see
-[`elevated_session_runbook.md`](elevated_session_runbook.md).
+[`elevated_session_runbook.md`](https://github.com/pjt222/bare-metal/blob/main/docs/elevated_session_runbook.md).
 
 ## Architecture
 

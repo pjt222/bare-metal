@@ -326,7 +326,7 @@ re-measure under a host-side clock lock — see
 [`grid_sweep_methodology.md`](grid_sweep_methodology.md) (#135, the
 multi-kernel × clock grid) and `scripts/probe/run_locked_eval.ps1`. The
 operational runbook for the elevated, clock-locked session is
-[`elevated_session_runbook.md`](elevated_session_runbook.md). The end goal —
+[`elevated_session_runbook.md`](https://github.com/pjt222/bare-metal/blob/main/docs/elevated_session_runbook.md). The end goal —
 **one** tool running all kernels against native **and/or** a defined
 locked-clock grid, converging this `bench-all` corpus runner with the #135
 grid sweep — is tracked in issue #152.

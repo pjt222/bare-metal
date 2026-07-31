@@ -1,12 +1,14 @@
 project:
   type: website
   output-dir: _site
-  # Quarto copies loose project files it treats as resources, which is how
-  # CLAUDE.md (raw, unrendered) and viz/research-map/ (a standalone JS app whose
-  # absolute /src/ paths 404 outside its own dev server) ended up published in
-  # the first build. Publishing is not the place for "whatever happened to be in
-  # the directory": everything served here is listed, and everything listed is
-  # either rendered below or a deliberate resource.
+  # Quarto copies files that the rendered pages LINK to, which is how CLAUDE.md
+  # (raw, unrendered) and viz/research-map/ (a standalone JS app whose absolute
+  # /src/ paths 404 outside its own dev server) ended up in the first build.
+  # They are gone because the links now point at GitHub, not because anything
+  # here excludes them: what gets copied is a consequence of what the documents
+  # reference, so check `_site/` after adding a link that leaves the site.
+  # Trying to control this with `resources:` negations made it worse — R/ and
+  # renv/ started being copied.
   render:
     - index.qmd
     - README.md
@@ -21,12 +23,19 @@ project:
     # transient state. Linked from docs/index.md at its GitHub URL instead.
     - "!docs/elevated_session_runbook.md"
     - docs/tutorial/*.md
+    # Quarto skips README.md by default, which would drop the tutorial's own
+    # index -- its chapter table and suggested reading order. Listed explicitly.
+    - docs/tutorial/README.md
     - docs/analysis/*.qmd
     - "!docs/CONTINUE_HERE.md"
 
 website:
   title: "bare-metal"
   description: "Hand-tuned NVIDIA SASS kernels for RTX 3070 Ti (GA104, sm_86)"
+  # Without site-url Quarto emits a sitemap.xml with relative locations, which
+  # is not a valid sitemap, and social/canonical tags resolve wrongly.
+  site-url: "https://pjt222.github.io/bare-metal/"
+  repo-url: "https://github.com/pjt222/bare-metal"
   navbar:
     left:
       - text: "Home"

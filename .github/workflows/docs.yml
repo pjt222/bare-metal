@@ -224,6 +224,7 @@ jobs:
           import os, re, sys, urllib.parse
           from html.parser import HTMLParser
           root = "_site"; broken = []; checked = 0
+          SOURCE_EXT = {".md", ".qmd", ".rmd", ".r", ".ipynb"}
           class P(HTMLParser):
               def __init__(s): super().__init__(); s.refs = []
               def handle_starttag(s, t, a):
@@ -251,6 +252,15 @@ jobs:
                               broken.append(f"{os.path.relpath(p, root)} -> {ref} (directory with no index.html)")
                       elif not os.path.exists(full):
                           broken.append(f"{os.path.relpath(p, root)} -> {ref}")
+                      elif os.path.splitext(full)[1].lower() in SOURCE_EXT:
+                          # The target exists but is a SOURCE file, not a page.
+                          # When a document drops out of the render list Quarto
+                          # stops rendering it and copies it in as a raw
+                          # resource, leaving hrefs pointing at .md — which
+                          # os.path.exists() happily confirms. That is how a
+                          # build with its whole tutorial reduced to raw
+                          # markdown still reported 0 broken links.
+                          broken.append(f"{os.path.relpath(p, root)} -> {ref} (source file, not a rendered page)")
           print(f"internal links checked: {checked}, broken: {len(broken)}")
           for b in broken[:20]: print("  ", b)
           # A checker that examined nothing must not report success -- the same
