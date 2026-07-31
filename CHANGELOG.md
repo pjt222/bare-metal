@@ -15,11 +15,14 @@ historical reference.
 ### Added
 - **The regression gate now writes itself down (#186).** Every
   `bench_regress.R` run appends to `results/bench_regress/gate_runs.jsonl`
-  (append-only, gitignored): one `config` row per config with the verdict, the
-  throughput, the baseline fields, the tolerance, the clock-lock state and a
-  GPU/host digest (clock, temp, power, pstate, throttle, AC state), then one
-  `run_summary` row with the counters, the verdict, the exit code and the configs
-  behind a FAILED. It exists because a push was rejected by a measured regression
+  (append-only, gitignored): one `config` row per config with its verdict and
+  whatever the run learned about it — for a measured config that is the
+  throughput, the baseline fields, the tolerance and a GPU/host digest (clock,
+  temp, power, pstate, throttle, AC state); for a config skipped before any
+  bench ran it is the reason and the clock-lock state, with the measurement
+  fields null. Then one `run_summary` row with the counters, the verdict, the
+  exit code, the short git sha of the tree measured, and the configs behind a
+  FAILED. It exists because a push was rejected by a measured regression
   on 2026-07-31 and **which config regressed could not be recovered** — stdout
   was the only record, and a re-run ten minutes later passed. Of the five
   pre-push steps this is the only one whose result cannot be reproduced on

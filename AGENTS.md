@@ -134,10 +134,15 @@ measurement happened" arriving somewhere that reads it as a measurement.
 row per config plus one `run_summary` row per run:
 
 ```bash
-# what did the last run conclude, and why?
-jq 'select(.type=="run_summary")' results/bench_regress/gate_runs.jsonl | tail -20
-# every time this kernel has been measured, with the GPU state at the time
-jq 'select(.kernel|test("hgemm"))|{run_id,verdict,throughput,meta}' \
+# what did the last run conclude, and why?  -c keeps one run per line, so
+# `tail` cuts runs rather than cutting the head off a pretty-printed object
+jq -c 'select(.type=="run_summary")|{run_id,verdict,measured,total,failed}' \
+   results/bench_regress/gate_runs.jsonl | tail -5
+# every time this kernel has been measured, with the GPU state at the time.
+# The type guard is required: run_summary rows carry no .kernel, and
+# `null|test(...)` is a jq error that aborts the whole stream
+jq -c 'select(.type=="config" and (.kernel|test("hgemm")))
+       |{run_id,verdict,throughput,thr:.meta.throttle,ac:.meta.ac_state}' \
    results/bench_regress/gate_runs.jsonl
 ```
 
@@ -160,9 +165,9 @@ Windows shell: `nvidia-smi.exe -lgc 1605,1605`), run
 `Rscript scripts/bench/bench_regress.R --clock-locked 1605`, then release it
 with `nvidia-smi.exe -rgc`.
 
-**`make test-r` runtime.** Roughly 130–190 s of tests on AC, measured 2026-07-31
-on the RTX 3070 Ti laptop across four suites. Three runs of the same target that
-day: 127 s, 212 s, 186 s.
+**`make test-r` runtime.** Between 127 s and 212 s of tests on AC, measured
+2026-07-31 on the RTX 3070 Ti laptop across four suites. Three runs of the same
+target that day: 127 s, 212 s, 186 s.
 
 | suite | run 1 | run 2 | run 3 |
 |---|---|---|---|

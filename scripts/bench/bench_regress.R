@@ -351,7 +351,12 @@ meta_digest <- function(current) {
     clock_sm = gpu$clock_sm, clock_mem = gpu$clock_mem,
     temp_c   = gpu$temp_c,   power_w   = gpu$power_w,
     pstate   = gpu$pstate,
-    throttle = if (length(gpu$throttle)) gpu$throttle else character(0),
+    # as.list() keeps `throttle` a JSON ARRAY at every length. toJSON's
+    # auto_unbox would otherwise emit a bare string for one reason and an array
+    # for two, so a consumer that indexes [0] silently reads the first
+    # CHARACTER of "SwPowerCap" on exactly the single-reason runs that are the
+    # common case.
+    throttle = as.list(if (length(gpu$throttle)) gpu$throttle else character(0)),
     ac_state = current$meta_post$host$ac_state)
 }
 
@@ -362,7 +367,7 @@ verdict_word <- function(msg) {
   if (length(w)) w else NA_character_
 }
 
-record_row <- function(row, path = GATE_RECORD_PATH) {
+record_row_raw <- function(row, path = GATE_RECORD_PATH) {
   tryCatch({
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     append_jsonl_row(path, row)
@@ -457,7 +462,19 @@ main <- function() {
 
   RUN_ID <- utc_stamp("%Y%m%dT%H%M%OS3Z")
   recorded_ok <- TRUE   # false once any write has failed
+  records_written <- 0L
+  records_attempted <- 0L
   failed <- list()      # configs behind a FAILED verdict, recapped before RESULT
+
+  # Count every attempt and every success, not just a boolean. Losing one row
+  # out of eight and losing all eight are different situations for whoever
+  # reads this afterwards, and one flag cannot tell them apart.
+  record_row <- function(row) {
+    records_attempted <<- records_attempted + 1L
+    ok <- record_row_raw(row)
+    if (ok) records_written <<- records_written + 1L else recorded_ok <<- FALSE
+    ok
+  }
 
   # ONE funnel for every per-config outcome. Printing, counting and recording
   # used to be three independent decisions taken at six sites; #176 had to
@@ -477,7 +494,7 @@ main <- function() {
       failed[[length(failed) + 1L]] <<-
         list(kernel = kernel_path, config = cfg, msg = msg)
     }
-    ok <- record_row(c(
+    record_row(c(
       list(type = "config", run_id = RUN_ID, recorded_at = utc_stamp(),
            kernel = kernel_path, config = cfg,
            verdict = verdict_word(msg), msg = msg,
@@ -487,7 +504,6 @@ main <- function() {
            unit       = if (!is.null(current)) current$unit else NULL,
            returncode = if (!is.null(current)) current$returncode else NULL,
            meta       = meta_digest(current))))
-    if (!ok) recorded_ok <<- FALSE
     invisible(NULL)
   }
 
@@ -607,6 +623,8 @@ main <- function() {
     total, measured, regressions, improvements, skipped))
 
   v <- summarise_verdict(total, measured, regressions, skipped)
+  config_rows_written   <- records_written
+  config_rows_attempted <- records_attempted
 
   # Recap what failed, immediately above the verdict (#186). The per-config
   # lines scroll away behind a CUDA build, and the hook's "investigate with
@@ -619,6 +637,10 @@ main <- function() {
     }
   }
 
+  # Capture this write's result like every other one. Discarding it made the
+  # summary row -- the only carrier of the verdict, the exit code and the
+  # failed-config recap, i.e. exactly the evidence #186 exists to preserve --
+  # the one row whose loss the "Record:" line below could not report.
   record_row(list(
     type = "run_summary", run_id = RUN_ID, recorded_at = utc_stamp(),
     verdict = v$status, exit = v$exit, msg = v$msg,
@@ -628,13 +650,32 @@ main <- function() {
     kernel_filter = args$kernel,
     baselines_recorded_date = baselines$recorded_date,
     failed = lapply(failed, function(f) list(kernel = f$kernel,
-                                             config = f$config, msg = f$msg))))
+                                             config = f$config, msg = f$msg)),
+    git_head = tryCatch(
+      # Which tree produced these numbers. Without it a store spanning weeks
+      # can say a config regressed but not against what. Best-effort: a
+      # detached worktree or a missing git is not worth failing a bench run
+      # over.
+      trimws(system2("git", c("-C", shQuote(REPO_ROOT), "rev-parse", "--short",
+                              "HEAD"), stdout = TRUE, stderr = FALSE)[1]),
+      error = function(e) NA_character_),
+    # Snapshotted before this row is attempted, and named for what they
+    # count: a summary row reporting "2 of 3 written" while being the third
+    # would read as a failure on every healthy run.
+    config_rows_written = config_rows_written,
+    config_rows_attempted = config_rows_attempted))
 
-  # Always print where the record went, in every outcome. A path the operator
-  # only learns about when things go wrong is a path they have to look up
-  # exactly when they are least inclined to.
+  # Say what was actually written, in every outcome. A path the operator only
+  # learns about when things go wrong is one they have to look up exactly when
+  # they are least inclined to -- and "NOT WRITTEN" was previously printed
+  # whenever ANY row failed, which called a run with seven good rows and one
+  # bad one evidence-free.
   if (recorded_ok) {
     cat(sprintf("\n  Record: %s\n", GATE_RECORD_PATH))
+  } else if (records_written > 0L) {
+    cat(sprintf(paste0("\n  Record: PARTIAL -- %d of %d rows written to %s\n",
+                       "  (see the warnings above; some of this run is missing)\n"),
+                records_written, records_attempted, GATE_RECORD_PATH))
   } else {
     cat("\n  Record: NOT WRITTEN (see the warning above) -- this run left no",
         "durable evidence\n")

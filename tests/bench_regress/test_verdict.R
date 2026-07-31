@@ -180,7 +180,8 @@ test_that("every verdict carries a status, an exit code and a message", {
 # repo's .Rprofile activates renv and cuasmR is loadable; REPO_ROOT comes from
 # the script's own path, which is inside the fixture.
 
-.fixture_root <- function(throughput = NULL, baseline_gflops = 1000) {
+.fixture_root <- function(throughput = NULL, baseline_gflops = 1000,
+                          clock_lock = NULL) {
   root <- file.path(tempfile("bench_regress_fixture"))
   dir.create(file.path(root, "scripts", "bench"), recursive = TRUE)
   dir.create(file.path(root, "data"), recursive = TRUE)
@@ -198,13 +199,17 @@ test_that("every verdict carries a status, an exit code and a message", {
     Sys.chmod(exe, "0755")
   }
 
+  cfg <- list(ms = 1.0, gflops = baseline_gflops)
+  # A clock_lock entry routes the config down the clock-lock family of emit()
+  # call sites instead of the direct one -- the branch three of the seven real
+  # configs take on every ordinary push.
+  if (!is.null(clock_lock)) cfg$clock_lock <- clock_lock
+
   baselines <- list(
     recorded_date = "fixture",
     platform = "fixture",
     default_valid_when = list(require_no_throttle = FALSE),
-    kernels = list(`kernels/fixture/fake.cu` = list(
-      exe = exe,
-      `1_2` = list(ms = 1.0, gflops = baseline_gflops))))
+    kernels = list(`kernels/fixture/fake.cu` = list(exe = exe, `1_2` = cfg)))
   writeLines(jsonlite::toJSON(baselines, auto_unbox = TRUE, pretty = TRUE),
              file.path(root, "data", "baselines.json"))
   root
@@ -242,6 +247,8 @@ test_that("every verdict carries a status, an exit code and a message", {
       skipped    = .run_gate(.fixture_root(throughput = NULL)),
       measured   = .run_gate(.fixture_root(throughput = 1000)),
       regressed  = .run_gate(.fixture_root(throughput = 500)),
+      clocklock  = .run_gate(.fixture_root(throughput = 1000,
+                                           clock_lock = 1605)),
       stop("unknown scenario: ", name))
     cache[[name]] <<- run
     run
@@ -307,7 +314,7 @@ test_that("the record names the configs behind a FAILED verdict", {
   expect_match(summary_row$failed[[1]]$msg, "REGRESSION", fixed = TRUE)
 })
 
-test_that("a measured config records its number, its baseline and the GPU state", {
+test_that("a measured config records its number, its baseline and its tolerance", {
   rows <- .record_rows(.scenarios("measured"))
   cfg <- rows[[1]]
   expect_equal(cfg$verdict, "OK")
@@ -316,15 +323,58 @@ test_that("a measured config records its number, its baseline and the GPU state"
   expect_equal(cfg$baseline_gflops, 1000)
   expect_equal(cfg$tolerance, 0.1)
   expect_equal(cfg$returncode, 0L)
-  # meta is NULL off-GPU (no nvidia-smi on a runner) and populated on this
-  # box. Either is fine; what must hold is that the field exists as a slot and
-  # that a populated one carries the fields a thermal false positive is judged
-  # on. That distinction is why #176's unreproducible regression stayed a
-  # mystery.
-  if (!is.null(cfg$meta)) {
-    for (field in c("clock_sm", "temp_c", "power_w", "pstate", "ac_state")) {
-      expect_true(field %in% names(cfg$meta))
-    }
+  # The `meta` slot is always present, and in THIS harness it is always null:
+  # the fixture's child process gets no GPU snapshot even on the GPU box.
+  # Measured, not assumed -- and unexplained, so the digest is covered by the
+  # direct meta_digest() groups below rather than by a conditional here that
+  # would silently never run. See the harness note at the top of this section.
+  expect_true("meta" %in% names(cfg))
+})
+
+# ---- the GPU digest, tested directly -----------------------------------
+#
+# meta_digest() is what makes a thermal false positive tellable from a real
+# regression the morning after, so it needs real coverage. It cannot get that
+# from the end-to-end fixture: the child process there returns no GPU snapshot,
+# on CI and on the GPU box alike, for reasons not established (the capture works
+# from a tempdir and works in the test parent, so it is neither cwd nor the
+# LD_LIBRARY_PATH the script sets). Tested here against synthetic snapshots
+# shaped like capture_gpu_state()'s output instead.
+
+.fake_snapshot <- function(throttle = character(0)) {
+  list(gpu = list(clock_sm = 1770, clock_mem = 7001, temp_c = 62,
+                  power_w = 134.8, pstate = "P0", throttle = throttle),
+       host = list(ac_state = "battery"))
+}
+
+test_that("meta_digest carries the fields a false positive is judged on", {
+  d <- meta_digest(list(meta_pre = .fake_snapshot(),
+                        meta_post = .fake_snapshot("SwPowerCap")))
+  expect_equal(d$clock_sm, 1770)
+  expect_equal(d$temp_c, 62)
+  expect_equal(d$power_w, 134.8)
+  expect_equal(d$pstate, "P0")
+  expect_equal(d$ac_state, "battery")
+})
+
+test_that("meta_digest is NULL when there was no GPU snapshot", {
+  # Every CI runner. The row must still be written, with a null meta.
+  expect_null(meta_digest(list(meta_pre = NULL, meta_post = NULL)))
+  expect_null(meta_digest(NULL))
+})
+
+test_that("throttle stays a JSON array at every length", {
+  # auto_unbox would emit a bare string for a single reason and an array for
+  # two, so a consumer indexing [0] would read "S" from "SwPowerCap" on
+  # exactly the single-reason runs that are the common case.
+  for (reasons in list(character(0), "SwPowerCap",
+                       c("SwPowerCap", "SwThermalSlowdown"))) {
+    d <- meta_digest(list(meta_pre = .fake_snapshot(reasons),
+                          meta_post = .fake_snapshot(reasons)))
+    json <- jsonlite::toJSON(d, auto_unbox = TRUE, na = "null", null = "null")
+    parsed <- jsonlite::fromJSON(as.character(json), simplifyVector = FALSE)
+    expect_true(is.list(parsed$throttle))
+    expect_equal(length(parsed$throttle), length(reasons))
   }
 })
 
@@ -334,6 +384,44 @@ test_that("a skipped config records why, not merely that", {
   expect_equal(cfg$verdict, "SKIPPED")
   expect_false(cfg$measured)
   expect_match(cfg$msg, "executable not found", fixed = TRUE)
+})
+
+test_that("a clock-locked config skips, is counted, and records its lock", {
+  # The clock-lock family of emit() call sites, which nothing else here
+  # reaches: without --clock-locked these skip by design, and on this laptop
+  # that is three of the seven real configs on every ordinary push (#156).
+  r <- .scenarios("clocklock")
+  expect_equal(r$status, 2L)                       # measured nothing
+  expect_match(r$text, "clock_lock 1605 MHz", fixed = TRUE)
+  cfg <- .record_rows(r)[[1]]
+  expect_equal(cfg$verdict, "SKIPPED")
+  expect_false(cfg$measured)
+  expect_equal(cfg$clock_lock, 1605L)
+  expect_null(cfg$clock_locked_arg)                # none was passed
+})
+
+test_that("the operator-visible summary lines are printed, not just recorded", {
+  # Both were added for a human reading a rejected push: the recap of what
+  # failed, and where the evidence went. Neither is covered by asserting on
+  # the JSONL.
+  failing <- .scenarios("regressed")
+  expect_match(failing$text, "Configs behind this verdict:", fixed = TRUE)
+  expect_match(failing$text, "kernels/fixture/fake.cu [1_2]", fixed = TRUE)
+  expect_match(failing$text, "Record: ", fixed = TRUE)
+  expect_match(.scenarios("measured")$text, "Record: ", fixed = TRUE)
+})
+
+test_that("the run summary counts the rows it is summarising", {
+  summary_row <- utils::tail(.record_rows(.scenarios("measured")), 1)[[1]]
+  expect_equal(summary_row$type, "run_summary")
+  expect_equal(summary_row$config_rows_written, 1L)
+  expect_equal(summary_row$config_rows_attempted, 1L)
+  # git_head identifies the tree that produced the numbers -- a store spanning
+  # weeks can otherwise say a config regressed but not against what. The slot
+  # is always present; its VALUE is null here because the fixture repo is
+  # marked by a bare renv.lock and has no .git for `rev-parse` to read. A real
+  # run records a short sha, and the gate must not fail for want of one.
+  expect_true("git_head" %in% names(summary_row))
 })
 
 test_that("the record is append-only across runs, with distinct run ids", {
