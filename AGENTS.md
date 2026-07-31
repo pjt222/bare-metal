@@ -129,24 +129,68 @@ non-verdict into a verdict:
 Both are the same shape as the bug being fixed — a signal that means "no
 measurement happened" arriving somewhere that reads it as a measurement.
 
+**Every gate run writes itself down (#186).**
+`results/bench_regress/gate_runs.jsonl`, append-only, gitignored, one `config`
+row per config plus one `run_summary` row per run:
+
+```bash
+# what did the last run conclude, and why?  -c keeps one run per line, so
+# `tail` cuts runs rather than cutting the head off a pretty-printed object
+jq -c 'select(.type=="run_summary")|{run_id,verdict,measured,total,failed}' \
+   results/bench_regress/gate_runs.jsonl | tail -5
+# every time this kernel has been measured, with the GPU state at the time.
+# The type guard is required: run_summary rows carry no .kernel, and
+# `null|test(...)` is a jq error that aborts the whole stream
+jq -c 'select(.type=="config" and (.kernel|test("hgemm")))
+       |{run_id,verdict,throughput,thr:.meta.throttle,ac:.meta.ac_state}' \
+   results/bench_regress/gate_runs.jsonl
+```
+
+This exists because a push was rejected by a measured regression on 2026-07-31
+and *which config regressed* could not be recovered: stdout was the only record
+and a re-run ten minutes later passed. Of the five steps this is the only one
+whose result cannot be reproduced on demand, so it is the one that has to
+persist. Config rows are appended as each config is decided, so a run killed
+mid-flight still leaves what it had measured.
+
+Read the `meta` digest before concluding a kernel got slower. It carries the
+clock, temperature, power, pstate, throttle reasons and AC state at measurement
+time — which is how a thermal false positive is told apart from a real
+regression, and #158/#159/#161 are all open precisely because that question kept
+being unanswerable after the fact. Recording never changes a verdict: if the
+write fails the run prints `Record: NOT WRITTEN` and exits on the counters alone.
+
 To actually measure the locked configs, lock the clock host-side first (elevated
 Windows shell: `nvidia-smi.exe -lgc 1605,1605`), run
 `Rscript scripts/bench/bench_regress.R --clock-locked 1605`, then release it
 with `nvidia-smi.exe -rgc`.
 
-**`make test-r` runtime.** 127 s of tests on AC, measured 2026-07-31 on the
-RTX 3070 Ti laptop across four suites: `tests/bench_all/test_bench_all.R` 80 s,
-`tests/bench_regress/test_meta.R` 8 s, `tests/bench_regress/test_verdict.R` 23 s
-(added by #176; 14 s of it is four end-to-end groups that each start a child R
-process to run the real gate against a throwaway fixture — the price of covering
-the wiring rather than only the decision), the `cuasmR` package suite 15 s. The
-2026-07-30 three-suite run
+**`make test-r` runtime.** Between 127 s and 212 s of tests on AC, measured
+2026-07-31 on the RTX 3070 Ti laptop across four suites. Three runs of the same
+target that day: 127 s, 212 s, 186 s.
+
+| suite | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `tests/bench_all/test_bench_all.R` | 80 s | 106 s | 103 s |
+| `tests/bench_regress/test_meta.R` | 8 s | 9 s | 9 s |
+| `tests/bench_regress/test_verdict.R` | 23 s | 79 s | 52 s |
+| `cuasmR` package suite | 15 s | 18 s | 22 s |
+
+Only one row changed for a reason: `test_verdict.R` gained end-to-end groups that
+each start a child R process to run the real gate against a throwaway fixture
+(#176, #186), and run 2 caught it starting twelve of them before they were
+deduplicated to six — 79 s down to a standalone-measured 36 s.
+
+**Every other row moved without anything changing.** `test_bench_all.R` swung
+80 → 106 → 103 s on an identical tree. So treat these as an order of magnitude,
+not a benchmark: run-to-run variance on the 9p mount is larger than most
+individual suites, and a single total is not evidence that anything got slower.
+The 2026-07-30 three-suite run
 was 115 s of tests / 124 s wall on AC and 133 s / 140 s on battery; the wall
 figure predates the plumbing canary, which adds one R startup without changing
 the per-suite total, since the canary is deliberately excluded from it. Both are
-n=1. Note the totals barely moved while a whole suite was added and
-`test_bench_all.R` swung 91 s → 83 s: run-to-run variance on this mount is
-larger than a 9 s suite, so do not read a single total as a trend.
+n=1, and `test_bench_all.R` read 91 s that day against the 80–106 s above — the
+same variance, one day earlier.
 
 That battery penalty is only **1.16×**, which is much smaller than it looks like
 it should be: a no-op `Rscript` on this box is **2.1×** slower on battery

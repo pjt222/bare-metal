@@ -27,12 +27,23 @@ results/
 
 ## Conventions
 
-- One subdir per data domain (`ncu/`, `cymatic/`, future `bench/`,
-  `regression/`, etc.).
+- One subdir per data domain (`ncu/`, `cymatic/`, `bench_regress/`, etc.).
 - File names describe captured configuration, not generation date.
   Re-runs overwrite — git history holds the diffs.
 - Output formats are CSV or TXT. Binary outputs (PNGs) are never
   written here; they go to `docs/figures/`.
+
+**`bench_regress/` is the exception to all three, deliberately (#186).** It is
+append-only rather than overwriting, JSONL rather than CSV/TXT, and gitignored
+rather than tracked. The reason is what it is for: it is the pre-push gate's
+evidence trail, and the question it answers — "which config regressed on that
+rejected push, and what was the GPU doing at the time?" — is precisely the one
+an overwriting store cannot answer. It is machine-specific measurement, so it
+stays local; git history is not available to hold its diffs.
+
+Being gitignored makes `git clean -xdf` its de-facto pruner, and that removes
+the lot. Nothing else prunes it. It grows by roughly one line per config per
+gate run, so a year of pushes is a file measured in megabytes, not gigabytes.
 
 ## Generators
 
@@ -41,6 +52,7 @@ results/
 | `results/ncu/all.csv`        | `scripts/profile/ncu_profile_all.sh` |
 | `results/ncu/<single>.csv`   | `scripts/profile/ncu_profile.R --out results/ncu/<name>.csv` |
 | `results/cymatic/grids/`     | `make -C kernels/memory_layout/cymatic sweep` (Makefile target) |
+| `results/bench_regress/gate_runs.jsonl` | `scripts/bench/bench_regress.R` — every run, appended (#186) |
 
 ## Cross-references
 

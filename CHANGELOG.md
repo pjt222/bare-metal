@@ -13,6 +13,29 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **The regression gate now writes itself down (#186).** Every
+  `bench_regress.R` run appends to `results/bench_regress/gate_runs.jsonl`
+  (append-only, gitignored): one `config` row per config with its verdict and
+  whatever the run learned about it — for a measured config that is the
+  throughput, the baseline fields, the tolerance and a GPU/host digest (clock,
+  temp, power, pstate, throttle, AC state); for a config skipped before any
+  bench ran it is the reason and the clock-lock state, with the measurement
+  fields null. Then one `run_summary` row with the counters, the verdict, the
+  exit code, the short git sha of the tree measured, and the configs behind a
+  FAILED. It exists because a push was rejected by a measured regression
+  on 2026-07-31 and **which config regressed could not be recovered** — stdout
+  was the only record, and a re-run ten minutes later passed. Of the five
+  pre-push steps this is the only one whose result cannot be reproduced on
+  demand, which makes it the only one that has to persist. Rows are appended as
+  each config is decided, via the crash-safe `cuasmR::append_jsonl_row`, so a run
+  killed mid-flight still leaves what it had measured. Recording never changes a
+  verdict: an unwritable directory prints `Record: NOT WRITTEN` and the exit code
+  is still decided by the counters. The summary also now recaps the configs
+  behind a FAILED verdict directly above the `RESULT` line, since the per-config
+  lines scroll away behind the CUDA build, and prints the record path on every
+  outcome. Internally the six per-config outcome sites are folded into one
+  `emit()` funnel, so a new outcome cannot print without being counted or be
+  counted without being recorded — the drift that made #176 a two-site fix.
 - **`make test-r` — the GPU-free R suites are now a gate (#163).** They were
   invoked by nothing before this: not the pre-push hook, not the Makefile, not
   CI. `scripts/audit/run_r_tests.R` discovers every `tests/**/test[-_]*.R` plus
