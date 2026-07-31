@@ -74,19 +74,58 @@ deterministic first so a doomed push is rejected fast and legibly:
 | `scripts/audit/renv_check.R` | ~2–10 s | yes | no |
 | `make test-r` | ~2 min | yes | no |
 | `make test` | minutes | no (best-effort) | yes |
-| `scripts/bench/bench_regress.R` | minutes | yes | yes |
+| `scripts/bench/bench_regress.R` | minutes | on a measured regression | yes |
 
 `renv_check` precedes `test-r` because every R suite needs `cuasmR` loadable, so
 an out-of-sync library should produce renv's diagnosis rather than a confusing
 testthat error. `make test` precedes `bench_regress.R` because it builds the
 executables that get measured.
 
-**`make test-r` runtime.** 115 s of tests / 124 s wall on AC, measured 2026-07-30
-on the RTX 3070 Ti laptop (the wall figure predates the plumbing canary, which
-adds one R startup — the per-suite total is unaffected, since the canary is
-deliberately excluded from it): `tests/bench_all/test_bench_all.R` 91 s,
-`tests/bench_regress/test_meta.R` 9 s, the `cuasmR` package suite 15 s. On
-battery the same run took 133 s / 140 s.
+**A run that measured nothing warns; it does not block (#176).**
+`bench_regress.R` has three exit codes — `0` PASSED, `1` FAILED (at least one
+measured regression), `2` INCONCLUSIVE (nothing was measured, so nothing is
+certified). The hook renders `2` as a yellow warning and allows the push.
+
+This is a deliberate decision, recorded here because the alternative is
+defensible and someone will propose it. Until #176 the third case did not
+exist: an all-skip run exited 0 and the hook printed "All benchmarks within
+tolerance. Push allowed." having measured zero kernels — which it did on five
+consecutive real pushes, at 7 of 7 skipped. Making that state *blocking* was
+rejected for one reason: the routine case on this laptop is already mostly
+skipped (three configs sit behind a host-side clock lock this hook never
+applies, per #156; throttle takes more whenever the machine is warm), so a
+blocking INCONCLUSIVE would reject ordinary pushes, and its escape hatch —
+`git push --no-verify` — switches off all five steps, including the GPU-free R
+suites that #163 exists to enforce. A warning that gets read beats a block that
+gets bypassed. The honesty requirement is met by the summary line, which now
+always names the fraction measured:
+
+```
+Total: 7 | Measured: 3 | Regressions: 0 | Improvements: 0 | Skipped: 4
+RESULT: PASSED -- 3 of 7 config(s) measured, all within tolerance (4 skipped)
+```
+
+Three callers, one policy each, all reading the same exit code: the hook warns,
+`make bench` warns, and `scripts/probe/run_locked_eval.ps1` propagates it —
+right for a deliberate locked evaluation, where measuring nothing must not read
+as success. If a binding signal is ever wanted here, that is #179, and it should
+be decided for the whole gate rather than by tightening one exit code.
+
+To actually measure the locked configs, lock the clock host-side first (elevated
+Windows shell: `nvidia-smi.exe -lgc 1605,1605`), run
+`Rscript scripts/bench/bench_regress.R --clock-locked 1605`, then release it
+with `nvidia-smi.exe -rgc`.
+
+**`make test-r` runtime.** 117 s of tests on AC, measured 2026-07-31 on the
+RTX 3070 Ti laptop across four suites: `tests/bench_all/test_bench_all.R` 83 s,
+`tests/bench_regress/test_meta.R` 9 s, `tests/bench_regress/test_verdict.R` 9 s
+(added by #176), the `cuasmR` package suite 16 s. The 2026-07-30 three-suite run
+was 115 s of tests / 124 s wall on AC and 133 s / 140 s on battery; the wall
+figure predates the plumbing canary, which adds one R startup without changing
+the per-suite total, since the canary is deliberately excluded from it. Both are
+n=1. Note the totals barely moved while a whole suite was added and
+`test_bench_all.R` swung 91 s → 83 s: run-to-run variance on this mount is
+larger than a 9 s suite, so do not read a single total as a trend.
 
 That battery penalty is only **1.16×**, which is much smaller than it looks like
 it should be: a no-op `Rscript` on this box is **2.1×** slower on battery

@@ -21,8 +21,10 @@ The `make reproduce` target runs:
 3. `make all`     — compile every kernel `.cu` to `.cubin` + every bench `.cu` to executable
 4. `make bench`   — run all benches, compare against `data/baselines.json`
 
-A clean run on a healthy GPU ends with `RESULT: PASSED -- all
-benchmarks within tolerance`. The pre-push git hook calls the same
+A clean run on a healthy GPU ends with `RESULT: PASSED -- N of M
+config(s) measured, all within tolerance`. If the GPU state let it
+measure nothing at all, it ends with `RESULT: INCONCLUSIVE` and exit
+code 2 instead — a warning, not a failure (#176). The pre-push git hook calls the same
 regression check, plus checks this command does not: a README link
 audit and the GPU-free R test suites (`make test-r`, #163). The renv
 sync check runs in both — `make reproduce` reaches it via `make setup`.
@@ -141,15 +143,28 @@ make compare-reference    # project baselines vs local reference baselines
 
 Equivalent to `Rscript scripts/bench/bench_regress.R`. Each kernel
 runs once, GPU + host state is captured before and after, and the
-result is compared against the recorded baseline. Three verdicts:
+result is compared against the recorded baseline. Three per-config
+verdicts:
 
 - `OK` — within tolerance (default 10%, per-config override
   available)
 - `IMPROVED` / `REGRESSION` — outside tolerance, real change
 - `SKIPPED` — measurement-time GPU state was unfair (thermal
-  throttle, sw power cap, etc.); the run is dropped, not failed.
+  throttle, sw power cap, etc.), or the config is clock-locked and no
+  `--clock-locked` was given; the run is dropped, not failed.
   See the baselines schema in `data/baselines.json` and `CHANGELOG.md`
   for the fair-run capture policy.
+
+And three run-level verdicts, one per exit code (#176):
+
+- `PASSED` (0) — at least one config was measured and none regressed.
+  The line names the fraction: `3 of 7 config(s) measured`.
+- `FAILED` (1) — at least one measured regression.
+- `INCONCLUSIVE` (2) — **nothing** was measured, so nothing is
+  certified. Routine on this laptop: three configs sit behind a
+  host-side clock lock (#156) and throttle takes more when it is warm.
+  The pre-push hook and `make bench` report it as a warning and do not
+  block; `scripts/probe/run_locked_eval.ps1` propagates it.
 
 To list recorded baselines without running:
 

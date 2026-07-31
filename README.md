@@ -77,7 +77,9 @@ make reproduce          # setup + verify + build + bench-vs-baselines
 `make reproduce` chains `setup` (renv restore + cuasmR install),
 `verify` (env check), `all` (compile every cubin + bench), `bench`
 (run benches and compare against `data/baselines.json`; this stage
-prints `RESULT: PASSED -- all benchmarks within tolerance`), and
+prints `RESULT: PASSED -- N of M config(s) measured, all within
+tolerance`, or `INCONCLUSIVE` if the GPU state let it measure nothing —
+see the hook step table in [`AGENTS.md`](AGENTS.md)), and
 `figures` (regenerate `docs/figures/`). The run finishes with the
 `Full reproduction complete` banner. The pre-push hook calls the same
 regression check. Build entry points are documented in
