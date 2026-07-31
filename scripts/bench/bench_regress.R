@@ -308,6 +308,73 @@ summarise_verdict <- function(total, measured, regressions, skipped) {
 }
 
 # ----------------------------------------------------------------------
+# Run record (issue #186)
+#
+# The gate used to print its verdicts and keep nothing. On 2026-07-31 a push was
+# rejected by a measured regression and *which config regressed* was
+# unrecoverable: stdout was the only record, the terminal scrollback was the only
+# copy, and a re-run ten minutes later passed. The finding was gone.
+#
+# Of the five pre-push steps this is the only one whose result cannot be
+# reproduced on demand -- check_links, renv_check and `make test-r` all re-run
+# identically, and `make test` does not block -- so it is the one that has to
+# write itself down. A blocking check whose evidence lives in a terminal is one
+# the operator is structurally tempted to `--no-verify` past, and that switches
+# off all five steps.
+#
+# One append-only JSONL under REPO_ROOT/results/bench_regress/. Rows are appended
+# as each config is decided rather than in one block at the end, so a run killed
+# mid-flight -- the CUDA-wedge case -- still leaves everything it had measured.
+# cuasmR::append_jsonl_row is the same crash-safe writer the grid store uses:
+# atomic at line boundaries, so a hard kill can only truncate the final line.
+#
+# Recording must never change the verdict. Every write is wrapped: a read-only
+# checkout, a full disk or an undeletable directory downgrades to a warning on
+# stderr, and the exit code is still decided by the counters alone.
+# ----------------------------------------------------------------------
+GATE_RECORD_PATH <- file.path(REPO_ROOT, "results", "bench_regress",
+                              "gate_runs.jsonl")
+
+utc_stamp <- function(fmt = "%Y-%m-%dT%H:%M:%SZ") {
+  format(Sys.time(), fmt, tz = "UTC")
+}
+
+# Compact GPU/host digest for one measured config. The full capture_gpu_state()
+# snapshots are nested and repetitive; these are the fields that answer "was the
+# machine in a fit state to be measuring?" the morning after.
+meta_digest <- function(current) {
+  if (is.null(current) || is.null(current$meta_post)) return(NULL)
+  gpu <- current$meta_post$gpu
+  list(
+    summary  = tryCatch(summarise_meta(current$meta_pre, current$meta_post),
+                        error = function(e) NA_character_),
+    clock_sm = gpu$clock_sm, clock_mem = gpu$clock_mem,
+    temp_c   = gpu$temp_c,   power_w   = gpu$power_w,
+    pstate   = gpu$pstate,
+    throttle = if (length(gpu$throttle)) gpu$throttle else character(0),
+    ac_state = current$meta_post$host$ac_state)
+}
+
+# The leading token of a verdict message is its classification: OK, IMPROVED,
+# REGRESSION, SKIPPED, CRASH, NO_DATA.
+verdict_word <- function(msg) {
+  w <- regmatches(msg, regexpr("^[A-Z_]+", msg))
+  if (length(w)) w else NA_character_
+}
+
+record_row <- function(row, path = GATE_RECORD_PATH) {
+  tryCatch({
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    append_jsonl_row(path, row)
+    TRUE
+  }, error = function(e) {
+    message(sprintf("WARNING: could not write the run record to %s: %s",
+                    path, conditionMessage(e)))
+    FALSE
+  })
+}
+
+# ----------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------
 main <- function() {
@@ -388,6 +455,42 @@ main <- function() {
     invisible(NULL)
   }
 
+  RUN_ID <- utc_stamp("%Y%m%dT%H%M%OS3Z")
+  recorded_ok <- TRUE   # false once any write has failed
+  failed <- list()      # configs behind a FAILED verdict, recapped before RESULT
+
+  # ONE funnel for every per-config outcome. Printing, counting and recording
+  # used to be three independent decisions taken at six sites; #176 had to
+  # change the counting at two of them and could have missed the other four,
+  # and #186 would have had to add recording at all six. Anything that reaches
+  # a verdict goes through here, so a new outcome cannot print without being
+  # counted, or be counted without being recorded.
+  emit <- function(kernel_path, cfg, msg, verdict = NULL, current = NULL,
+                   header = "", extra = list()) {
+    cat(sprintf("\n%s [%s]%s\n  %s\n", kernel_path, cfg, header, msg))
+    # A site with no verdict object did not measure the config -- that is what
+    # makes it a skip -- so synthesise the shape check_regression returns.
+    v <- if (is.null(verdict)) list(is_reg = FALSE, skipped = TRUE, msg = msg)
+         else verdict
+    tally(v)
+    if (isTRUE(v$is_reg)) {
+      failed[[length(failed) + 1L]] <<-
+        list(kernel = kernel_path, config = cfg, msg = msg)
+    }
+    ok <- record_row(c(
+      list(type = "config", run_id = RUN_ID, recorded_at = utc_stamp(),
+           kernel = kernel_path, config = cfg,
+           verdict = verdict_word(msg), msg = msg,
+           measured = !isTRUE(v$skipped)),
+      extra,
+      list(throughput = if (!is.null(current)) current$throughput else NULL,
+           unit       = if (!is.null(current)) current$unit else NULL,
+           returncode = if (!is.null(current)) current$returncode else NULL,
+           meta       = meta_digest(current))))
+    if (!ok) recorded_ok <<- FALSE
+    invisible(NULL)
+  }
+
   # Print one-line GPU state header so the user can see
   # whether the run started under unfair conditions.
   if (exists("capture_gpu_state", mode = "function")) {
@@ -416,11 +519,14 @@ main <- function() {
       # -- the denominator disappeared along with the measurement, and the
       # run still exited 0. Counting them keeps `total` the number of configs
       # in baselines.json rather than the number we happened to reach.
-      cat(sprintf(
-        "\n%s\n  SKIPPED -- executable not found (try: make benches) [%d config(s)]\n",
-        kernel_path, length(cfg_names)))
-      total   <- total   + length(cfg_names)
-      skipped <- skipped + length(cfg_names)
+      # Reported per config rather than once per kernel (#186) so the screen
+      # and the record agree on what was not measured.
+      for (cfg in cfg_names) {
+        total <- total + 1L
+        emit(kernel_path, cfg,
+             "SKIPPED -- executable not found (try: make benches)",
+             extra = list(exe = if (is.null(exe)) NA_character_ else exe))
+      }
       next
     }
     for (cfg in cfg_names) {
@@ -434,29 +540,36 @@ main <- function() {
       # SKIPPED otherwise (the pre-push hook never locks, by design).
       cl <- if (!is.null(baseline_cfg$clock_lock))
               as.integer(round(as.numeric(baseline_cfg$clock_lock))) else NULL
+      # Baseline fields recorded verbatim rather than re-resolved here: which
+      # one applies is check_regression's decision, and duplicating that choice
+      # is how two copies of a rule drift apart.
+      cfg_extra <- list(baseline_gflops = baseline_cfg$gflops,
+                        baseline_tops   = baseline_cfg$tops,
+                        clock_lock      = cl,
+                        clock_locked_arg = args$clock_locked)
+
       if (!is.null(cl)) {
         if (is.null(args$clock_locked)) {
-          cat(sprintf(paste0("\n%s [%s]\n  SKIPPED (clock_lock %d MHz; ",
-                             "rerun with --clock-locked %d after a ",
-                             "host-side lock)\n"),
-                      kernel_path, cfg, cl, cl))
-          skipped <- skipped + 1L
+          emit(kernel_path, cfg,
+               sprintf(paste0("SKIPPED (clock_lock %d MHz; rerun with ",
+                              "--clock-locked %d after a host-side lock)"),
+                       cl, cl),
+               extra = cfg_extra)
           next
         }
         if (!identical(args$clock_locked, cl)) {
-          cat(sprintf(paste0("\n%s [%s]\n  SKIPPED (--clock-locked %d ",
-                             "!= entry clock_lock %d)\n"),
-                      kernel_path, cfg, args$clock_locked, cl))
-          skipped <- skipped + 1L
+          emit(kernel_path, cfg,
+               sprintf("SKIPPED (--clock-locked %d != entry clock_lock %d)",
+                       args$clock_locked, cl),
+               extra = cfg_extra)
           next
         }
         vw <- if (!is.null(baseline_cfg$valid_when)) baseline_cfg$valid_when
               else .default_vw
         ml <- measure_clock_locked(exe, cfg_args, baseline_cfg, cl, vw)
         if (identical(ml$status, "insufficient")) {
-          cat(sprintf("\n%s [%s]\n  SKIPPED (%s)\n",
-                      kernel_path, cfg, ml$msg))
-          skipped <- skipped + 1L
+          emit(kernel_path, cfg, sprintf("SKIPPED (%s)", ml$msg),
+               extra = cfg_extra)
           next
         }
         eff_tol <- if (!is.null(baseline_cfg$tolerance))
@@ -464,9 +577,12 @@ main <- function() {
                    else args$tolerance
         verdict <- check_regression(ml$current, baseline_cfg, eff_tol,
                                     default_valid_when = .default_vw)
-        cat(sprintf("\n%s [%s] (clock-locked %d MHz, median of %d)\n  %s\n",
-                    kernel_path, cfg, cl, CLOCK_LOCK_SAMPLES, verdict$msg))
-        tally(verdict)
+        emit(kernel_path, cfg, verdict$msg, verdict = verdict,
+             current = ml$current,
+             header = sprintf(" (clock-locked %d MHz, median of %d)",
+                              cl, CLOCK_LOCK_SAMPLES),
+             extra = c(cfg_extra, list(tolerance = eff_tol,
+                                       samples = CLOCK_LOCK_SAMPLES)))
         next
       }
 
@@ -480,8 +596,8 @@ main <- function() {
       verdict <- check_regression(current, baseline_cfg, eff_tol,
                                   default_valid_when = .default_vw)
 
-      cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
-      tally(verdict)
+      emit(kernel_path, cfg, verdict$msg, verdict = verdict, current = current,
+           extra = c(cfg_extra, list(tolerance = eff_tol)))
     }
   }
 
@@ -489,7 +605,41 @@ main <- function() {
   cat(sprintf(
     "  Total: %d | Measured: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
     total, measured, regressions, improvements, skipped))
+
   v <- summarise_verdict(total, measured, regressions, skipped)
+
+  # Recap what failed, immediately above the verdict (#186). The per-config
+  # lines scroll away behind a CUDA build, and the hook's "investigate with
+  # --kernel <kernel_path>" advice needs a kernel path the operator can still
+  # see. CRASH and NO_DATA land here too: they are why the run failed.
+  if (length(failed)) {
+    cat("\n  Configs behind this verdict:\n")
+    for (f in failed) {
+      cat(sprintf("    %s [%s]\n      %s\n", f$kernel, f$config, f$msg))
+    }
+  }
+
+  record_row(list(
+    type = "run_summary", run_id = RUN_ID, recorded_at = utc_stamp(),
+    verdict = v$status, exit = v$exit, msg = v$msg,
+    total = total, measured = measured, regressions = regressions,
+    improvements = improvements, skipped = skipped,
+    tolerance = args$tolerance, clock_locked = args$clock_locked,
+    kernel_filter = args$kernel,
+    baselines_recorded_date = baselines$recorded_date,
+    failed = lapply(failed, function(f) list(kernel = f$kernel,
+                                             config = f$config, msg = f$msg))))
+
+  # Always print where the record went, in every outcome. A path the operator
+  # only learns about when things go wrong is a path they have to look up
+  # exactly when they are least inclined to.
+  if (recorded_ok) {
+    cat(sprintf("\n  Record: %s\n", GATE_RECORD_PATH))
+  } else {
+    cat("\n  Record: NOT WRITTEN (see the warning above) -- this run left no",
+        "durable evidence\n")
+  }
+
   cat(sprintf("  RESULT: %s\n", v$msg))
   quit(status = v$exit)
 }

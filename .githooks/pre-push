@@ -34,6 +34,10 @@ if [ ! -f "Makefile" ] || { [ ! -d ".git" ] && [ ! -f ".git" ] && [ -z "${GIT_DI
 fi
 
 REGRESS_SCRIPT="scripts/bench/bench_regress.R"
+# Where bench_regress.R writes its durable per-config record (#186). Kept as a
+# static path rather than parsed out of the run's output: the whole point is to
+# be findable after the terminal that printed it is gone.
+GATE_RECORD="results/bench_regress/gate_runs.jsonl"
 
 # Steps run cheapest-and-most-deterministic first, so a push that is going to be
 # rejected is rejected fast and for a comprehensible reason:
@@ -203,11 +207,23 @@ case "$regress_rc" in
     echo "  nvidia-smi.exe -lgc 1605,1605      (elevated Windows shell)"
     echo "  Rscript $REGRESS_SCRIPT --clock-locked 1605"
     echo "  nvidia-smi.exe -rgc                (release the lock afterwards)"
+    echo ""
+    echo "Why each config skipped is recorded in:"
+    echo "  $GATE_RECORD"
     exit 0
     ;;
 *)
     echo ""
     echo -e "${RED}BENCHMARK REGRESSION DETECTED${NC}"
+    echo ""
+    echo "Which configs failed is listed above the RESULT line, and recorded in:"
+    echo "  $GATE_RECORD"
+    echo ""
+    echo "That record survives this terminal (#186). A regression that does not"
+    echo "reproduce on a re-run is still diagnosable from it — check the throttle,"
+    echo "temp and power fields before assuming the kernel got slower."
+    echo ""
+    echo "  jq 'select(.type==\"run_summary\")' $GATE_RECORD | tail -20"
     echo ""
     echo "To investigate:"
     echo "  Rscript $REGRESS_SCRIPT --kernel <kernel_path>"
