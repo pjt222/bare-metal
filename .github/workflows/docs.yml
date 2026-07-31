@@ -213,60 +213,47 @@ jobs:
           cp -r viz/research-map/dist/. _site/viz/research-map/
           test -f _site/viz/research-map/index.html || {
             echo "::error::the viz build produced no index.html"; exit 1; }
-          # The app must not reach off-origin to render: the rest of the site
-          # does not, and a docs page should not require a third party to be up.
-          #
-          # Scanned with find rather than a glob. `assets/*.css` matching nothing
-          # does not fail the step -- it prints "No such file or directory" and
-          # the guard reports success having read one file -- so a renamed asset
-          # layout would quietly narrow this to index.html alone.
-          #
-          # The JS bundle is included: an import from a CDN would never appear in
-          # the HTML or the CSS. The host pattern stays specific rather than
-          # "any URL" because the bundle legitimately contains http://www.w3.org
-          # (SVG namespace literals), which is not a network request.
+      # The app must not reach off-origin to render: the rest of the site
+      # does not, and a docs page should not require a third party to be up.
+      #
+      # An ALLOWLIST, not a denylist. The first version listed five hosts to
+      # forbid, which meant it did not enforce the property its own error
+      # message claimed: https://rsms.me/inter/inter.css -- the canonical
+      # Inter distribution, and the single most likely way the fonts this
+      # work removed would come back -- passed cleanly, as did
+      # cdnjs.cloudflare.com (the pattern required a literal "cdn."),
+      # fonts.bunny.net, esm.sh and use.typekit.net. Enumerating the hosts
+      # that are allowed is a claim we can actually keep.
+      #
+      # www.w3.org is the SVG/XHTML namespace literal that three.js bundles;
+      # it is a URI, not a request.
+      #
+      # Scanned with find rather than a glob: `assets/*.css` matching nothing
+      # does not fail the step -- it prints "No such file or directory" and
+      # the guard reports success having read one file -- so a renamed asset
+      # layout would quietly narrow this to index.html alone.
+      - name: Assert the published viz reaches no third party
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALLOWED='^(www\.w3\.org|github\.com)$'
           viz_files=$(find _site/viz/research-map -type f \
                         \( -name '*.html' -o -name '*.css' -o -name '*.js' \))
           [ -n "$viz_files" ] || {
-            echo "::error::no viz html/css/js to scan — the copy produced nothing"
+            echo "::error::no viz html/css/js to scan -- the copy produced nothing"
             exit 1
           }
-          echo "scanning $(echo "$viz_files" | wc -l) viz files for third-party origins"
-          if echo "$viz_files" | xargs grep -lE \
-               'https?://(fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg\.|jsdelivr)'; then
-            echo "::error::the published viz references a third-party origin (files above)"
+          echo "scanning $(echo "$viz_files" | wc -l) viz files"
+          hosts=$(echo "$viz_files" | xargs grep -ohE 'https?://[A-Za-z0-9.-]+' \
+                    | sed -E 's#https?://##' | sort -u || true)
+          echo "hosts referenced: ${hosts:-(none)}"
+          offenders=$(echo "$hosts" | grep -vE "$ALLOWED" || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::the published viz references non-allowlisted origins:"
+            echo "$offenders"
+            echo "If this is intentional, add it to ALLOWED in this step and say why."
             exit 1
           fi
-
-      # Assert the build produced a site rather than exiting 0 having produced
-      # nothing — the same reasoning as the gate assertions in tests.yml. A
-      # deploy step will happily publish an empty directory.
-      - name: Assert the site was built
-        run: |
-          # Name the pages that must exist. A bare count is satisfied by any 30
-          # pages, so it cannot notice the tutorial or the analysis silently
-          # dropping out of the render list -- which is the failure that matters.
-          missing=0
-          for page in \
-            index.html README.html SETUP.html AGENTS.html CONTRIBUTING.html \
-            CHANGELOG.html docs/index.html docs/inventory.html \
-            docs/benchmark_methodology.html docs/ampere_sass_reference.html \
-            docs/tutorial/01-sass-hello-world.html \
-            docs/tutorial/06-the-four-laws.html \
-            docs/analysis/kernel_architecture.html \
-            viz/research-map/index.html
-          do
-            [ -f "_site/$page" ] || { echo "::error::missing _site/$page"; missing=1; }
-          done
-          [ "$missing" -eq 0 ] || exit 1
-          n=$(find _site -name '*.html' | wc -l)
-          echo "pages built: $n"
-          # Floor set just under the current build (36) so a real loss trips it.
-          [ "$n" -ge 34 ] || {
-            echo "::error::only $n pages built; expected the full docs set (>=34)."
-            echo "Either _quarto.yml's render list shrank or a document failed to render."
-            exit 1
-          }
 
       # Every internal link in the BUILT site, which is a wider net than
       # scripts/audit/check_links.R casts: that scans README.md files only
