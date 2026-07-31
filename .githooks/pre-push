@@ -42,7 +42,10 @@ REGRESS_SCRIPT="scripts/bench/bench_regress.R"
 #   2. renv_check.R    ~2-10 s  GPU-free, deterministic, blocking
 #   3. make test-r     ~2 min   GPU-free, deterministic, blocking      (#163)
 #   4. make test       minutes  CUDA build, best-effort, NON-blocking
-#   5. bench_regress.R minutes  needs the GPU, blocking, power-sensitive
+#   5. bench_regress.R minutes  needs the GPU, power-sensitive, blocking ONLY on
+#                               a measured regression -- exit 2 (INCONCLUSIVE,
+#                               nothing measured) warns and allows the push, see
+#                               the case block at the end of this file (#176)
 #
 # renv_check must precede test-r: every R suite needs cuasmR loadable, so an
 # out-of-sync library should produce renv's diagnosis, not a confusing testthat
@@ -156,11 +159,53 @@ if [ ! -f "$REGRESS_SCRIPT" ]; then
     echo -e "${YELLOW}WARNING: $REGRESS_SCRIPT not found — skipping${NC}"
     exit 0
 fi
+# Three outcomes, not two (#176). bench_regress.R exits 0 PASSED, 1 FAILED,
+# 2 INCONCLUSIVE (it measured nothing, so it certifies nothing). Until #176
+# the third case did not exist: an all-skip run exited 0 and this branch
+# printed "All benchmarks within tolerance. Push allowed." having measured
+# zero kernels. It did that on five consecutive real pushes.
+#
+# INCONCLUSIVE warns and allows the push. That is a deliberate choice, not an
+# oversight -- see the hook step table in AGENTS.md. Blocking would reject most
+# pushes on this laptop (three configs sit behind a host-side clock lock this
+# hook never applies, and throttle takes more), and the escape hatch from a
+# blocking gate is `git push --no-verify`, which switches off all five steps
+# including the GPU-free R suites. A warning that is read beats a block that is
+# routinely bypassed.
+#
+# `if ...; then rc=0; else rc=$?; fi` rather than a bare call: this script runs
+# under `set -e`, which would abort on any non-zero status before the case
+# below could tell 1 from 2.
 if Rscript "$REGRESS_SCRIPT"; then
-    echo ""
-    echo -e "${GREEN}All benchmarks within tolerance. Push allowed.${NC}"
-    exit 0
+    regress_rc=0
 else
+    regress_rc=$?
+fi
+
+case "$regress_rc" in
+0)
+    echo ""
+    # Not "All benchmarks within tolerance" -- that sentence is the one #176 was
+    # filed about. A pass here means every config that was MEASURED was within
+    # tolerance, and on this machine that is routinely 3 of 7.
+    echo -e "${GREEN}Every measured benchmark was within tolerance. Push allowed.${NC}"
+    echo "Skipped configs were not checked — see the Measured count above."
+    exit 0
+    ;;
+2)
+    echo ""
+    echo -e "${YELLOW}BENCHMARKS MEASURED NOTHING${NC} (see the INCONCLUSIVE line above)"
+    echo ""
+    echo "Push allowed, but performance was NOT checked. Every config skipped:"
+    echo "a clock-locked config with no host-side lock, a throttled GPU, or an"
+    echo "unbuilt executable. To actually measure the locked configs:"
+    echo ""
+    echo "  nvidia-smi.exe -lgc 1605,1605      (elevated Windows shell)"
+    echo "  Rscript $REGRESS_SCRIPT --clock-locked 1605"
+    echo "  nvidia-smi.exe -rgc                (release the lock afterwards)"
+    exit 0
+    ;;
+*)
     echo ""
     echo -e "${RED}BENCHMARK REGRESSION DETECTED${NC}"
     echo ""
@@ -174,4 +219,5 @@ else
     echo "To bypass (for WIP commits):"
     echo "  git push --no-verify"
     exit 1
-fi
+    ;;
+esac

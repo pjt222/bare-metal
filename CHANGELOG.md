@@ -90,6 +90,45 @@ historical reference.
   pattern.
 
 ### Fixed
+- **The regression gate no longer reports `PASSED` having measured nothing
+  (#176).** `bench_regress.R` decided its verdict on `regressions > 0L` alone, so
+  a run in which every config skipped printed `RESULT: PASSED -- all benchmarks
+  within tolerance` and exited 0 with zero kernels compared against zero
+  baselines. It did so on five consecutive real pushes at 7 of 7 skipped, and the
+  pre-push hook rendered that as a green "All benchmarks within tolerance. Push
+  allowed." Two effects stack to make the empty run routine rather than
+  occasional: #156 deliberately put three of the seven configs behind a host-side
+  clock lock the hook never applies, and throttle-skip takes the rest whenever
+  the laptop is warm. There is now a third outcome, `INCONCLUSIVE`, with its own
+  exit code (`0` PASSED / `1` FAILED / `2` INCONCLUSIVE), and every verdict line
+  names the fraction measured — `PASSED -- 3 of 7 config(s) measured, all within
+  tolerance (4 skipped)`, which is the sentence the old one should have been. A
+  measured regression still outranks everything: 1 config measured and regressed
+  is `FAILED`, not `INCONCLUSIVE`. Configs belonging to a kernel with no built
+  executable are now counted as skipped instead of vanishing from the
+  denominator, so an unbuilt corpus reports `0 of 7`, not `Total: 0` followed by
+  a pass. **On all-skip the hook warns and allows the push** — a deliberate
+  choice, argued in `AGENTS.md` next to the hook step table: blocking would
+  reject ordinary pushes on this machine and its escape hatch, `git push
+  --no-verify`, disables all five hook steps including the #163 R suites. All
+  three callers read the same code: hook warns, `make bench` warns,
+  `run_locked_eval.ps1` propagates. Two of those callers needed repairing before
+  that sentence was true, and both failed the same way the gate did — treating
+  "no measurement happened" as a measurement. `run_locked_eval.ps1` sets
+  `$PSNativeCommandUseErrorActionPreference`, so on PowerShell 7 any non-zero
+  exit from its `wsl.exe … Rscript` call threw before `$BenchExit =
+  $LASTEXITCODE` ran: it reported 1 for both FAILED and INCONCLUSIVE and wrote no
+  results record at all for the runs that measured nothing (measured on pwsh
+  7.6.3; a no-op on PS 5.1). And `Rscript` exits 2 when it cannot open the script
+  file, which is INCONCLUSIVE's code, so `make bench` now guards on `test -r`
+  first — a missing gate is an error, not an empty measurement.
+  Proven both ways on real runs before landing
+  — an all-skip (`Total: 2 | Measured: 0` → INCONCLUSIVE, exit 2, where the same
+  command on the parent commit printed PASSED and exited 0) and a live one
+  (`Total: 7 | Measured: 3` → PASSED, exit 0). The verdict is a pure function of
+  four counters and is unit-tested by the new
+  `tests/bench_regress/test_verdict.R`, which the #163 gate discovers
+  automatically; `R_SUITES` and the `tests.yml` denominators go 3 → 4.
 - **Retired the dead `tests/bench_regress/test_parser.R` (#171).** All 14 of its
   `test_that` groups had been erroring since `caeca97` (2026-06-02), which removed
   the `.pick_line` / `.parse_line` pair it exercises in favour of

@@ -241,6 +241,73 @@ measure_clock_locked <- function(exe, cfg_args, baseline_cfg, clock_lock,
 # CRASH / SKIPPED (unfair GPU state) / NO_DATA / REGRESSION / OK / IMPROVED.
 
 # ----------------------------------------------------------------------
+# Run verdict (issue #176)
+#
+# The verdict used to branch on `regressions > 0L` alone, so a run in which
+# every config SKIPPED printed
+#
+#   RESULT: PASSED -- all benchmarks within tolerance
+#
+# and exited 0 having compared nothing against anything. Observed on five
+# consecutive real pushes at 7 of 7 skipped: #156 put three configs behind a
+# host-side clock lock that the pre-push hook never applies, and throttle-skip
+# took the remaining four. "No regressions were found" and "no measurement was
+# taken" are the same number, and only one of them is good news.
+#
+# Three outcomes, three exit codes:
+#
+#   0  PASSED        at least one config measured, none of them regressed
+#   1  FAILED        at least one measured regression
+#   2  INCONCLUSIVE  nothing was measured; this gate certifies nothing
+#
+# A measured regression outranks the empty-run case: if something was measured
+# and it regressed, that is real information, however many of its neighbours
+# skipped.
+#
+# INCONCLUSIVE is a distinct code rather than a failure because the *caller*
+# owns the policy, and the three callers want different things:
+#
+#   .githooks/pre-push            warns and allows the push (deliberate; see
+#                                 the hook step table in AGENTS.md). Blocking
+#                                 would reject most pushes on this laptop, and
+#                                 its escape hatch -- git push --no-verify --
+#                                 switches off all five hook steps including
+#                                 the GPU-free R gate (#163).
+#   make bench                    same policy as the hook: warn, exit 0.
+#   scripts/probe/run_locked_eval.ps1
+#                                 propagates it verbatim, which is right: a
+#                                 deliberate locked evaluation that measured
+#                                 nothing must not report success. That script
+#                                 had to be repaired to do so -- PowerShell 7
+#                                 was throwing on any non-zero native exit and
+#                                 skipping its own capture, so it reported 1 for
+#                                 both outcomes and wrote no record at all.
+#
+# `measured` counts configs that reached a verdict other than SKIPPED. CRASH
+# and NO_DATA count as measured and also land in `regressions`, so they report
+# FAILED -- they can never make an empty run look green.
+# ----------------------------------------------------------------------
+summarise_verdict <- function(total, measured, regressions, skipped) {
+  if (regressions > 0L) {
+    return(list(status = "FAILED", exit = 1L,
+                msg = sprintf(
+                  "FAILED -- %d regression(s) detected (%d of %d config(s) measured)",
+                  regressions, measured, total)))
+  }
+  if (measured < 1L) {
+    return(list(status = "INCONCLUSIVE", exit = 2L,
+                msg = sprintf(
+                  paste0("INCONCLUSIVE -- 0 of %d config(s) measured (%d skipped); ",
+                         "nothing was verified"),
+                  total, skipped)))
+  }
+  list(status = "PASSED", exit = 0L,
+       msg = sprintf(
+         "PASSED -- %d of %d config(s) measured, all within tolerance (%d skipped)",
+         measured, total, skipped))
+}
+
+# ----------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------
 main <- function() {
@@ -297,9 +364,29 @@ main <- function() {
   cat(strrep("=", 70), "\n")
 
   regressions <- 0L; improvements <- 0L; skipped <- 0L; total <- 0L
+  # `measured` is the count that decides PASSED vs INCONCLUSIVE (#176).
+  measured <- 0L
 
   # Reserved keys at the kernel-entry level that are not config names.
   RESERVED_KEYS <- c("exe")
+
+  # Fold one config's verdict into the run counters. `<<-` targets main()'s
+  # locals. The two call sites below (clock-locked and direct) each carried
+  # their own copy of this ladder, so #176 would have had to add `measured`
+  # in two places and every later bucket in two more.
+  tally <- function(verdict) {
+    if (isTRUE(verdict$skipped)) {
+      skipped <<- skipped + 1L
+      return(invisible(NULL))
+    }
+    measured <<- measured + 1L
+    if (verdict$is_reg) {
+      regressions <<- regressions + 1L
+    } else if (grepl("IMPROVED", verdict$msg, fixed = TRUE)) {
+      improvements <<- improvements + 1L
+    }
+    invisible(NULL)
+  }
 
   # Print one-line GPU state header so the user can see
   # whether the run started under unfair conditions.
@@ -320,14 +407,22 @@ main <- function() {
 
   for (kernel_path in names(kernels)) {
     entry <- kernels[[kernel_path]]
+    cfg_names <- setdiff(names(entry), RESERVED_KEYS)
     # `exe` override from baselines schema: use if present, else heuristic.
     exe <- if (!is.null(entry$exe)) entry$exe else find_executable(kernel_path)
     if (is.null(exe) || !file.exists(exe)) {
-      cat(sprintf("\n%s\n  SKIP -- executable not found (try: make benches)\n",
-                  kernel_path))
+      # Count the configs that cannot run (#176). This branch used to `next`
+      # without touching a counter, so an unbuilt corpus reported `Total: 0`
+      # -- the denominator disappeared along with the measurement, and the
+      # run still exited 0. Counting them keeps `total` the number of configs
+      # in baselines.json rather than the number we happened to reach.
+      cat(sprintf(
+        "\n%s\n  SKIPPED -- executable not found (try: make benches) [%d config(s)]\n",
+        kernel_path, length(cfg_names)))
+      total   <- total   + length(cfg_names)
+      skipped <- skipped + length(cfg_names)
       next
     }
-    cfg_names <- setdiff(names(entry), RESERVED_KEYS)
     for (cfg in cfg_names) {
       total <- total + 1L
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
@@ -371,10 +466,7 @@ main <- function() {
                                     default_valid_when = .default_vw)
         cat(sprintf("\n%s [%s] (clock-locked %d MHz, median of %d)\n  %s\n",
                     kernel_path, cfg, cl, CLOCK_LOCK_SAMPLES, verdict$msg))
-        if (isTRUE(verdict$skipped))      skipped <- skipped + 1L
-        else if (verdict$is_reg)          regressions <- regressions + 1L
-        else if (grepl("IMPROVED", verdict$msg, fixed = TRUE))
-                                          improvements <- improvements + 1L
+        tally(verdict)
         next
       }
 
@@ -389,22 +481,17 @@ main <- function() {
                                   default_valid_when = .default_vw)
 
       cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
-      if (isTRUE(verdict$skipped)) skipped <- skipped + 1L
-      else if (verdict$is_reg)     regressions <- regressions + 1L
-      else if (grepl("IMPROVED", verdict$msg, fixed = TRUE)) improvements <- improvements + 1L
+      tally(verdict)
     }
   }
 
   cat("\n", strrep("=", 70), "\n", sep = "")
-  cat(sprintf("  Total: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
-              total, regressions, improvements, skipped))
-  if (regressions > 0L) {
-    cat(sprintf("  RESULT: FAILED -- %d regression(s) detected\n", regressions))
-    quit(status = 1)
-  } else {
-    cat("  RESULT: PASSED -- all benchmarks within tolerance\n")
-    quit(status = 0)
-  }
+  cat(sprintf(
+    "  Total: %d | Measured: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
+    total, measured, regressions, improvements, skipped))
+  v <- summarise_verdict(total, measured, regressions, skipped)
+  cat(sprintf("  RESULT: %s\n", v$msg))
+  quit(status = v$exit)
 }
 
 if (sys.nframe() == 0L) main()

@@ -199,7 +199,7 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 # Without it "all discovered suites passed" is a ratio against whatever was
 # discovered and is therefore always 100% -- delete every suite and the gate
 # still goes green. Bump this deliberately when adding or removing a suite.
-R_SUITES ?= 3
+R_SUITES ?= 4
 
 test-r:
 	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES)
@@ -258,8 +258,32 @@ renv-check:
 verify:
 	@$(RSCRIPT) scripts/verify_setup.R
 
+# Exit 2 is INCONCLUSIVE -- bench_regress.R measured nothing, so it certifies
+# nothing (#176). Same policy as .githooks/pre-push: say so loudly, do not turn
+# it into a hard error. Without this branch `make bench` would newly fail
+# whenever the laptop is warm, which is not what the third exit code is for.
+# Exit 1 (a measured regression) still fails the target.
+#
+# The `test -r` guard is load-bearing, not decoration: `Rscript` itself exits 2
+# when it cannot open the script file ("Fatal error: cannot open file"), which is
+# the same code bench_regress.R uses for INCONCLUSIVE. Without the guard, a
+# renamed, deleted or unreadable bench_regress.R would be laundered into
+# "nothing was measured" and `make bench` would report success having run no R at
+# all. A missing gate is an error here, not a warning.
 bench:
-	@$(RSCRIPT) scripts/bench/bench_regress.R
+	@test -r scripts/bench/bench_regress.R || { \
+	  echo "ERROR: scripts/bench/bench_regress.R is missing or unreadable."; \
+	  echo "Nothing was run. This is not the same as measuring nothing."; \
+	  exit 1; \
+	}
+	@$(RSCRIPT) scripts/bench/bench_regress.R; rc=$$?; \
+	if [ $$rc -eq 2 ]; then \
+	  echo ""; \
+	  echo "WARNING: nothing was measured -- see the INCONCLUSIVE line above."; \
+	  echo "Exit 2 reported as a warning; performance was NOT verified."; \
+	  exit 0; \
+	fi; \
+	exit $$rc
 
 # Full-corpus "run everything" pass (#124). Builds the whole corpus, then
 # runs every bench and records every result + metadata to

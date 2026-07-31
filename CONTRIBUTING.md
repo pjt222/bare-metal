@@ -121,6 +121,11 @@ Steps 1, 2, 3 and 5 block the push on failure; step 4 is best-effort. Steps 1–
 need no GPU, so on a machine with no card attached they still run — and step 3
 is the substantial one among them.
 
+Step 5 has a third outcome that is not a failure: if it measured nothing at all
+(every config skipped), it reports `INCONCLUSIVE`, warns, and allows the push
+(#176). Read that warning — it means performance was not checked, not that it
+was checked and found fine.
+
 **Bypass** (for WIP or when you know baseline is stale):
 ```bash
 git push --no-verify
