@@ -258,8 +258,20 @@ renv-check:
 verify:
 	@$(RSCRIPT) scripts/verify_setup.R
 
+# Exit 2 is INCONCLUSIVE -- bench_regress.R measured nothing, so it certifies
+# nothing (#176). Same policy as .githooks/pre-push: say so loudly, do not turn
+# it into a hard error. Without this branch `make bench` would newly fail
+# whenever the laptop is warm, which is not what the third exit code is for.
+# Exit 1 (a measured regression) still fails the target.
 bench:
-	@$(RSCRIPT) scripts/bench/bench_regress.R
+	@$(RSCRIPT) scripts/bench/bench_regress.R; rc=$$?; \
+	if [ $$rc -eq 2 ]; then \
+	  echo ""; \
+	  echo "WARNING: nothing was measured -- see the INCONCLUSIVE line above."; \
+	  echo "Exit 2 reported as a warning; performance was NOT verified."; \
+	  exit 0; \
+	fi; \
+	exit $$rc
 
 # Full-corpus "run everything" pass (#124). Builds the whole corpus, then
 # runs every bench and records every result + metadata to
