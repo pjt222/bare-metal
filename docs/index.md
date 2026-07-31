@@ -95,7 +95,7 @@ Each subdirectory is a standalone application with its own
 
 | Subdirectory                                         | Stack          | Purpose                                            |
 |------------------------------------------------------|----------------|----------------------------------------------------|
-| [`../viz/research-map/`](../viz/research-map/)       | Vite + three.js | Interactive knowledge graph of the project's optimization observations and their cross-references |
+| [`viz/research-map/`](https://github.com/pjt222/bare-metal/tree/main/viz/research-map)       | Vite + three.js | Interactive knowledge graph of the project's optimization observations and their cross-references |
 
 To run a viz locally:
 

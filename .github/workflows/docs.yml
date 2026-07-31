@@ -6,9 +6,21 @@ name: docs
 # only what hosted runners can check: markdown links, version string consistency,
 # and Quarto document render correctness.
 
+# `push:` is scoped to main and `pull_request:` covers everything else. The
+# unscoped pair ran every job TWICE on any branch that had a PR open — once for
+# the push, once for the PR — which was tolerable for checks and is not for a
+# deployment (#182). Do NOT "fix" this with a concurrency group keyed on
+# `github.head_ref || github.ref`: three reviewers have proposed it and it does
+# not work, because the two events produce different keys. Scoping the trigger
+# is what works.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Least privilege by default; the deploy job widens it for itself alone.
+permissions:
+  contents: read
 
 jobs:
 
@@ -115,3 +127,118 @@ jobs:
       - name: Render kernel_architecture.qmd
         run: |
           quarto render docs/analysis/kernel_architecture.qmd --to html
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Build the documentation site, and deploy it from main (#187)
+  #
+  # Until this existed the repo published nothing: `gh api .../pages` returned
+  # 404, there was no gh-pages branch, and the render job above threw its HTML
+  # away. 25 markdown documents, the figures and the six-chapter tutorial were
+  # reachable only by cloning.
+  #
+  # The Quarto project is rooted at the REPOSITORY root, not at docs/, which is
+  # what makes docs/index.md's links to ../README.md and ../SETUP.md resolve:
+  # under a site rooted at docs/ they point outside the publish root and 404.
+  # Everything served is listed in _quarto.yml's `render:`.
+  #
+  # The build runs on every PR (a broken site should fail review, not main), and
+  # only main deploys.
+  # ---------------------------------------------------------------------------
+  site:
+    name: Documentation site
+    runs-on: ubuntu-latest
+
+    env:
+      RENV_CONFIG_AUTOLOADER_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.0"
+          use-public-rspm: true
+
+      # Same set as the render job above: the analysis .qmd executes R chunks.
+      - name: Install R packages for QMD
+        shell: Rscript {0}
+        run: |
+          install.packages(
+            c("ggplot2", "dplyr", "tidyr", "scales", "tibble",
+              "knitr", "rmarkdown")
+          )
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Render the site
+        run: quarto render --to html
+
+      # Assert the build produced a site rather than exiting 0 having produced
+      # nothing — the same reasoning as the gate assertions in tests.yml. A
+      # deploy step will happily publish an empty directory.
+      - name: Assert the site was built
+        run: |
+          test -f _site/index.html || { echo "::error::no _site/index.html"; exit 1; }
+          n=$(find _site -name '*.html' | wc -l)
+          echo "pages built: $n"
+          [ "$n" -ge 30 ] || {
+            echo "::error::only $n pages built; expected the full docs set (>=30)."
+            echo "Either _quarto.yml's render list shrank or a document failed to render."
+            exit 1
+          }
+
+      # Every internal link in the BUILT site, which is a wider net than
+      # scripts/audit/check_links.R casts: that scans README.md files only
+      # (#168), so nothing previously checked the links this site exposes.
+      - name: Check internal links in the built site
+        run: |
+          python3 - <<'PY'
+          import os, re, sys, urllib.parse
+          from html.parser import HTMLParser
+          root = "_site"; broken = []; checked = 0
+          class P(HTMLParser):
+              def __init__(s): super().__init__(); s.refs = []
+              def handle_starttag(s, t, a):
+                  d = dict(a)
+                  for k in ("href", "src"):
+                      if k in d: s.refs.append(d[k])
+          for dp, _, fs in os.walk(root):
+              for f in fs:
+                  if not f.endswith(".html"): continue
+                  p = os.path.join(dp, f)
+                  pr = P(); pr.feed(open(p, encoding="utf-8", errors="replace").read())
+                  for ref in pr.refs:
+                      if re.match(r'^(https?:|mailto:|#|data:|//)', ref): continue
+                      t = urllib.parse.unquote(ref.split("#")[0].split("?")[0])
+                      if not t: continue
+                      checked += 1
+                      if not os.path.exists(os.path.normpath(os.path.join(dp, t))):
+                          broken.append(f"{os.path.relpath(p, root)} -> {ref}")
+          print(f"internal links checked: {checked}, broken: {len(broken)}")
+          for b in broken[:20]: print("  ", b)
+          sys.exit(1 if broken else 0)
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # Deploy is a separate job so the build above stays a plain check on PRs and
+  # only main is ever published.
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: site
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

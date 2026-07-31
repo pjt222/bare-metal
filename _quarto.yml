@@ -1,0 +1,60 @@
+project:
+  type: website
+  output-dir: _site
+  # Quarto copies loose project files it treats as resources, which is how
+  # CLAUDE.md (raw, unrendered) and viz/research-map/ (a standalone JS app whose
+  # absolute /src/ paths 404 outside its own dev server) ended up published in
+  # the first build. Publishing is not the place for "whatever happened to be in
+  # the directory": everything served here is listed, and everything listed is
+  # either rendered below or a deliberate resource.
+  render:
+    - index.qmd
+    - README.md
+    - SETUP.md
+    - AGENTS.md
+    - CONTRIBUTING.md
+    - CHANGELOG.md
+    - docs/index.md
+    - docs/*.md
+    - docs/tutorial/*.md
+    - docs/analysis/*.qmd
+    - "!docs/CONTINUE_HERE.md"
+
+website:
+  title: "bare-metal"
+  description: "Hand-tuned NVIDIA SASS kernels for RTX 3070 Ti (GA104, sm_86)"
+  navbar:
+    left:
+      - text: "Home"
+        href: index.qmd
+      - text: "Start here"
+        menu:
+          - README.md
+          - SETUP.md
+          - CONTRIBUTING.md
+          - AGENTS.md
+          - CHANGELOG.md
+      - text: "Documentation"
+        href: docs/index.md
+      - text: "Tutorial"
+        menu:
+          - docs/tutorial/01-sass-hello-world.md
+          - docs/tutorial/02-gemm-from-scratch.md
+          - docs/tutorial/03-int8-tensor-cores.md
+          - docs/tutorial/04-software-pipelining.md
+          - docs/tutorial/05-flash-attention.md
+          - docs/tutorial/06-the-four-laws.md
+      - text: "Analysis"
+        href: docs/analysis/kernel_architecture.qmd
+    right:
+      - icon: github
+        href: https://github.com/pjt222/bare-metal
+        aria-label: "Source on GitHub"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-overflow: wrap

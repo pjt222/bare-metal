@@ -263,5 +263,5 @@ Same kernels indexed by the instruction that defines them.
 - [`tutorial/`](tutorial/) — six-chapter prose walkthrough.
 - [`comparison_to_sota.md`](comparison_to_sota.md) — measured gap to cuBLAS / cuDNN / cuSPARSELt per family.
 - [`roofline_measured.md`](roofline_measured.md), [`sass_histogram.md`](sass_histogram.md), [`register_audit.md`](register_audit.md) — per-kernel measurement tables.
-- Underlying data lives in [`../data/`](../data/).
+- Underlying data lives in [`data/`](https://github.com/pjt222/bare-metal/tree/main/data).
 - [`index.md`](index.md) — full documentation map.

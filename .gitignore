@@ -126,3 +126,11 @@ experiments/rust-experiments/**/traces.bin
 # its author. Untracked 2026-07-30; the 48 commits that previously carried it stay
 # in history (`git log --all -- docs/CONTINUE_HERE.md`).
 docs/CONTINUE_HERE.md
+
+# Quarto site build (#187). The site is generated from the tracked sources on
+# every push to main and served from GitHub Pages; the rendered copy is a build
+# artifact, and committing it would mean reviewing 65 generated files per docs
+# change. `/.quarto/` and the ipynb rule are Quarto's own, added by the tool.
+/_site/
+/.quarto/
+**/*.quarto_ipynb
