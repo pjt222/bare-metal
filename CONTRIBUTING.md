@@ -142,4 +142,4 @@ git push --no-verify
 - [`docs/gpu_reflections.md`](docs/gpu_reflections.md) — 24 empirical insights from this hardware
 - [`docs/ampere_sass_reference.md`](docs/ampere_sass_reference.md) — instruction quick reference
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — common pitfalls and fixes
-- [`CLAUDE.md`](CLAUDE.md) — project-specific guidance for AI assistants
+- [`CLAUDE.md`](https://github.com/pjt222/bare-metal/blob/main/CLAUDE.md) — project-specific guidance for AI assistants

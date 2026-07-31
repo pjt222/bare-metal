@@ -1,0 +1,46 @@
+---
+title: "bare-metal"
+subtitle: "Hand-tuned NVIDIA SASS kernels for RTX 3070 Ti (GA104, sm_86)"
+toc: false
+---
+
+CUDA and hand-edited SASS kernels for a single, fully characterised GPU — no
+cuBLAS, no cuDNN, no PyTorch in the optimised path. Reference libraries are
+linked only for measured comparisons.
+
+Everything published here is generated from the repository's own documents.
+
+Read the performance figures with the project's own caveats attached: they come
+from one laptop-bin RTX 3070 Ti under a 150 W VBIOS cap, several are `n=1`, and
+where the repository disputes one of its own numbers there is an open issue
+saying so. The [documentation index](docs/index.md) links the methodology.
+
+## Where to start
+
+| If you want to | Read |
+|---|---|
+| Understand what the project is | [README](README.md) |
+| Build and reproduce the results | [SETUP](SETUP.md) |
+| Read the kernels chapter by chapter | [Tutorial](docs/tutorial/01-sass-hello-world.md) |
+| Navigate every document | [Documentation index](docs/index.md) |
+| Work on the code | [AGENTS](AGENTS.md), [CONTRIBUTING](CONTRIBUTING.md) |
+
+## Reference
+
+- [Ampere SASS reference](docs/ampere_sass_reference.md) — instruction encodings
+  and control codes for `sm_86`
+- [Memory hierarchy](docs/memory_hierarchy.md) — the constants the kernels are
+  written against
+- [Benchmark methodology](docs/benchmark_methodology.md) — how the numbers are
+  taken, and what makes a measurement fair
+- [Kernel architecture analysis](docs/analysis/kernel_architecture.qmd) —
+  empirical performance models
+
+## Measurement, honestly
+
+The performance figures come from one laptop-bin RTX 3070 Ti under a 150 W VBIOS
+cap, and the project documents its own measurement conditions rather than only
+its results: which configs were measured, which were skipped, and what the GPU
+was doing at the time. See
+[benchmark methodology](docs/benchmark_methodology.md) and the
+[roofline analysis](docs/roofline_measured.md).

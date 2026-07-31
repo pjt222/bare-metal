@@ -62,7 +62,7 @@ prerequisite and 06 as synthesis.
 | [`fragment_shfl_reductions.md`](fragment_shfl_reductions.md)                         | Reusable Tensor Core reduction pattern           |
 | [`benchmark_methodology.md`](benchmark_methodology.md)                               | Throttle, the 150 W power cap, clock-lock vs cooldown, reproducibility |
 | [`grid_sweep_methodology.md`](grid_sweep_methodology.md)                             | Multi-kernel × clock grid-sweep tool architecture (#135); convergence goal #152 |
-| [`elevated_session_runbook.md`](elevated_session_runbook.md)                         | Turnkey runbook for the elevated clock-locked GPU session (#135/#124/#128) |
+| [`elevated_session_runbook.md`](https://github.com/pjt222/bare-metal/blob/main/docs/elevated_session_runbook.md)                         | Turnkey runbook for the elevated clock-locked GPU session (#135/#124/#128) |
 | [`rebaseline_protocol.md`](rebaseline_protocol.md)                                   | Re-baselining procedure (executed 2026-05-22; see baselines.json) |
 | [`cymatic_memory_mapping.md`](cymatic_memory_mapping.md)                             | Chladni-pattern memory layout: theory and bench  |
 | [`diffusion_primitives.md`](diffusion_primitives.md)                                 | UNet primitive inventory                         |
@@ -89,13 +89,13 @@ Current documents:
 
 ## Visualizations
 
-`../viz/` holds interactive visualizations built with web tooling.
+[`viz/`](https://github.com/pjt222/bare-metal/tree/main/viz) holds interactive visualizations built with web tooling.
 Each subdirectory is a standalone application with its own
 `package.json`.
 
 | Subdirectory                                         | Stack          | Purpose                                            |
 |------------------------------------------------------|----------------|----------------------------------------------------|
-| [`../viz/research-map/`](../viz/research-map/)       | Vite + three.js | Interactive knowledge graph of the project's optimization observations and their cross-references |
+| [`viz/research-map/`](https://github.com/pjt222/bare-metal/tree/main/viz/research-map)       | Vite + three.js | Interactive knowledge graph of the project's optimization observations and their cross-references |
 
 To run a viz locally:
 

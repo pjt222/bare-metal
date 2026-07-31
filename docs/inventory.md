@@ -24,7 +24,7 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 |-------------------------|---------|-----------|---------------------|---------|
 | **Sparse HGEMM 2:4**    | 4096³   | —         | **41,721** (eq)     | 24.0%   |
 | **Sparse INT8 mma.sp**  | 2048³   | —         | **39,674** (eq)     | 11.4%   |
-| **HGEMM 16-warp**       | 4096³   | —         | **31,910**          | 18.3%   |
+| **HGEMM 16-warp**       | 4096³   | —         | **31,910** [^hgemm] | 18.3%   |
 | **IGEMM 128×256**       | 4096³   | —         | **27,591**          | 7.9%    |
 | **Flash Attention v2**  | seq=1024 b=8 h=8 | **1.53 ms** | **11,453** | 6.6% |
 | **Conv2d implicit GEMM**| 64×64 320ch | **1.13 ms** | **6,687**       | 3.8%    |
@@ -42,6 +42,14 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 > "4096³ 0.81× regression" is **refuted** — at matched 1605 MHz sparse 4096³ is
 > at parity-or-above 2048³ (42,257 vs 40,980), not a 19% drop; the apparent
 > regression was native-boost power-cap noise.
+
+[^hgemm]: **This figure is disputed by the project's own issue tracker (#167).**
+    31,910 GFLOPS is a native-boost reading; the clock-locked baselines recorded
+    in `data/baselines.json` are 29,174 (2048³) and 30,401 (4096³) GFLOPS, and
+    #158 documents `hgemm_16warp` measuring *slower* at native boost than under a
+    1605 MHz lock with no throttle flag raised. Which number is canonical has not
+    been settled, so this table states the one it has always stated and points
+    here. Do not quote it as a settled result.
 
 > **`igemm_sparse_tiled` 4096³ — documented reference, not a regression-gated baseline.**
 > Measured 2026-05-22: **50,497 dense-equiv GFLOPS / 2.722 ms** at a
@@ -260,8 +268,8 @@ Same kernels indexed by the instruction that defines them.
 ## See also
 
 - [`gpu_reflections.md`](gpu_reflections.md) — observation catalogue with per-kernel postmortems.
-- [`tutorial/`](tutorial/) — six-chapter prose walkthrough.
+- [`tutorial/`](tutorial/01-sass-hello-world.md) — six-chapter prose walkthrough.
 - [`comparison_to_sota.md`](comparison_to_sota.md) — measured gap to cuBLAS / cuDNN / cuSPARSELt per family.
 - [`roofline_measured.md`](roofline_measured.md), [`sass_histogram.md`](sass_histogram.md), [`register_audit.md`](register_audit.md) — per-kernel measurement tables.
-- Underlying data lives in [`../data/`](../data/).
+- Underlying data lives in [`data/`](https://github.com/pjt222/bare-metal/tree/main/data).
 - [`index.md`](index.md) — full documentation map.

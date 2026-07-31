@@ -291,7 +291,7 @@ reduction (FA v2). The other three rows are the regimes where it loses
 ## How to run it yourself
 
 ```bash
-cd /mnt/d/dev/p/bare-metal/kernels/gemm/igemm
+cd kernels/gemm/igemm
 
 # Build sync and async variants
 nvcc --cubin -arch=sm_86 -O2 -o igemm_pipelined.sm_86.cubin igemm_pipelined.cu
