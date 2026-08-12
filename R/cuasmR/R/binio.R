@@ -32,6 +32,14 @@ read_u64hex <- function(raw, off) {
 
 # Convert "0x...." or "...." hex string to 8 raw bytes (little-endian).
 hex64_to_bytes <- function(hex) {
+    # Type gate first: tolower()/sub() coerce silently, so an unquoted 0x1337 --
+    # valid R for the double 4919 -- would stringify to "4919", clear the hex
+    # check, and write a different value than the caller meant. See #170.
+    if (!is.character(hex) || length(hex) != 1L) {
+        stop("hex64_to_bytes: need a length-1 character string, got ",
+             class(hex)[1L], " of length ", length(hex))
+    }
+    if (is.na(hex)) stop("hex64_to_bytes: hex is NA")
     s <- sub("^0x", "", tolower(hex))
     if (nchar(s) > 16) stop("hex64_to_bytes: too long: ", hex)
     # Reject non-hex BEFORE padding. A malformed 16-char token -- e.g. the

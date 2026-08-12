@@ -25,6 +25,17 @@ test_that("hex64_to_bytes rejects an over-long string", {
     expect_error(cuasmR:::hex64_to_bytes("1234567890abcdef0"), "too long")
 })
 
+test_that("hex64_to_bytes rejects a non-string instead of coercing it", {
+    # 0x1337 is valid R for the double 4919, not a string. Without a type gate
+    # tolower() stringifies it to "4919", which is all hex digits and so passes
+    # the content check -- writing a different value than the caller meant.
+    expect_error(cuasmR:::hex64_to_bytes(0x1337), "length-1 character")
+    expect_error(cuasmR:::hex64_to_bytes(4919L), "length-1 character")
+    expect_error(cuasmR:::hex64_to_bytes(c("1a2b", "abc")), "length 2")
+    expect_error(cuasmR:::hex64_to_bytes(character(0)), "length 0")
+    expect_error(cuasmR:::hex64_to_bytes(NA_character_), "is NA")
+})
+
 test_that("hex64_to_bytes rejects malformed input instead of zeroing it", {
     # sprintf("0x%016x", NA) yields exactly this token: 16 chars after the "0x"
     # strip, so it clears the length check. Before #170 it wrote eight 00 bytes

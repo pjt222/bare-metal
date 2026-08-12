@@ -49,7 +49,12 @@ test_that("cuasm_set patches a single 16-byte slot only", {
     a <- readBin(p,  "raw", n = file.info(p)$size)
     b <- readBin(out, "raw", n = file.info(out)$size)
     n_diff <- sum(a != b)
-    # Exactly one byte: bit 12 lives in a single byte of the instruction word.
-    # The old bound (0 < n_diff <= 8) passed while the write zeroed five bytes.
+    # Exactly one byte, and exactly bit 12 within it. The old bound
+    # (0 < n_diff <= 8) passed while the write zeroed five bytes; a count alone
+    # is still not enough, since flipping digit 12, 13 or 14 each changes
+    # exactly one byte and only 13 is bit 12.
     expect_equal(n_diff, 1L)
+    changed_byte <- which(a != b)
+    expect_equal(bitwXor(as.integer(a[changed_byte]),
+                         as.integer(b[changed_byte])), 0x10)
 })
