@@ -101,26 +101,38 @@ args  <- commandArgs(trailingOnly = TRUE)
 quiet <- "--quiet" %in% args
 list_only <- "--list" %in% args
 
-expect_n <- NA_integer_
-if ("--expect" %in% args) {
-  i <- match("--expect", args)
+# Both external denominators are parsed the same way, so parse them the same
+# way -- a second hand-rolled copy is how the two drift.
+.int_arg <- function(flag) {
+  if (!(flag %in% args)) return(NA_integer_)
+  i <- match(flag, args)
   if (i == length(args)) {
-    cat("run_r_tests.R: --expect needs a value\n")
+    cat("run_r_tests.R: ", flag, " needs a value\n", sep = "")
     quit(status = 1)
   }
-  expect_n <- suppressWarnings(as.integer(args[i + 1L]))
-  if (is.na(expect_n) || expect_n < 0L) {
-    cat("run_r_tests.R: --expect needs a non-negative integer, got: ",
+  v <- suppressWarnings(as.integer(args[i + 1L]))
+  if (is.na(v) || v < 0L) {
+    cat("run_r_tests.R: ", flag, " needs a non-negative integer, got: ",
         args[i + 1L], "\n", sep = "")
     quit(status = 1)
   }
-  args <- args[-c(i, i + 1L)]
+  args <<- args[-c(i, i + 1L)]
+  v
 }
+
+expect_n <- .int_arg("--expect")
+# The cuasmR package suite is ONE invocation but many files, so --expect cannot
+# see inside it: delete four of its six test files and the suite count is still
+# 1 and the gate still passes, with ~100 assertions silently gone (#181). This
+# is the denominator for what is inside, supplied from outside for the same
+# reason --expect is.
+expect_cuasmr_n <- .int_arg("--expect-cuasmr")
 
 unknown <- setdiff(args, c("--quiet", "--list"))
 if (length(unknown)) {
   cat("run_r_tests.R: unknown argument(s): ", paste(unknown, collapse = " "), "\n", sep = "")
-  cat("Usage: Rscript scripts/audit/run_r_tests.R [--list] [--quiet] [--expect N]\n")
+  cat("Usage: Rscript scripts/audit/run_r_tests.R [--list] [--quiet] [--expect N]",
+      " [--expect-cuasmr N]\n", sep = "")
   quit(status = 1)
 }
 
@@ -145,19 +157,30 @@ repo_root <- if (!is.na(this_file) && nzchar(this_file)) {
 # usethis::use_test() emits it, and R/cuasmR/tests/testthat/ is already all
 # `test-`. An underscore-only glob would silently skip the next suite someone
 # creates the ordinary way, which is #163 verbatim, re-armed.
+#
+# ignore.case, also deliberately (#181). Without it a file named `test-foo.r`
+# -- lowercase extension, which R accepts everywhere else -- is never
+# discovered, and `--expect` cannot object because it was never counted. That
+# is the same class as the `test_` vs `test-` gap above, one level down, and it
+# costs nothing to close: R source is `.R` by convention, so matching `.r` too
+# can only ever find a file someone meant to be a suite.
 suites <- list.files(
   file.path(repo_root, "tests"),
-  pattern    = "^test[-_].*\\.R$",
-  recursive  = TRUE,
-  full.names = TRUE)
+  pattern     = "^test[-_].*\\.R$",
+  recursive   = TRUE,
+  full.names  = TRUE,
+  ignore.case = TRUE)
 suites <- sort(suites)
 
 # The cuasmR package carries its own testthat suite. It is GPU-free and the
 # package is already on the library path (scripts/bench/bench_regress.R uses
 # cuasmR::), so there is no extra install cost to running it here.
 cuasmr_tests <- file.path(repo_root, "R", "cuasmR", "tests", "testthat")
-has_cuasmr <- dir.exists(cuasmr_tests) &&
-  length(list.files(cuasmr_tests, pattern = "^test-.*\\.R$")) > 0L
+cuasmr_files <- if (dir.exists(cuasmr_tests)) {
+  list.files(cuasmr_tests, pattern = "^test[-_].*\\.R$", ignore.case = TRUE)
+} else character(0)
+n_cuasmr_files <- length(cuasmr_files)
+has_cuasmr <- n_cuasmr_files > 0L
 
 # fixed=TRUE, not a regex: a checkout path containing "(", "+" or "[" would
 # otherwise throw or mis-strip.
@@ -180,15 +203,45 @@ n_total <- length(suites) + as.integer(has_cuasmr)
 # deleting --expect.
 expect_ok <- is.na(expect_n) || n_total == expect_n
 
+# The same check one level in: --expect counts invocations, and the cuasmR
+# package is a single invocation whatever it contains (#181).
+cuasmr_ok <- is.na(expect_cuasmr_n) || n_cuasmr_files == expect_cuasmr_n
+
 if (list_only) {
   cat("GPU-free R suites (", n_total, "):\n", sep = "")
   for (s in suites) cat("  ", rel(s), "\n", sep = "")
-  if (has_cuasmr) cat("  ", rel(cuasmr_tests), " (cuasmR package suite)\n", sep = "")
+  if (has_cuasmr) {
+    cat("  ", rel(cuasmr_tests), " (cuasmR package suite, ",
+        n_cuasmr_files, " files)\n", sep = "")
+    for (f in sort(cuasmr_files)) cat("      ", f, "\n", sep = "")
+  }
   if (!expect_ok) {
     cat("\nEXPECTED ", expect_n, " suite(s), DISCOVERED ", n_total, ".\n", sep = "")
     quit(status = 1)
   }
+  if (!cuasmr_ok) {
+    cat("\nEXPECTED ", expect_cuasmr_n, " cuasmR test file(s), DISCOVERED ",
+        n_cuasmr_files, ".\n", sep = "")
+    quit(status = 1)
+  }
   quit(status = 0)
+}
+
+if (!cuasmr_ok) {
+  cat("\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  cuasmR SUITE FILE COUNT CHANGED\n")
+  cat(strrep("=", 72), "\n", sep = "")
+  cat("  expected ", expect_cuasmr_n, ", discovered ", n_cuasmr_files, "\n\n",
+      sep = "")
+  for (f in sort(cuasmr_files)) cat("  found  ", f, "\n", sep = "")
+  cat("\n")
+  cat("The cuasmR package is ONE invocation, so --expect cannot see this:\n")
+  cat("delete files from it and the suite count is unchanged while their\n")
+  cat("assertions go silently missing.\n\n")
+  cat("If a file was added or removed on purpose, bump R_CUASMR_FILES in the\n")
+  cat("Makefile and --expect-cuasmr in .github/workflows/tests.yml together.\n")
+  quit(status = 1)
 }
 
 if (!expect_ok) {

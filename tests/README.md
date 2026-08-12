@@ -37,10 +37,19 @@ Rscript scripts/audit/run_r_tests.R --list
 ```
 
 Discovery is by glob, so a new `tests/**/test[-_]*.R` is gated the day it lands —
-no manifest to forget to update. The expected suite count is supplied from
+no manifest to forget to update. The glob is case-insensitive, so a
+`test-foo.r` written with a lowercase extension is discovered too rather than
+being ungated from birth (#181). The expected suite count is supplied from
 outside the runner (`R_SUITES` in the `Makefile`, `--expect` in `tests.yml`), so
 adding one is a deliberate two-line edit rather than something that happens
 silently.
+
+The `cuasmR` package is **one** suite for that count however many files it
+holds, so the same denominator is supplied one level in: `R_CUASMR_FILES` in the
+`Makefile` and `--expect-cuasmr` in `tests.yml`. Without it, deleting four of
+its six test files leaves the suite count at 4 and takes ~100 assertions with it
+in silence (#181). Both pairs are deliberately two carriers each — bump one
+without the other and the gate objects, which is the signal that a count moved.
 
 Two notes on reading the output:
 

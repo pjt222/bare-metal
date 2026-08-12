@@ -199,10 +199,22 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 # Without it "all discovered suites passed" is a ratio against whatever was
 # discovered and is therefore always 100% -- delete every suite and the gate
 # still goes green. Bump this deliberately when adding or removing a suite.
-R_SUITES ?= 4
+#
+# `:=`, not `?=` (#181). The comment above says "deliberately", and `?=` let the
+# environment supply the number instead -- so `R_SUITES=3 make test-r` after
+# deleting a suite passes without the tracked edit the design depends on.
+# Nothing in the repo or CI overrides it (CI calls the runner directly with
+# --expect), so closing the override costs nothing.
+R_SUITES := 4
+
+# The cuasmR package suite is ONE invocation but several files, so R_SUITES
+# cannot see inside it: delete four of its six test files and the count is
+# still 4 (#181). Same discipline, one level in.
+R_CUASMR_FILES := 6
 
 test-r:
-	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES)
+	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES) \
+	  --expect-cuasmr $(R_CUASMR_FILES)
 
 # ------------------------------------------------------------------
 # Disassembly
