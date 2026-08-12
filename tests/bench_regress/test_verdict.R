@@ -41,6 +41,21 @@ if (is.null(.src)) {
 }
 suppressMessages(source(.src))
 
+# bench_reference.R is the sibling script that carried the SAME verdict bug
+# against data/reference_baselines.json (#183). It is only ever run here as a
+# child process: it resolves its own sibling from the running process's
+# `--file=`, so source()ing it from a test file makes it look for
+# bench_regress.R next to THIS file and fail. The end-to-end layer below is the
+# only way to reach its main().
+.src_ref <- sub("bench_regress\\.R$", "bench_reference.R", .src)
+if (!file.exists(.src_ref)) {
+  # Deliberately not "run this from the repo root": bench_regress.R was already
+  # found next door, so the working directory is fine. Its sibling is the thing
+  # that moved, and this stop() takes the whole file down with it.
+  stop("found ", .src, " but not its sibling ", .src_ref,
+       " -- bench_reference.R was moved or renamed; update this path")
+}
+
 # ---- the reported bug --------------------------------------------------
 
 test_that("an all-skipped run is INCONCLUSIVE, not PASSED", {
@@ -181,13 +196,18 @@ test_that("every verdict carries a status, an exit code and a message", {
 # the script's own path, which is inside the fixture.
 
 .fixture_root <- function(throughput = NULL, baseline_gflops = 1000,
-                          clock_lock = NULL) {
+                          clock_lock = NULL, reference = FALSE) {
   root <- file.path(tempfile("bench_regress_fixture"))
   dir.create(file.path(root, "scripts", "bench"), recursive = TRUE)
   dir.create(file.path(root, "data"), recursive = TRUE)
   # REPO_ROOT walks up until it finds .git or renv.lock.
   file.create(file.path(root, "renv.lock"))
   file.copy(.src, file.path(root, "scripts", "bench", "bench_regress.R"))
+  # bench_reference.R source()s its sibling by script_dir, so both have to be
+  # in the fixture for the reference scenarios (#183).
+  if (reference) {
+    file.copy(.src_ref, file.path(root, "scripts", "bench", "bench_reference.R"))
+  }
 
   # throughput = NULL means "leave the executable missing", which is the
   # unbuilt-corpus case: the configs must still be counted.
@@ -205,20 +225,28 @@ test_that("every verdict carries a status, an exit code and a message", {
   # configs take on every ordinary push.
   if (!is.null(clock_lock)) cfg$clock_lock <- clock_lock
 
+  # `library` is a kernel-level key that bench_reference.R reserves and
+  # bench_regress.R does not -- its RESERVED_KEYS is c("exe"), so including it
+  # unconditionally would make bench_regress read "fixture-lib" as a config
+  # name and die on `baseline_cfg$clock_lock`. Reference fixtures only.
+  entry <- list(exe = exe, `1_2` = cfg)
+  if (reference) entry$library <- "fixture-lib"
+
   baselines <- list(
     recorded_date = "fixture",
     platform = "fixture",
     default_valid_when = list(require_no_throttle = FALSE),
-    kernels = list(`kernels/fixture/fake.cu` = list(exe = exe, `1_2` = cfg)))
+    kernels = list(`kernels/fixture/fake.cu` = entry))
   writeLines(jsonlite::toJSON(baselines, auto_unbox = TRUE, pretty = TRUE),
-             file.path(root, "data", "baselines.json"))
+             file.path(root, "data",
+                       if (reference) "reference_baselines.json" else "baselines.json"))
   root
 }
 
-.run_gate <- function(root) {
+.run_gate <- function(root, script = "bench_regress.R") {
   rscript <- file.path(R.home("bin"), "Rscript")
   out <- suppressWarnings(system2(
-    rscript, file.path(root, "scripts", "bench", "bench_regress.R"),
+    rscript, file.path(root, "scripts", "bench", script),
     stdout = TRUE, stderr = TRUE))
   status <- attr(out, "status")
   list(status = if (is.null(status)) 0L else as.integer(status),
@@ -249,6 +277,13 @@ test_that("every verdict carries a status, an exit code and a message", {
       regressed  = .run_gate(.fixture_root(throughput = 500)),
       clocklock  = .run_gate(.fixture_root(throughput = 1000,
                                            clock_lock = 1605)),
+      # bench_reference.R, same three verdicts (#183).
+      ref_skipped   = .run_gate(.fixture_root(throughput = NULL, reference = TRUE),
+                                "bench_reference.R"),
+      ref_measured  = .run_gate(.fixture_root(throughput = 1000, reference = TRUE),
+                                "bench_reference.R"),
+      ref_regressed = .run_gate(.fixture_root(throughput = 500, reference = TRUE),
+                                "bench_reference.R"),
       stop("unknown scenario: ", name))
     cache[[name]] <<- run
     run
@@ -452,4 +487,58 @@ test_that("a record that cannot be written does not change the verdict", {
   expect_equal(r$status, 2L)                       # unchanged by the failure
   expect_match(r$text, "INCONCLUSIVE", fixed = TRUE)
   expect_match(r$text, "NOT WRITTEN", fixed = TRUE)
+})
+
+# ---- the sibling script: bench_reference.R (#183) ----------------------
+#
+# scripts/bench/bench_reference.R is a near-copy of bench_regress.R pointed at
+# data/reference_baselines.json, and it carried BOTH halves of the #176 bug
+# months after that one was fixed: the verdict branched on `regressions > 0L`
+# alone, and configs of a kernel with no built executable left the denominator
+# entirely -- their `next` fired before `cfg_names` was even computed, so an
+# unbuilt reference corpus reported `Total: 0 | Skipped: 0` and exited 0.
+#
+# Measured against the real data/reference_baselines.json before the fix: six
+# configs, none built, "Total: 0 | Regressions: 0 | Improvements: 0 | Skipped: 0"
+# then "RESULT: PASSED -- all local reference baselines within tolerance",
+# exit 0.
+#
+# These live here rather than in a tests/bench_reference/ of their own because
+# suites are counted per FILE and the expected count is asserted from outside in
+# several places at once (Makefile R_SUITES, the CI --expect, and a hardcoded
+# scrape in tests.yml that run_r_tests.R's own error message does not name). A
+# new file is a seven-place lockstep edit to gain nothing: both scripts reach
+# the same summarise_verdict(), so this is where its wiring belongs.
+
+test_that("end to end: an unbuilt reference corpus exits 2 and counts its configs", {
+  # Both halves of #183 at once. Against the code as it was, this exits 0 and
+  # prints "PASSED -- all local reference baselines within tolerance" with
+  # Total: 0 -- the configs vanished from the denominator rather than being
+  # reported as skipped.
+  r <- .scenarios("ref_skipped")
+  expect_equal(r$status, 2L)
+  expect_match(r$text, "INCONCLUSIVE", fixed = TRUE)
+  expect_match(r$text, "Total: 1", fixed = TRUE)
+  expect_match(r$text, "Measured: 0", fixed = TRUE)
+  expect_match(r$text, "Skipped: 1", fixed = TRUE)
+  expect_match(r$text, "SKIPPED -- executable not found", fixed = TRUE)
+  # The sentence that made an empty run look green.
+  expect_false(grepl("within tolerance", r$text, fixed = TRUE))
+})
+
+test_that("end to end: a measured reference config at baseline exits 0", {
+  r <- .scenarios("ref_measured")
+  expect_equal(r$status, 0L)
+  expect_match(r$text, "PASSED", fixed = TRUE)
+  expect_match(r$text, "Measured: 1", fixed = TRUE)
+  expect_match(r$text, "1 of 1 config(s) measured", fixed = TRUE)
+})
+
+test_that("end to end: a measured reference regression exits 1", {
+  # A measured regression must still outrank the empty-run case.
+  r <- .scenarios("ref_regressed")
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "FAILED", fixed = TRUE)
+  expect_match(r$text, "regression(s) detected", fixed = TRUE)
+  expect_match(r$text, "Measured: 1", fixed = TRUE)
 })

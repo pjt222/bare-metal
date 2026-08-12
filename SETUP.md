@@ -166,8 +166,16 @@ And three run-level verdicts, one per exit code (#176):
 - `INCONCLUSIVE` (2) — **nothing** was measured, so nothing is
   certified. Routine on this laptop: three configs sit behind a
   host-side clock lock (#156) and throttle takes more when it is warm.
-  The pre-push hook and `make bench` report it as a warning and do not
-  block; `scripts/probe/run_locked_eval.ps1` propagates it.
+  The pre-push hook, `make bench` and `make bench-reference` report it
+  as a warning and do not block; `scripts/probe/run_locked_eval.ps1`
+  propagates it.
+
+`make bench-reference` reaches the same three verdicts through the same
+function (#183). Its `INCONCLUSIVE` is the common case rather than the
+exception, because it needs `make reference` to have built the
+cuBLAS/cuDNN/cuSPARSELt benches first — before that, every config is
+skipped, and prior to #183 the run reported `PASSED` over an empty
+comparison.
 
 Every run appends to `results/bench_regress/gate_runs.jsonl` — one row per
 config plus a run summary, including the GPU state at measurement time (#186).

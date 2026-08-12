@@ -105,11 +105,26 @@ Total: 7 | Measured: 3 | Regressions: 0 | Improvements: 0 | Skipped: 4
 RESULT: PASSED -- 3 of 7 config(s) measured, all within tolerance (4 skipped)
 ```
 
-Three callers, one policy each, all reading the same exit code: the hook warns,
-`make bench` warns, and `scripts/probe/run_locked_eval.ps1` propagates it —
-right for a deliberate locked evaluation, where measuring nothing must not read
-as success. If a binding signal is ever wanted here, that is #179, and it should
-be decided for the whole gate rather than by tightening one exit code.
+Four callers, one policy each, all reading the same exit code: the hook warns,
+`make bench` warns, `make bench-reference` warns, and
+`scripts/probe/run_locked_eval.ps1` propagates it — right for a deliberate
+locked evaluation, where measuring nothing must not read as success. If a
+binding signal is ever wanted here, that is #179, and it should be decided for
+the whole gate rather than by tightening one exit code.
+
+`scripts/bench/bench_reference.R` reaches the same verdict through the same
+`summarise_verdict()`, which it gets from its `source()` of `bench_regress.R`
+(#183). It is *not* a pre-push gate step, so its warn-and-exit-0 policy is
+chosen for a different reason than `make bench`'s: `make reference-pipeline`
+lists `bench-reference` and `compare-reference` as prerequisites, so a fatal
+INCONCLUSIVE would stop the target before the comparison runs. The dependency
+is only that ordering — `compare_reference.R` reads `data/baselines.json` and
+`data/reference_baselines.json`, both committed, and consumes nothing that
+`bench-reference` produces. So blocking the chain would withhold a comparison
+that would have been perfectly valid. Note it writes
+no run record — the `#186` recorder is a local inside `bench_regress.R`'s
+`main()`, and `GATE_RECORD_PATH` belongs to the pre-push gate, so pointing a
+second script at it would file reference runs as gate runs.
 
 Two traps found while wiring those callers up, both of which had turned a
 non-verdict into a verdict:
