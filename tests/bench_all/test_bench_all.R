@@ -15,13 +15,35 @@ library(testthat)
 
 # Source bench_all.R for its functions. main() is guarded by
 # `if (sys.nframe() == 0L) main()`, so sourcing runs no benchmarks.
-.candidates <- c(
-  "scripts/bench/bench_all.R",
-  file.path(getwd(), "scripts", "bench", "bench_all.R"),
-  "/mnt/d/dev/p/bare-metal/scripts/bench/bench_all.R")
-.src <- NULL
-for (.p in .candidates) if (file.exists(.p)) { .src <- .p; break }
-if (is.null(.src)) stop("can't find bench_all.R")
+#
+# Resolve it by walking up to the repo marker, the same resolver bench_all.R
+# and bench_regress.R use on themselves (#173). The candidate list this
+# replaces ended in a hardcoded /mnt/d/dev/p/bare-metal/... path, which made
+# the suite pass here and die with "can't find bench_all.R" anywhere else --
+# and worse, silently rescued a wrong working directory: testthat::test_file()
+# chdirs into the test's own directory, so both relative candidates missed and
+# the absolute one carried the run. Walking up works from either, which is why
+# the acceptance for this change is that both invocations pass.
+.repo_root <- {
+  args_full <- commandArgs(trailingOnly = FALSE)
+  fa <- grep("^--file=", args_full, value = TRUE)
+  start <- if (length(fa)) normalizePath(dirname(sub("^--file=", "", fa[1])))
+           else            normalizePath(getwd())
+  cur <- start
+  repeat {
+    if (file.exists(file.path(cur, ".git")) ||
+        file.exists(file.path(cur, "renv.lock"))) break
+    parent <- dirname(cur)
+    if (parent == cur) { cur <- start; break }
+    cur <- parent
+  }
+  cur
+}
+.src <- file.path(.repo_root, "scripts", "bench", "bench_all.R")
+if (!file.exists(.src)) {
+  stop("can't find bench_all.R: walked up to ", .repo_root,
+       " from this test file and found no scripts/bench/bench_all.R there")
+}
 suppressMessages(source(.src))
 
 # ---- corpus discovery ------------------------------------------------
