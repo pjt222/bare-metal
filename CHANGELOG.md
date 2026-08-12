@@ -113,6 +113,42 @@ historical reference.
   pattern.
 
 ### Fixed
+- **`hex64_to_bytes` rejects malformed hex instead of silently writing eight
+  zero bytes, and the roundtrip patch test stopped doing exactly that (#170,
+  #197).** The padding in `cuasmR:::hex64_to_bytes` used
+  `formatC(s, width = 16, flag = "0")`, but `flag = "0"` is a *numeric* format
+  flag: on a character argument `formatC` right-justifies with **spaces**. The
+  function still returned correct bytes, through three cancelling accidents —
+  the space pairs become `NA`, `as.raw(NA)` yields `00` (warning), and after the
+  `rev()` those zeros land in the high-order bytes where zeros were wanted
+  anyway; the odd-length case survives on a fourth, `strtoi(" a", 16L) == 10`. A
+  2014-case fuzz confirms the explicit `strrep` pad is byte-identical on every
+  well-formed input, so this half is behaviour-preserving. The half that is not:
+  padding alone still turns garbage into zeros. `hex64_to_bytes` now rejects
+  anything that is not 1–16 hex digits after the `0x` strip, because the
+  `> 16` length guard is bypassed by a token that is *exactly* 16 characters —
+  which is what `sprintf("0x%016x", NA)` produces. That token was reaching the
+  write path. `test-roundtrip.R`'s "patches a single 16-byte slot only" test
+  computed its toggle as `bitwXor(strtoi(sub("0x", "", orig_instr), 16L), 0x1000)`,
+  and `strtoi` returns *int32*: the FADD word `0x0000000304097221` is
+  12,952,629,793 against an integer maximum of 2,147,483,647, so it returned
+  `NA`, the patch became the string `"0x              NA"`, and `cuasm_write` put
+  eight zero bytes over a live instruction word — `21 72 09 04 03` → `00 00 00 00
+  00` at offsets 2001-2005. The test passed throughout, because it asserted only
+  `n_diff > 0 && n_diff <= 8` and `n_diff` was 5. The toggle now flips the hex
+  digit directly (bit 12 is the low bit of the 4th digit from the right), so no
+  value wider than one digit reaches `strtoi`, and the assertion is
+  `expect_equal(n_diff, 1L)`. A hi/lo split would not have been enough: `strtoi`
+  on eight hex digits still overflows whenever the leading digit is `>= 8`, which
+  this cubin's low word happens not to be. New `test-binio.R` covers the short,
+  odd-length, full-width, over-long and malformed cases, with the byte cases
+  wrapped in `expect_no_warning()` so a regression to space-padding fails rather
+  than merely warns. The cuasmR suite goes from
+  `[ FAIL 0 | WARN 1 | SKIP 0 | PASS 131 ]` to
+  `[ FAIL 0 | WARN 0 | SKIP 0 | PASS 141 ]`. Note this is verifiable only on a
+  box with the tutorial cubin built and `nvdisasm` on `PATH`: the cubin is
+  gitignored, so CI skips all three roundtrip tests and reads `WARN 0` vacuously.
+  Two further `strtoi` overflow sites outside the suite are tracked in #198.
 - **The regression gate no longer reports `PASSED` having measured nothing
   (#176).** `bench_regress.R` decided its verdict on `regressions > 0L` alone, so
   a run in which every config skipped printed `RESULT: PASSED -- all benchmarks

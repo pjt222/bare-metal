@@ -34,7 +34,14 @@ read_u64hex <- function(raw, off) {
 hex64_to_bytes <- function(hex) {
     s <- sub("^0x", "", tolower(hex))
     if (nchar(s) > 16) stop("hex64_to_bytes: too long: ", hex)
-    s <- formatC(s, width = 16, flag = "0")
+    # Reject non-hex BEFORE padding. A malformed 16-char token -- e.g. the
+    # "              NA" that sprintf("%016x", NA) yields -- clears the length
+    # check, makes every pair NA, and as.raw() coerces it to eight 00 bytes,
+    # silently zeroing an instruction word. See #170, #197.
+    if (!grepl("^[0-9a-f]{1,16}$", s)) stop("hex64_to_bytes: not hex: ", hex)
+    # Zero-pad explicitly: flag = "0" is a NUMERIC format flag, so formatC()
+    # right-justifies a character argument with SPACES.
+    s <- paste0(strrep("0", 16L - nchar(s)), s)
     pairs <- substring(s, seq(1, 15, 2), seq(2, 16, 2))
     as.raw(rev(strtoi(pairs, 16L)))
 }

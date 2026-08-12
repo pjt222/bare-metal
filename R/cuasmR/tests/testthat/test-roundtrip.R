@@ -28,9 +28,17 @@ test_that("cuasm_set patches a single 16-byte slot only", {
     row <- rows[1]
 
     orig_instr <- obj$insns$instr_hex[row]
-    # Toggle a single non-opcode bit (bit 12 in the instr word)
-    new_int <- bitwXor(strtoi(sub("0x", "", orig_instr), 16L), 0x1000)
-    new_hex <- sprintf("0x%016x", new_int)
+    # Toggle a single non-opcode bit (bit 12 in the instr word) by flipping the
+    # hex digit directly. strtoi() returns int32, so handing it the whole 64-bit
+    # word gives NA, sprintf("%016x", NA) gives a 16-char token, and the write
+    # zeroes the instruction word instead of toggling a bit. See #197.
+    instr_body    <- sub("^0x", "", orig_instr)
+    bit12_digit   <- 13L   # bit 12 is the low bit of the 4th hex digit from the right
+    orig_digit    <- strtoi(substring(instr_body, bit12_digit, bit12_digit), 16L)
+    new_hex <- paste0("0x",
+                      substring(instr_body, 1L, bit12_digit - 1L),
+                      sprintf("%x", bitwXor(orig_digit, 1L)),
+                      substring(instr_body, bit12_digit + 1L))
     obj <- cuasm_set(obj, kernel = obj$insns$kernel[row],
                      slot = obj$insns$slot[row], instr_hex = new_hex)
 
@@ -41,7 +49,7 @@ test_that("cuasm_set patches a single 16-byte slot only", {
     a <- readBin(p,  "raw", n = file.info(p)$size)
     b <- readBin(out, "raw", n = file.info(out)$size)
     n_diff <- sum(a != b)
-    # At most 8 bytes should differ (one 64-bit word's worth of bits).
-    expect_true(n_diff > 0)
-    expect_true(n_diff <= 8)
+    # Exactly one byte: bit 12 lives in a single byte of the instruction word.
+    # The old bound (0 < n_diff <= 8) passed while the write zeroed five bytes.
+    expect_equal(n_diff, 1L)
 })
