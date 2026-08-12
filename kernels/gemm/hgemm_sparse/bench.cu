@@ -222,8 +222,15 @@ int main(int argc, char **argv) {
                    v.name, ms, eff_gflops, dense_gflops);
         }
 
-        printf("  %-32s %9s  %11s  %15.0f\n",
-               "Dense baseline (ref)", "", "", 31910.0);
+        // A frozen literal, not a measurement. 31,910 GFLOPS is a 2026-05-22
+        // native-boost reading that this laptop cannot reproduce, and which the
+        // project's own tracker disputes (#167). The gate-fair figures are the
+        // locked-1605 baselines in data/baselines.json: 29,174 (2048^3) and
+        // 30,401 (4096^3). Printed beside live numbers it read as a measured
+        // peer of the rows above, so it now says what it is.
+        printf("  %-32s %9s  %11s  %15.0f   <- frozen literal, not measured "
+               "(2026-05-22 native boost; disputed, see #167)\n",
+               "Dense baseline (ref, historical)", "", "", 31910.0);
     }
 
     return 0;

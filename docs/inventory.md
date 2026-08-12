@@ -37,7 +37,14 @@ INT8 TC = 348; see [`../AGENTS.md`](../AGENTS.md) hardware constants).
 > the regime free of the 150 W power-cap bimodal), matched 1605 MHz 4096³ —
 > sparse dense-eq **42,257** vs dense **31,886** GFLOPS = **1.33× over dense**
 > (= 133%, confirming the long-standing 131% in `gpu_reflections.md`; the locked
-> dense 31,886 ≈ the 31,910 literal). Between the 1× floor and 2× ceiling of 2:4
+> dense 31,886 ≈ the 31,910 literal). **That ratio is a within-session,
+> matched-lock comparison** — both halves measured in the same elevated session
+> under the same 1605 MHz lock, which is the methodologically sound way to form
+> it, and it is unaffected by [#159](https://github.com/pjt222/bare-metal/issues/159).
+> Do not recompute it by dividing 42,257 by a *different* session's dense
+> number: #159 records two locked sessions two days apart disagreeing 4.9% on
+> exactly that figure (31,886 vs 30,401), so a cross-session ratio would be
+> measuring the session gap as much as the sparsity. Between the 1× floor and 2× ceiling of 2:4
 > sparsity; the 41,721 headline (4096³) is confirmed within spread. The old
 > "4096³ 0.81× regression" is **refuted** — at matched 1605 MHz sparse 4096³ is
 > at parity-or-above 2048³ (42,257 vs 40,980), not a 19% drop; the apparent
