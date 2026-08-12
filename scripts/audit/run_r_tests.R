@@ -41,11 +41,12 @@
 # at the repo root.
 #
 # The original reason is GONE as of #173, and is recorded here because the
-# choice outlived it. Each repo-level suite used to resolve the script under
-# test through a candidate list ending in the hardcoded absolute path
-# /mnt/d/dev/p/bare-metal/..., so under test_file() the two relative candidates
-# missed and the hardcoded one carried the run: green on this machine, "can't
-# find bench_all.R" on any other. Both suites now walk up to the repo marker
+# choice outlived it. Two repo-level suites -- test_bench_all.R and test_meta.R;
+# test_verdict.R never had this -- resolved the script under test through a
+# candidate list ending in the hardcoded absolute path /mnt/d/dev/p/bare-metal/...,
+# so under test_file() the two relative candidates missed and the hardcoded one
+# carried the run: green on this machine, and on a second clone or a worktree it
+# silently tested the WRONG repository. They now walk up to the repo marker
 # (test_bench_all.R) or attach the package directly (test_meta.R), so both
 # invocations resolve correctly and either would be safe.
 #
@@ -53,11 +54,13 @@
 # so a suite's trailing top-level cat() is never reached. Under test_file() such
 # a line prints even when every group in the file errored -- the retired
 # test_parser.R printed "All bench_regress parser tests passed." while all 14 of
-# its groups were erroring, which is how it stayed dead for 58 days. #173 also
-# removed the last such line (test_meta.R's "All bench_meta tests passed."), so
-# no suite currently carries one -- but `Rscript <file>` is what keeps a new one
-# from mattering. Either way the verdict here comes from the child's exit
-# status, never from what the child wrote.
+# its groups were erroring, which is how it stayed dead for 58 days. #173 removed
+# the last line that CLAIMED SUCCESS (test_meta.R's "All bench_meta tests
+# passed."); test_bench_all.R still ends in "bench_all.R unit tests defined.",
+# which states what it did rather than how it went and is therefore not the same
+# hazard. `Rscript <file>` is what keeps a future one from mattering. Either way
+# the verdict here comes from the child's exit status, never from what the child
+# wrote.
 #
 # testthat DEFAULTS WORTH KNOWING
 #
@@ -316,9 +319,10 @@ for (s in suites) {
 
 if (has_cuasmr) {
   # test_local() loads the package from SOURCE via pkgload, while the repo-level
-  # suites load the INSTALLED cuasmR (scripts/bench/bench_meta.R does
-  # library(cuasmR)). That divergence is deliberate: it is what catches an edit
-  # to R/cuasmR/ that was never reinstalled.
+  # suites load the INSTALLED cuasmR -- test_meta.R attaches it directly, and
+  # test_bench_all.R gets it through bench_all.R (#173; both used to route
+  # through the scripts/bench/bench_meta.R shim). That divergence is deliberate:
+  # it is what catches an edit to R/cuasmR/ that was never reinstalled.
   #
   # Note this check is LOCAL-ONLY by construction. CI reinstalls cuasmR from the
   # working tree on every run, so installed and source are identical there and the
@@ -394,11 +398,13 @@ if (identical(failed[1], rel(cuasmr_tests))) {
   cat("That form stops at the first failing group. To see every failure at once:\n")
   cat("  Rscript -e 'testthat::set_max_fails(Inf); testthat::test_file(\"",
       failed[1], "\")'\n", sep = "")
-  cat("  -- but note test_file() chdirs into the test's directory, so a suite that\n")
-  cat("  resolves its source through a relative path may then fall through to the\n")
-  cat("  hardcoded absolute candidate. Trust the plain form for pass/fail.\n")
+  cat("  test_file() chdirs into the test's directory. That used to matter --\n")
+  cat("  a suite resolving its source relatively fell through to a hardcoded\n")
+  cat("  absolute path -- but #173 removed those, so both forms now resolve the\n")
+  cat("  same way and either is safe for pass/fail.\n")
 }
 cat("\n")
-cat("Do not read a suite's trailing \"All ... tests passed\" line as a verdict --\n")
-cat("those cat() calls are unconditional. The exit status above is the verdict.\n")
+cat("Do not read a suite's trailing cat() line as a verdict -- those are\n")
+cat("unconditional, so test_file() prints them even when a group above errored.\n")
+cat("The exit status above is the verdict.\n")
 quit(status = 1)
