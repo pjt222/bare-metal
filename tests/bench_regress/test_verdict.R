@@ -49,7 +49,11 @@ suppressMessages(source(.src))
 # only way to reach its main().
 .src_ref <- sub("bench_regress\\.R$", "bench_reference.R", .src)
 if (!file.exists(.src_ref)) {
-  stop("can't find scripts/bench/bench_reference.R -- run this from the repo root")
+  # Deliberately not "run this from the repo root": bench_regress.R was already
+  # found next door, so the working directory is fine. Its sibling is the thing
+  # that moved, and this stop() takes the whole file down with it.
+  stop("found ", .src, " but not its sibling ", .src_ref,
+       " -- bench_reference.R was moved or renamed; update this path")
 }
 
 # ---- the reported bug --------------------------------------------------

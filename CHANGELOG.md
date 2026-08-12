@@ -130,9 +130,11 @@ historical reference.
   unbuilt configs are counted into both `total` and `skipped` and reported one
   line each; and the summary names the fraction measured. `make bench-reference`
   gains the exit-2 policy `make bench` already had — warn and exit 0 rather than
-  fail, because `make reference-pipeline` chains it into `compare-reference` and
-  a fatal INCONCLUSIVE would stop the chain before the comparison it exists to
-  produce. Deliberately *not* copied across: the #186 run recorder, whose
+  fail, because `make reference-pipeline` lists it alongside `compare-reference`
+  and a fatal INCONCLUSIVE would stop the target before the comparison ran. That
+  is an ordering dependency only: `compare_reference.R` reads two committed JSON
+  files and consumes nothing `bench-reference` produces, so blocking would have
+  withheld a comparison that was valid regardless. Deliberately *not* copied across: the #186 run recorder, whose
   `record_row()` is a local inside `bench_regress.R`'s `main()` and whose
   `GATE_RECORD_PATH` is the pre-push gate's own file — pointing a second script
   at it would file reference runs as gate runs. Covered by three end-to-end

@@ -116,8 +116,12 @@ the whole gate rather than by tightening one exit code.
 `summarise_verdict()`, which it gets from its `source()` of `bench_regress.R`
 (#183). It is *not* a pre-push gate step, so its warn-and-exit-0 policy is
 chosen for a different reason than `make bench`'s: `make reference-pipeline`
-chains `bench-reference` into `compare-reference`, and a fatal INCONCLUSIVE
-would stop the chain before the comparison it exists to produce. Note it writes
+lists `bench-reference` and `compare-reference` as prerequisites, so a fatal
+INCONCLUSIVE would stop the target before the comparison runs. The dependency
+is only that ordering — `compare_reference.R` reads `data/baselines.json` and
+`data/reference_baselines.json`, both committed, and consumes nothing that
+`bench-reference` produces. So blocking the chain would withhold a comparison
+that would have been perfectly valid. Note it writes
 no run record — the `#186` recorder is a local inside `bench_regress.R`'s
 `main()`, and `GATE_RECORD_PATH` belongs to the pre-push gate, so pointing a
 second script at it would file reference runs as gate runs.
