@@ -32,9 +32,24 @@ read_u64hex <- function(raw, off) {
 
 # Convert "0x...." or "...." hex string to 8 raw bytes (little-endian).
 hex64_to_bytes <- function(hex) {
+    # Type gate first: tolower()/sub() coerce silently, so an unquoted 0x1337 --
+    # valid R for the double 4919 -- would stringify to "4919", clear the hex
+    # check, and write a different value than the caller meant. See #170.
+    if (!is.character(hex) || length(hex) != 1L) {
+        stop("hex64_to_bytes: need a length-1 character string, got ",
+             class(hex)[1L], " of length ", length(hex))
+    }
+    if (is.na(hex)) stop("hex64_to_bytes: hex is NA")
     s <- sub("^0x", "", tolower(hex))
     if (nchar(s) > 16) stop("hex64_to_bytes: too long: ", hex)
-    s <- formatC(s, width = 16, flag = "0")
+    # Reject non-hex BEFORE padding. A malformed 16-char token -- e.g. the
+    # "              NA" that sprintf("%016x", NA) yields -- clears the length
+    # check, makes every pair NA, and as.raw() coerces it to eight 00 bytes,
+    # silently zeroing an instruction word. See #170, #197.
+    if (!grepl("^[0-9a-f]{1,16}$", s)) stop("hex64_to_bytes: not hex: ", hex)
+    # Zero-pad explicitly: flag = "0" is a NUMERIC format flag, so formatC()
+    # right-justifies a character argument with SPACES.
+    s <- paste0(strrep("0", 16L - nchar(s)), s)
     pairs <- substring(s, seq(1, 15, 2), seq(2, 16, 2))
     as.raw(rev(strtoi(pairs, 16L)))
 }
