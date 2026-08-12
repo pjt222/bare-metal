@@ -113,6 +113,24 @@ historical reference.
   pattern.
 
 ### Fixed
+- **The disputed 31,910 stops being printed as if it were measured, and the
+  1.33× sparse ratio now states its provenance (#167).**
+  `kernels/gemm/hgemm_sparse/bench.cu` printed a hardcoded `31910.0` as "Dense
+  baseline (ref)" in the same table as live measurements, in the same column,
+  with nothing marking it as a frozen literal — so every sparse bench run
+  implicitly compared against a number this laptop cannot reproduce. It is now
+  labelled in the output as a historical, unmeasured value with a pointer to
+  the issue. Separately, the **1.33× sparse-vs-dense claim** in
+  `docs/inventory.md` and `docs/gpu_reflections.md` did not say that both of its
+  halves were measured *within the same session under the same clock lock* —
+  which is what makes it sound, and what makes it independent of #159, where two
+  locked sessions two days apart disagree 4.9% on the dense figure alone. Both
+  now say so and point at #159, because the reading the omission invited —
+  recomputing the ratio against a different session's dense number — would
+  measure the session gap rather than the sparsity. The table row itself already
+  carried a `[^hgemm]` footnote marking the figure disputed; that half of #167
+  was done. **Not** done here and still blocked on #159: recomputing the ratio
+  at a matched lock, which needs an elevated session.
 - **The gate's suite denominator can now see three things it could not (#181).**
   `--expect N` supplies the suite count from outside the runner, which is what
   stops "all discovered suites passed" from being a ratio against whatever was

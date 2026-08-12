@@ -973,7 +973,17 @@ HGEMM baseline**.
 > the regime free of the 150 W power-cap bimodal) **vindicates the 131%**: at
 > matched 1605 MHz 4096³, sparse dense-eq **42,257** vs dense **31,886** GFLOPS
 > = **1.33× = 133%** — and the locked dense 31,886 ≈ the frozen 31,910 literal
-> the original 131% was computed against. The old "31.9 TFLOPS / dense-parity"
+> the original 131% was computed against. **Both halves of that ratio were
+> measured in the same session under the same lock**, which is what makes it
+> sound and what keeps it independent of
+> [#159](https://github.com/pjt222/bare-metal/issues/159) — two locked sessions
+> two days apart disagree 4.9% on the dense figure alone (31,886 vs the 30,401
+> now in `data/baselines.json`), so forming this ratio across sessions would
+> measure that gap rather than the sparsity. The 31,910 literal is a
+> 2026-05-22 native-boost reading and is disputed in its own right
+> ([#167](https://github.com/pjt222/bare-metal/issues/167)); it is quoted here
+> only to show the original 131% was computed against a comparable number, not
+> as a current baseline. The old "31.9 TFLOPS / dense-parity"
 > wording in the kernel README was a category error (31.9 = the *dense*
 > baseline). The old "4096³ 0.81× regression" is **refuted**: locked, sparse
 > 4096³ (42,257) is at parity-or-above 2048³ (40,980), not a 19% drop — the
