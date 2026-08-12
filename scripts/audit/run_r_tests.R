@@ -85,7 +85,8 @@
 #
 # Usage:
 #   Rscript scripts/audit/run_r_tests.R             # run every suite, report, exit 0/1
-#   Rscript scripts/audit/run_r_tests.R --expect 3  # ...and fail unless exactly 3 were found
+#   Rscript scripts/audit/run_r_tests.R --expect 4  # ...and fail unless exactly 4 were found
+#   Rscript scripts/audit/run_r_tests.R --expect 4 --expect-cuasmr 6
 #   Rscript scripts/audit/run_r_tests.R --list      # print the discovered suites, run nothing
 #   Rscript scripts/audit/run_r_tests.R --quiet     # suppress this script's own
 #                                                   # banners and summary table.
@@ -110,10 +111,15 @@ list_only <- "--list" %in% args
     cat("run_r_tests.R: ", flag, " needs a value\n", sep = "")
     quit(status = 1)
   }
-  v <- suppressWarnings(as.integer(args[i + 1L]))
-  if (is.na(v) || v < 0L) {
+  raw <- args[i + 1L]
+  v <- suppressWarnings(as.integer(raw))
+  # grepl as well as as.integer(): as.integer("4.5") silently truncates to 4,
+  # so a mistyped denominator would be accepted while the message promises an
+  # integer. A denominator that quietly becomes a different number is the class
+  # of thing this whole flag exists to prevent.
+  if (is.na(v) || v < 0L || !grepl("^[0-9]+$", raw)) {
     cat("run_r_tests.R: ", flag, " needs a non-negative integer, got: ",
-        args[i + 1L], "\n", sep = "")
+        raw, "\n", sep = "")
     quit(status = 1)
   }
   args <<- args[-c(i, i + 1L)]
@@ -176,11 +182,54 @@ suites <- sort(suites)
 # package is already on the library path (scripts/bench/bench_regress.R uses
 # cuasmR::), so there is no extra install cost to running it here.
 cuasmr_tests <- file.path(repo_root, "R", "cuasmR", "tests", "testthat")
+
+# testthat's OWN pattern, deliberately NOT the one used for tests/ above.
+#
+# Up there, this script executes each discovered file itself (`Rscript <file>`),
+# so discovery IS execution and a permissive glob can only ever find a file
+# someone meant to run. Here execution is delegated to testthat::test_local(),
+# which globs the directory a SECOND time with its own pattern
+# (testthat:::find_test_scripts -> `dir(path, "^test.*\\.[rR]$")`). Any
+# divergence between the two globs is a hole in exactly the direction this
+# counter exists to close: a file we count but testthat never runs is assertions
+# gone with the number still green. It diverges both ways -- `^test[-_].*\.R$`
+# with ignore.case would count `Test-x.R` (testthat skips it) and miss
+# `testfoo.R` (testthat runs it).
+CUASMR_TEST_PATTERN <- "^test.*\\.[rR]$"
 cuasmr_files <- if (dir.exists(cuasmr_tests)) {
-  list.files(cuasmr_tests, pattern = "^test[-_].*\\.R$", ignore.case = TRUE)
+  list.files(cuasmr_tests, pattern = CUASMR_TEST_PATTERN)
 } else character(0)
 n_cuasmr_files <- length(cuasmr_files)
 has_cuasmr <- n_cuasmr_files > 0L
+
+# Copying a pattern is a snapshot, and testthat could change its own. Ask
+# testthat directly when we can, and fail loudly if the two ever disagree --
+# that disagreement is the bug, whichever side moved.
+if (has_cuasmr) {
+  tt_files <- tryCatch(
+    sort(basename(get("find_test_scripts",
+                      envir = asNamespace("testthat"))(cuasmr_tests))),
+    error = function(e) {
+      # Say so rather than skipping in silence. A cross-check that quietly does
+      # nothing when it cannot run is the same shape as the bug it guards --
+      # and this script cannot run the package suite without testthat anyway,
+      # so this is a real anomaly, not a supported configuration.
+      cat("run_r_tests.R: NOTE -- could not ask testthat which files it counts",
+          " as tests (", conditionMessage(e), ").\n",
+          "The cuasmR file counter is unverified for this run.\n", sep = "")
+      NULL
+    })
+  if (!is.null(tt_files) && !identical(tt_files, sort(cuasmr_files))) {
+    cat("\nrun_r_tests.R: the cuasmR file counter and testthat disagree about\n")
+    cat("which files are tests. The counter would report a number testthat is\n")
+    cat("not going to honour.\n\n")
+    cat("  counted by this script: ", paste(sort(cuasmr_files), collapse = " "), "\n", sep = "")
+    cat("  found by testthat:      ", paste(tt_files, collapse = " "), "\n\n", sep = "")
+    cat("Reconcile CUASMR_TEST_PATTERN above with testthat's own\n")
+    cat("find_test_scripts() before trusting this gate.\n")
+    quit(status = 1)
+  }
+}
 
 # fixed=TRUE, not a regex: a checkout path containing "(", "+" or "[" would
 # otherwise throw or mis-strip.
@@ -215,16 +264,18 @@ if (list_only) {
         n_cuasmr_files, " files)\n", sep = "")
     for (f in sort(cuasmr_files)) cat("      ", f, "\n", sep = "")
   }
+  # Report BOTH mismatches, then quit. Quitting at the first sends someone to
+  # fix one number, re-run, and be told about the other -- and the run-mode path
+  # below checks them in the opposite order, so the two modes would name
+  # different causes for the same tree.
   if (!expect_ok) {
     cat("\nEXPECTED ", expect_n, " suite(s), DISCOVERED ", n_total, ".\n", sep = "")
-    quit(status = 1)
   }
   if (!cuasmr_ok) {
     cat("\nEXPECTED ", expect_cuasmr_n, " cuasmR test file(s), DISCOVERED ",
         n_cuasmr_files, ".\n", sep = "")
-    quit(status = 1)
   }
-  quit(status = 0)
+  quit(status = if (expect_ok && cuasmr_ok) 0 else 1)
 }
 
 if (!cuasmr_ok) {

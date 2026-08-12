@@ -120,12 +120,23 @@ historical reference.
   **case-sensitive**, so a `test-foo.r` written with a lowercase extension was
   never discovered — and `--expect` could not object, because it was never
   counted; ungated from birth, the same class as the `test_` vs `test-` gap #175
-  closed, one level down. The **cuasmR package suite counted as one** whatever it
-  contained, so deleting four of its six test files left the count unchanged with
-  roughly a hundred assertions silently gone; there is now a second external
-  denominator for what is inside a single invocation — `R_CUASMR_FILES` in the
-  Makefile, `--expect-cuasmr` in `tests.yml`, carried in two places for the same
-  reason `--expect` is, so bumping one without the other fails loudly. And
+  closed, one level down. That glob is now case-insensitive, which is safe there
+  precisely because the runner *executes* each file it discovers, so discovery
+  and execution are one operation. The **cuasmR package suite counted as one**
+  whatever it contained, so deleting four of its six test files left the count
+  unchanged with roughly a hundred assertions silently gone; there is now a
+  second external denominator for what is inside a single invocation —
+  `R_CUASMR_FILES` in the Makefile, `--expect-cuasmr` in `tests.yml`, carried in
+  two places for the same reason `--expect` is, so bumping one without the other
+  fails loudly. That counter deliberately uses **testthat's own pattern**, not
+  the permissive one above: execution there is delegated to `test_local()`, which
+  globs the directory a second time, and a divergence between the two is a hole
+  in exactly the direction the counter exists to close — a file counted but never
+  run is assertions gone with the number still green. It diverges both ways: an
+  `ignore.case` pattern would count `Test-x.R`, which testthat skips, and miss
+  `testfoo.R`, which testthat runs. Since a copied pattern is only a snapshot,
+  the runner also asks `testthat` directly and fails if the two ever disagree.
+  And
   `R_SUITES ?= 4` was **environment-overridable** while its own comment said to
   bump it deliberately: `R_SUITES=3 make test-r` after deleting a suite passed
   without the tracked edit the design depends on. It is `:=` now; nothing in the
