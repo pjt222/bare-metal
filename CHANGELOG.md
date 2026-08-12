@@ -113,6 +113,33 @@ historical reference.
   pattern.
 
 ### Fixed
+- **`bench_reference.R` no longer reports `PASSED` having compared nothing
+  (#183).** The sibling of the gate fixed under #176 carried both halves of the
+  same bug for the four months since, against `data/reference_baselines.json`.
+  Its verdict branched on `regressions > 0L` alone, so a run in which every
+  config skipped printed `RESULT: PASSED -- all local reference baselines within
+  tolerance` and exited 0 having measured nothing. And configs of a kernel with
+  no built executable left the denominator: the `next` fired before `cfg_names`
+  was even computed, so they were counted neither into `total` nor into
+  `skipped`. Measured against the real baselines file with nothing built, that
+  reported `Total: 0 | Regressions: 0 | Improvements: 0 | Skipped: 0` over six
+  real configs, and exited 0 — `make reference` not having been run was
+  indistinguishable from a clean pass. The verdict now comes from the same
+  `summarise_verdict()` the regression gate uses, already in scope through this
+  file's `source()` of `bench_regress.R`, so the two scripts cannot drift again;
+  unbuilt configs are counted into both `total` and `skipped` and reported one
+  line each; and the summary names the fraction measured. `make bench-reference`
+  gains the exit-2 policy `make bench` already had — warn and exit 0 rather than
+  fail, because `make reference-pipeline` chains it into `compare-reference` and
+  a fatal INCONCLUSIVE would stop the chain before the comparison it exists to
+  produce. Deliberately *not* copied across: the #186 run recorder, whose
+  `record_row()` is a local inside `bench_regress.R`'s `main()` and whose
+  `GATE_RECORD_PATH` is the pre-push gate's own file — pointing a second script
+  at it would file reference runs as gate runs. Covered by three end-to-end
+  groups in `tests/bench_regress/test_verdict.R`, which run the real script as a
+  child against a throwaway fixture; they live in that file rather than a new
+  suite because suites are counted per file and the expected count is asserted
+  from outside in several places at once.
 - **`hex64_to_bytes` rejects malformed hex instead of silently writing eight
   zero bytes, and the roundtrip patch test stopped doing exactly that (#170,
   #197).** The padding in `cuasmR:::hex64_to_bytes` used

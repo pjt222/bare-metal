@@ -309,8 +309,26 @@ figures:
 	@$(RSCRIPT) scripts/audit/sass_histogram.R
 	@$(RSCRIPT) scripts/cymatic/cymatic_visualize.R
 
+# Same exit-code policy as `bench` above (#183). bench_reference.R gained the
+# 0/1/2 verdict, and 2 (INCONCLUSIVE) means "nothing was measured" -- on a warm
+# laptop or an unbuilt corpus that is the common case, and treating it as fatal
+# would stop `reference-pipeline` before `compare-reference` ever runs. Warn and
+# exit 0; a missing script is still an error, because that is not the same as
+# measuring nothing.
 bench-reference: reference
-	@$(RSCRIPT) scripts/bench/bench_reference.R
+	@test -r scripts/bench/bench_reference.R || { \
+	  echo "ERROR: scripts/bench/bench_reference.R is missing or unreadable."; \
+	  echo "Nothing was run. This is not the same as measuring nothing."; \
+	  exit 1; \
+	}
+	@$(RSCRIPT) scripts/bench/bench_reference.R; rc=$$?; \
+	if [ $$rc -eq 2 ]; then \
+	  echo ""; \
+	  echo "WARNING: nothing was measured -- see the INCONCLUSIVE line above."; \
+	  echo "Exit 2 reported as a warning; reference baselines were NOT verified."; \
+	  exit 0; \
+	fi; \
+	exit $$rc
 
 compare-reference:
 	@$(RSCRIPT) scripts/bench/compare_reference.R

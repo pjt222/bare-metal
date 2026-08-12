@@ -67,6 +67,11 @@ main <- function() {
   cat(strrep("=", 70), "\n")
 
   regressions <- 0L; improvements <- 0L; skipped <- 0L; total <- 0L
+  # `measured` counts configs that reached a verdict other than SKIPPED, and is
+  # what decides PASSED vs INCONCLUSIVE. Same definition as bench_regress.R
+  # (#176) -- CRASH and NO_DATA count as measured and also land in
+  # `regressions`, so they report as failures rather than as an empty run.
+  measured <- 0L
   RESERVED_KEYS <- c("exe", "library")
 
   if (exists("capture_gpu_state", mode = "function")) {
@@ -83,11 +88,21 @@ main <- function() {
   for (kernel_path in names(kernels)) {
     entry <- kernels[[kernel_path]]
     exe <- if (!is.null(entry$exe)) entry$exe else find_executable(kernel_path)
+    cfg_names <- setdiff(names(entry), RESERVED_KEYS)
     if (is.null(exe) || !file.exists(exe)) {
-      cat(sprintf("\n%s\n  SKIP -- executable not found (try: make reference)\n", kernel_path))
+      # Count the configs that cannot run (#183). This branch used to `next`
+      # before `cfg_names` was even computed, so an unbuilt reference corpus
+      # reported `Total: 0 | Skipped: 0` -- the configs left the denominator
+      # without being recorded as skipped anywhere. Reported per config, so
+      # the screen agrees with the counters. Mirrors bench_regress.R (#176).
+      for (cfg in cfg_names) {
+        total <- total + 1L
+        skipped <- skipped + 1L
+        cat(sprintf("\n%s [%s]\n  SKIPPED -- executable not found (try: make reference)\n",
+                    kernel_path, cfg))
+      }
       next
     }
-    cfg_names <- setdiff(names(entry), RESERVED_KEYS)
     for (cfg in cfg_names) {
       total <- total + 1L
       cfg_args <- strsplit(cfg, "_", fixed = TRUE)[[1]]
@@ -99,21 +114,28 @@ main <- function() {
       verdict <- check_regression(current, baseline_cfg, eff_tol,
                                   default_valid_when = .default_vw)
       cat(sprintf("\n%s [%s]\n  %s\n", kernel_path, cfg, verdict$msg))
-      if (isTRUE(verdict$skipped)) skipped <- skipped + 1L
-      else if (verdict$is_reg)     regressions <- regressions + 1L
-      else if (grepl("IMPROVED", verdict$msg, fixed = TRUE)) improvements <- improvements + 1L
+      if (isTRUE(verdict$skipped)) {
+        skipped <- skipped + 1L
+      } else {
+        measured <- measured + 1L
+        if (verdict$is_reg) regressions <- regressions + 1L
+        else if (grepl("IMPROVED", verdict$msg, fixed = TRUE)) improvements <- improvements + 1L
+      }
     }
   }
 
   cat("\n", strrep("=", 70), "\n", sep = "")
-  cat(sprintf("  Total: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
-              total, regressions, improvements, skipped))
-  if (regressions > 0L) {
-    cat(sprintf("  RESULT: FAILED -- %d reference regression(s) detected\n", regressions))
-    quit(status = 1)
-  }
-  cat("  RESULT: PASSED -- all local reference baselines within tolerance\n")
-  quit(status = 0)
+  cat(sprintf("  Total: %d | Measured: %d | Regressions: %d | Improvements: %d | Skipped: %d\n",
+              total, measured, regressions, improvements, skipped))
+  # Verdict via the shared summarise_verdict() from bench_regress.R, in scope
+  # through the source() at the top of this file (#183). It used to branch on
+  # `regressions > 0L` alone, so a run in which every config skipped -- or in
+  # which nothing was built -- printed "PASSED -- all local reference baselines
+  # within tolerance" and exited 0 having compared nothing. Exit codes are
+  # 0 PASSED / 1 FAILED / 2 INCONCLUSIVE, same as the regression gate.
+  v <- summarise_verdict(total, measured, regressions, skipped)
+  cat(sprintf("  RESULT: %s\n", v$msg))
+  quit(status = v$exit)
 }
 
 if (sys.nframe() == 0L) main()
