@@ -113,6 +113,39 @@ historical reference.
   pattern.
 
 ### Fixed
+- **The gate's suite denominator can now see three things it could not (#181).**
+  `--expect N` supplies the suite count from outside the runner, which is what
+  stops "all discovered suites passed" from being a ratio against whatever was
+  discovered. Three blind spots remained. The discovery glob was
+  **case-sensitive**, so a `test-foo.r` written with a lowercase extension was
+  never discovered — and `--expect` could not object, because it was never
+  counted; ungated from birth, the same class as the `test_` vs `test-` gap #175
+  closed, one level down. That glob is now case-insensitive, which is safe there
+  precisely because the runner *executes* each file it discovers, so discovery
+  and execution are one operation. The **cuasmR package suite counted as one**
+  whatever it contained, so deleting four of its six test files left the count
+  unchanged with roughly a hundred assertions silently gone; there is now a
+  second external denominator for what is inside a single invocation —
+  `R_CUASMR_FILES` in the Makefile, `--expect-cuasmr` in `tests.yml`, carried in
+  two places for the same reason `--expect` is, so bumping one without the other
+  fails loudly. That counter deliberately uses **testthat's own pattern**, not
+  the permissive one above: execution there is delegated to `test_local()`, which
+  globs the directory a second time, and a divergence between the two is a hole
+  in exactly the direction the counter exists to close — a file counted but never
+  run is assertions gone with the number still green. It diverges both ways: an
+  `ignore.case` pattern would count `Test-x.R`, which testthat skips, and miss
+  `testfoo.R`, which testthat runs. Since a copied pattern is only a snapshot,
+  the runner also asks `testthat` directly and fails if the two ever disagree.
+  And
+  `R_SUITES ?= 4` was **environment-overridable** while its own comment said to
+  bump it deliberately: `R_SUITES=3 make test-r` after deleting a suite passed
+  without the tracked edit the design depends on. It is `:=` now; nothing in the
+  repo or CI overrode it, since CI calls the runner directly. The fourth blind
+  spot in that issue — two branches each adding a suite and each bumping the
+  count by one — is left alone deliberately: it fails loudly, just naming the
+  wrong cause. Proven able to fail: `--expect-cuasmr 5` against six files exits 1
+  with `EXPECTED 5 cuasmR test file(s), DISCOVERED 6`, and `R_SUITES=99 make -n
+  test-r` now expands to `--expect 4`.
 - **The gated suites no longer resolve their subject through a hardcoded
   `/mnt/d/...` path, and one of them no longer keeps a deprecated shim alive
   (#173).** `tests/bench_all/test_bench_all.R` and
