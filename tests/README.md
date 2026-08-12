@@ -12,7 +12,7 @@ These files validate hardware assumptions, fragment layouts, and race conditions
 | `igemm/test_inplace_race.cu` | Reproduce WAR hazard in in-place INT8 quantization |
 | `flash_attention/verify_wmma_layout.cu` | WMMA accumulator fragment layout (sm_86) |
 | `bench_all/test_bench_all.R` | GPU-free unit tests for `scripts/bench/bench_all.R` and `bench_all_collect.R` (#124, #152): corpus discovery, spec merge, the taxonomy×regime planner, status classification, summary aggregation, markdown render |
-| `bench_regress/test_meta.R`   | Metadata tests for `scripts/bench/bench_meta.R` — throttle-reason decode and `classify_meta` policies against canned snapshots; the live-capture smoke test skips without `nvidia-smi` |
+| `bench_regress/test_meta.R`   | Metadata tests for cuasmR's GPU/host capture (`R/cuasmR/R/bench_meta.R`) — throttle-reason decode and `classify_meta` policies against canned snapshots; the live-capture smoke test skips without `nvidia-smi`. It attaches the package directly since #173; it used to reach these functions through the `scripts/bench/bench_meta.R` compatibility shim |
 | `bench_regress/test_verdict.R` | The run verdict and run record in `scripts/bench/bench_regress.R`. #176: PASSED / FAILED / INCONCLUSIVE and their three exit codes, pinning that an all-skipped run can never print "all benchmarks within tolerance" again. #186: the append-only `gate_runs.jsonl`, including that a record which cannot be written leaves the verdict untouched. Both are covered end to end by running the real script against a throwaway repo fixture — no GPU, no built corpus |
 
 Build any CUDA test individually with the same `nvcc` commands used for production kernels.
@@ -44,14 +44,18 @@ silently.
 
 Two notes on reading the output:
 
-- `test_meta.R` ends with an unconditional `cat("All ... tests passed.")` — a
-  line that asserts success without checking it. Under the runner's `Rscript
-  <file>` form a failing `test_that` aborts the script before it prints, so it
-  is currently harmless; under `testthat::test_file()` it prints even when every
-  group errored, which is how the retired `test_parser.R` looked green for 58
-  days (#171). **The exit status is the verdict**, which is why the runner
-  reports its own table rather than echoing what a suite claims about itself. Do
-  not add such a line to a new suite — `test_verdict.R` deliberately has none.
+- No suite claims success in its own output any more. `test_meta.R` used to end
+  with an unconditional `cat("All ... tests passed.")` — a line that asserts
+  success without checking it — and #173 removed it, the last one in the repo.
+  Under the runner's `Rscript <file>` form a failing `test_that` aborts the
+  script before such a line prints; under `testthat::test_file()` it prints even
+  when every group errored, which is how the retired `test_parser.R` looked
+  green for 58 days (#171). **The exit status is the verdict**, which is why the
+  runner reports its own table rather than echoing what a suite claims about
+  itself. Do not add such a line to a new suite — `test_verdict.R` deliberately
+  has none. (`test_bench_all.R` ends with `cat("bench_all.R unit tests
+  defined.")`, which reports what it did rather than how it went; that is not
+  the same hazard, but the exit status is still the verdict.)
 - Three of the `cuasmR` roundtrip tests skip unless `kernels/tutorial/vector_add.sm_86.cubin`
   has been built (it is gitignored) *and* `nvdisasm` is on `PATH`. They therefore
   always skip in CI. Run `make cubins` locally for that coverage.

@@ -1,25 +1,25 @@
 # tests/bench_regress/test_meta.R
 #
-# Tests for the GPU/host metadata capture in
-# scripts/bench/bench_meta.R. Most tests use canned data so they pass
-# on any host (CI runners without nvidia-smi included). A live-capture
-# smoke test runs only when nvidia-smi is on PATH.
+# Tests for the GPU/host metadata capture in cuasmR --
+# capture_gpu_state(), classify_meta(), decode_throttle(), summarise_meta()
+# (R/cuasmR/R/bench_meta.R). Most tests use canned data so they pass on any
+# host (CI runners without nvidia-smi included). A live-capture smoke test
+# runs only when nvidia-smi is on PATH.
 #
 # Run with:
 #   Rscript tests/bench_regress/test_meta.R
+#   (or)  Rscript -e 'testthat::test_file("tests/bench_regress/test_meta.R")'
 
 library(testthat)
 
-# Source the module. Path resolution mirrors test_parser.R.
-.candidates <- c(
-  "scripts/bench/bench_meta.R",
-  file.path(getwd(), "scripts", "bench", "bench_meta.R"),
-  "/mnt/d/dev/p/bare-metal/scripts/bench/bench_meta.R"
-)
-.src <- NULL
-for (.p in .candidates) if (file.exists(.p)) { .src <- .p; break }
-if (is.null(.src)) stop("can't find bench_meta.R")
-source(.src)
+# The subject is the package, so attach it directly (#173). This used to
+# source scripts/bench/bench_meta.R, which is a compatibility shim whose own
+# header says it is slated for removal once callers use library(cuasmR) --
+# a gated suite was the thing keeping it alive, and deleting the shim would
+# have turned the gate red for no reason. The shim's entire body is
+# `library(cuasmR)`; nothing is lost. That source() also carried a hardcoded
+# /mnt/d/dev/p/bare-metal/... fallback, which went with it.
+suppressMessages(library(cuasmR))
 
 # ---- decode_throttle ----------------------------------------------------
 
@@ -189,4 +189,8 @@ test_that("capture_gpu_state: live capture round-trips on real hardware", {
   expect_true(s$host$ac_state %in% c("ac", "battery", "unknown"))
 })
 
-cat("\nAll bench_meta tests passed.\n")
+# No trailing "all tests passed" line. It was unconditional, so under
+# testthat::test_file() it printed even when every group above had errored --
+# which is how the retired tests/bench_regress/test_parser.R advertised
+# "All bench_regress parser tests passed." for 58 days while all 14 of its
+# groups were failing (#171). The verdict comes from the exit status.

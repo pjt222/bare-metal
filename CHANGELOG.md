@@ -113,6 +113,35 @@ historical reference.
   pattern.
 
 ### Fixed
+- **The gated suites no longer resolve their subject through a hardcoded
+  `/mnt/d/...` path, and one of them no longer keeps a deprecated shim alive
+  (#173).** `tests/bench_all/test_bench_all.R` and
+  `tests/bench_regress/test_meta.R` each ended their source-candidate list with
+  an absolute path to this laptop. The obvious cost is that the suites die with
+  `can't find bench_all.R` on any other machine — but the real one is worse and
+  is why #163 raised the priority: `testthat::test_file()` chdirs into the test
+  file's own directory, so both *relative* candidates missed and the hardcoded
+  one carried the run. Measured against a copy of the repo at another path, with
+  the working directory set the way `test_file()` sets it, the old preamble
+  resolves to `/mnt/d/dev/p/bare-metal/scripts/bench/bench_all.R` — **the wrong
+  repository** — and passes, testing a tree the caller never asked about. A
+  second clone or a `git worktree` is enough to hit that. `test_bench_all.R` now
+  walks up to the `.git`/`renv.lock` marker, the resolver `bench_all.R` and
+  `bench_regress.R` already use on themselves; the same probe resolves it to the
+  copy's own script. `test_meta.R` needed no path at all: it was sourcing
+  `scripts/bench/bench_meta.R`, a compatibility shim whose entire body is
+  `library(cuasmR)` and whose own header says it is slated for removal once
+  callers attach the package directly — a gated suite was the thing keeping it
+  alive, so deleting the shim would have turned the gate red. It attaches
+  `cuasmR` now, and its header no longer claims to test a file it does not.
+  `run_r_tests.R`'s note on why it invokes suites as `Rscript <file>` rather
+  than `test_file()` is updated: the path reason is gone, the remaining one is
+  that a failing `test_that` aborts the script so a trailing "all tests passed"
+  line is never reached. That line is gone too — `test_meta.R` carried the last
+  one in the repo, the same construct that let the retired `test_parser.R`
+  advertise success for 58 days while all 14 of its groups errored. Both suites
+  now pass under `Rscript <file>` **and** under `test_file()`, which is the
+  acceptance that proves the fix rather than the invocation.
 - **`bench_reference.R` no longer reports `PASSED` having compared nothing
   (#183).** The sibling of the gate fixed under #176 carried both halves of the
   same bug for the four months since, against `data/reference_baselines.json`.
