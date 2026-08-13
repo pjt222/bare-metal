@@ -25,6 +25,31 @@
 #                                       bitmask (see decode below).
 #   utilization.gpu         -- sanity check that the kernel actually ran.
 #   utilization.memory      -- DRAM bus pressure during the launch.
+#   enforced.power.limit    -- the cap the platform is ACTUALLY applying
+#                             right now (issue #207). On a laptop this is
+#                             set by the OEM/Windows power policy, not by
+#                             us, and it moves without warning.
+#   power.default_limit     -- the card's DEFAULT cap.
+#   power.max_limit         -- the VBIOS ceiling.
+#
+# All three are needed, and the reason is specific to this machine.
+# `docs/benchmark_methodology.md` records it as
+# `Current 150 W / Default 115 W / Max 150 W`: an OEM performance mode
+# has already raised the enforced limit 115 -> 150, so the NORMAL state
+# here is `enforced == max`, and 115 W is a *degraded fallback*, not the
+# envelope. Comparing against `default` alone would therefore read the
+# entire [115, 150) band -- including that documented fallback, a 23%
+# envelope cut -- as "not capped". Comparing against `max` alone
+# false-positives on hardware whose normal operating point IS the
+# default (most desktops). So both comparisons are recorded, and neither
+# is collapsed into a single verdict here.
+#
+# `power.draw` cannot substitute for any of this: it reports what the GPU
+# drew, never what it was allowed to draw.
+#
+# All three come from the SAME nvidia-smi invocation as the fields above,
+# so recording them costs nothing (measured: 0.148s for the query either
+# way).
 .NVIDIA_SMI_FIELDS <- c(
   "clocks.current.sm",
   "clocks.current.memory",
@@ -33,7 +58,10 @@
   "pstate",
   "clocks_throttle_reasons.active",
   "utilization.gpu",
-  "utilization.memory"
+  "utilization.memory",
+  "enforced.power.limit",
+  "power.default_limit",
+  "power.max_limit"
 )
 
 # Throttle-reason bitmask. From NVIDIA documentation; constants are
@@ -119,6 +147,48 @@ decode_throttle <- function(hex_str) {
   active
 }
 
+# Is the enforced power limit below a given reference envelope?
+# (issue #207). Returns TRUE / FALSE / NA. NA means "could not tell"
+# -- a driver reporting [N/A] for either value, or a non-numeric one.
+#
+# NA is deliberately NOT folded into FALSE: "we do not know whether this
+# session was capped" and "this session was not capped" are different
+# claims, and only the second one licenses a comparison to a baseline.
+#
+# The caller supplies the reference because there is no single right one
+# (see the field-set comment above): `default` is unambiguous on any
+# hardware but blind to a laptop whose normal state is above default,
+# and `max` catches that but false-positives where default IS the normal
+# operating point.
+# Normalise one nvidia-smi watt field to numeric-or-NA. The driver
+# reports unsupported fields as the STRING "[N/A]", which
+# .nvidia_smi_query leaves as a character value; storing that in a
+# numeric column gives the JSONL a field that is a number on one machine
+# and a string on another, and every consumer has to defend against it.
+# A value we cannot read is NA, which serialises to null (issue #207).
+.as_watts <- function(x) {
+  if (is.null(x)) return(NA_real_)
+  if (is.numeric(x)) return(as.numeric(x))
+  v <- suppressWarnings(as.numeric(x))
+  if (is.na(v)) NA_real_ else v
+}
+
+# Watts for display: a plain number, or "?" when unknown. Never let an
+# NA reach sprintf("%.0f"), which would render the literal "NA" inside a
+# field that otherwise always carries digits.
+.fmt_w <- function(x) {
+  v <- .as_watts(x)
+  if (is.na(v)) "?" else format(round(v))
+}
+
+.power_below <- function(enforced, reference) {
+  if (is.null(enforced) || is.null(reference)) return(NA)
+  if (!is.numeric(enforced) || !is.numeric(reference)) return(NA)
+  if (is.na(enforced) || is.na(reference) || reference <= 0) return(NA)
+  # 1 W of slack: some drivers report the pair a hair apart when uncapped.
+  enforced < (reference - 1)
+}
+
 # Read /proc/loadavg into a list. Linux/WSL only; returns NULL on
 # other OSes.
 .read_loadavg <- function() {
@@ -194,7 +264,11 @@ decode_throttle <- function(hex_str) {
 #'     \item{gpu}{\code{clock_sm}, \code{clock_mem}, \code{temp_c},
 #'       \code{power_w}, \code{pstate}, \code{throttle_hex},
 #'       \code{throttle} (decoded character vector), \code{util_gpu},
-#'       \code{util_mem}}
+#'       \code{util_mem}, \code{power_limit_w} (the cap the platform is
+#'       enforcing), \code{power_limit_default_w} (the card's default),
+#'       \code{power_capped} (\code{TRUE}/\code{FALSE}/\code{NA} --
+#'       \code{NA} means the driver did not report the limits, which is
+#'       NOT the same as "not capped"; see issue #207)}
 #'     \item{host}{\code{loadavg}, \code{ac_state}, \code{gpu_mode}}
 #'     \item{iso_time}{ISO 8601 timestamp}
 #'   }
@@ -214,8 +288,22 @@ capture_gpu_state <- function() {
     throttle_hex = gpu_raw[["clocks_throttle_reasons.active"]],
     throttle     = decode_throttle(gpu_raw[["clocks_throttle_reasons.active"]]),
     util_gpu     = gpu_raw[["utilization.gpu"]],
-    util_mem     = gpu_raw[["utilization.memory"]]
+    util_mem     = gpu_raw[["utilization.memory"]],
+    # Platform power envelope (issue #207). Any of these may be
+    # non-numeric on a driver that reports [N/A]; .power_below() treats
+    # that as "unknown", never as "not capped".
+    power_limit_w         = .as_watts(gpu_raw[["enforced.power.limit"]]),
+    power_limit_default_w = .as_watts(gpu_raw[["power.default_limit"]]),
+    power_limit_max_w     = .as_watts(gpu_raw[["power.max_limit"]])
   )
+  # Two references, recorded separately rather than collapsed. On this
+  # machine the normal state is enforced == max == 150 W with default at
+  # 115 W, so `below_max` is the operationally meaningful one and
+  # `below_default` marks the more severe fallback.
+  gpu$power_below_default <- .power_below(gpu$power_limit_w,
+                                          gpu$power_limit_default_w)
+  gpu$power_below_max     <- .power_below(gpu$power_limit_w,
+                                          gpu$power_limit_max_w)
 
   list(
     gpu      = gpu,
@@ -224,6 +312,126 @@ capture_gpu_state <- function() {
                     gpu_mode = .read_gpu_mode()),
     iso_time = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
   )
+}
+
+# Session cache for readings that are session-scoped by nature and
+# expensive to take (issue #207). Not exported; cleared by restarting R
+# or via the `refresh` argument.
+.meta_cache <- new.env(parent = emptyenv())
+
+# Windows "power mode" overlay GUIDs. These sit on top of the power
+# scheme and are what the taskbar slider / Settings > Power sets.
+.POWER_OVERLAYS <- c(
+  "961cc777-2547-4f9d-8174-7d86181b8a7a" = "best-power-efficiency",
+  "00000000-0000-0000-0000-000000000000" = "balanced",
+  "ded574b5-45a0-4f42-8737-46345c09c238" = "best-performance",
+  "3af9b8d9-7c97-431d-ad78-34a8bfea439f" = "better-performance"
+)
+
+#' Capture the host power policy that governs the GPU's power envelope.
+#'
+#' Session-level provenance for issue #207. On a laptop the dGPU's
+#' \code{enforced.power.limit} is set by the platform, and on Windows the
+#' lever is the power-mode \emph{overlay} -- which Windows changes on its
+#' own (battery state, "automatic improvements", OEM utilities). The
+#' overlay is the field that explains \emph{why} a cap moved, so a session
+#' whose numbers look wrong can be attributed instead of re-litigated.
+#'
+#' Costs a \code{powershell.exe} spawn (~1s), far too slow for the
+#' per-sample path -- call it ONCE per measurement session and attach the
+#' result to the run record, alongside the per-sample
+#' \code{power_limit_w} that \code{\link{capture_gpu_state}} records.
+#'
+#' @param ac_state Which overlay governs: \code{"ac"} (default),
+#'   \code{"battery"}, or \code{"unknown"}. Windows keeps a separate
+#'   overlay per power source and they routinely differ -- this machine
+#'   has held \code{best-performance} on AC and
+#'   \code{best-power-efficiency} on DC simultaneously -- so the caller
+#'   must say which one applied. Pass
+#'   \code{capture_gpu_state()$host$ac_state}. Do NOT assume AC: nothing
+#'   in this repo forces a gated measurement onto AC
+#'   (\code{require_ac} defaults to \code{FALSE} and no baseline sets it).
+#' @param refresh Recompute instead of returning the cached value.
+#' @return \code{list(overlay_guid, overlay_name, ac_overlay_guid,
+#'   dc_overlay_guid, governing, source)}. \code{overlay_name} is a short
+#'   slug (\code{"best-power-efficiency"}, \code{"balanced"},
+#'   \code{"best-performance"}, \code{"better-performance"}) or the raw
+#'   GUID when unrecognised. Every field is \code{NA_character_} with
+#'   \code{source = "unavailable"} off Windows/WSL, when the query fails,
+#'   or when the value read is not GUID-shaped -- never a guess.
+#' @export
+capture_power_policy <- function(ac_state = "ac", refresh = FALSE) {
+  unavailable <- list(overlay_guid = NA_character_,
+                      overlay_name = NA_character_,
+                      ac_overlay_guid = NA_character_,
+                      dc_overlay_guid = NA_character_,
+                      governing = NA_character_,
+                      source = "unavailable")
+
+  # Memoised for the lifetime of the session. The overlay is read once
+  # per measurement session by design, but the gate's own test fixture
+  # runs bench_regress.R ~10 times inside one `make test-r`, and each
+  # spawn measured 1.376s on this box -- ~15s added to the slowest
+  # blocking pre-push step, whose comment records it was deliberately
+  # cut from 79s by memoising exactly this kind of child process.
+  cache_key <- paste0("policy_", ac_state)
+  if (!refresh && !is.null(.meta_cache[[cache_key]]))
+    return(.meta_cache[[cache_key]])
+
+  ps <- Sys.which("powershell.exe")
+  if (!nzchar(ps)) return(unavailable)
+
+  key <- paste0("HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power\\User\\",
+                "PowerSchemes")
+  cmd <- sprintf(
+    paste0("$p = Get-ItemProperty '%s' -ErrorAction SilentlyContinue; ",
+           "if ($p) { \"$($p.ActiveOverlayAcPowerScheme)|",
+           "$($p.ActiveOverlayDcPowerScheme)\" }"), key)
+
+  res <- tryCatch(
+    suppressWarnings(system2(ps, c("-NoProfile", "-NonInteractive",
+                                   "-Command", shQuote(cmd)),
+                             stdout = TRUE, stderr = FALSE,
+                             # Bounded like every other child this package
+                             # spawns (run_bench passes one too). tryCatch
+                             # catches errors, not hangs, and this call sits
+                             # on a blocking pre-push step: a wedged interop
+                             # handler would hang `git push` with no output.
+                             timeout = 10)),
+    error = function(e) NULL)
+  if (is.null(res) || !length(res)) return(unavailable)
+  # Non-zero exit means the value we are holding is not a reading.
+  # .nvidia_smi_query already checks this; this call did not.
+  st <- attr(res, "status")
+  if (!is.null(st) && st != 0L) return(unavailable)
+
+  # One line per value, not a blind paste: Windows PowerShell writes the
+  # WARNING stream to stdout, localized, and -ErrorAction does not cover
+  # it. Gluing every line together produced a real observed corruption --
+  # "warnung: noise" concatenated onto the GUID -- which then passed the
+  # consumer's `source != "unavailable"` gate and was stored as provenance.
+  toks <- trimws(unlist(strsplit(paste(res, collapse = "\n"), "[\n|]")))
+  toks <- toks[nzchar(toks)]
+  guid_re <- "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+  guids <- tolower(toks)[grepl(guid_re, tolower(toks))]
+  if (!length(guids)) return(unavailable)
+
+  ac <- guids[[1]]
+  dc <- if (length(guids) >= 2L) guids[[2]] else NA_character_
+
+  # Which overlay actually governed this run. Windows applies the DC
+  # overlay on battery, and they differ in practice.
+  governing <- if (identical(ac_state, "battery") && !is.na(dc)) dc else ac
+  nm <- unname(.POWER_OVERLAYS[governing])
+
+  out <- list(overlay_guid    = governing,
+              overlay_name    = if (is.na(nm)) governing else nm,
+              ac_overlay_guid = ac,
+              dc_overlay_guid = dc,
+              governing       = if (identical(ac_state, "battery")) "dc" else "ac",
+              source          = "windows-registry")
+  .meta_cache[[cache_key]] <- out
+  out
 }
 
 #' Decide whether a measurement is comparable to a baseline.
@@ -294,7 +502,7 @@ classify_meta <- function(pre, post, valid_when = list()) {
 
   ok <- length(reasons) == 0L
   gpu_mode <- if (!is.null(post$host$gpu_mode)) post$host$gpu_mode else "unknown"
-  summary <- sprintf("clk=%d/%d MHz  temp=%d\u00b0C  power=%.1fW  pstate=%s  %s  gpu_mode=%s",
+  summary <- sprintf("clk=%d/%d MHz  temp=%d\u00b0C  power=%.1fW  pstate=%s  %s  gpu_mode=%s%s",
                      as.integer(post$gpu$clock_sm),
                      as.integer(post$gpu$clock_mem),
                      as.integer(post$gpu$temp_c),
@@ -303,7 +511,21 @@ classify_meta <- function(pre, post, valid_when = list()) {
                      if (length(post$gpu$throttle))
                        paste0("throttle=[", paste(post$gpu$throttle, collapse = ","), "]")
                      else "throttle=none",
-                     gpu_mode)
+                     gpu_mode,
+                     # Appended only when the enforced limit is below the
+                     # VBIOS ceiling (issue #207), so a session at the normal
+                     # enforced == max operating point reads exactly as before.
+                     # All three numbers are printed rather than a verdict:
+                     # 50/115/150 (platform clamp) and 115/115/150 (the
+                     # documented fallback to default) are different problems
+                     # and the reader can tell them apart at a glance.
+                     if (isTRUE(post$gpu$power_below_max) ||
+                         isTRUE(post$gpu$power_below_default))
+                       sprintf("  POWER-LIMIT=%s/%s/%sW",
+                               .fmt_w(post$gpu$power_limit_w),
+                               .fmt_w(post$gpu$power_limit_default_w),
+                               .fmt_w(post$gpu$power_limit_max_w))
+                     else "")
 
   list(ok = ok, reasons = reasons, summary = summary)
 }

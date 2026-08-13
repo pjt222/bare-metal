@@ -208,9 +208,10 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 R_SUITES := 4
 
 # The cuasmR package suite is ONE invocation but several files, so R_SUITES
-# cannot see inside it: delete four of its six test files and the count is
+# cannot see inside it: delete four of its seven test files and the count is
 # still 4 (#181). Same discipline, one level in.
-R_CUASMR_FILES := 6
+# 6 -> 7: test-power_policy.R added with the power-envelope tracking (#207).
+R_CUASMR_FILES := 7
 
 test-r:
 	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES) \

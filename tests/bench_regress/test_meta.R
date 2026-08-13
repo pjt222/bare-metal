@@ -163,6 +163,23 @@ test_that("classify_meta: summary string includes key fields", {
   expect_match(cls$summary, "throttle=none", fixed = TRUE)
 })
 
+test_that("classify_meta: summary carries the power triple (installed build)", {
+  # This suite attaches the INSTALLED cuasmR, so it is the only place that
+  # notices a bench_meta.R edit which was never reinstalled (#207). The
+  # package's own test-power_policy.R runs under test_local() against the
+  # source tree and passes regardless of what is installed -- so without
+  # this assertion, `make test-r` stays green while every gate row writes
+  # power_limit_w = null.
+  s <- .fake_state(clock_sm = 1700, temp_c = 60, power_w = 40)
+  s$gpu$power_limit_w         <- 50
+  s$gpu$power_limit_default_w <- 115
+  s$gpu$power_limit_max_w     <- 150
+  s$gpu$power_below_default   <- TRUE
+  s$gpu$power_below_max       <- TRUE
+  expect_match(classify_meta(s, s)$summary, "POWER-LIMIT=50/115/150W",
+               fixed = TRUE)
+})
+
 # ---- summarise_meta -----------------------------------------------------
 
 test_that("summarise_meta: NULL inputs -> '(no GPU meta)'", {

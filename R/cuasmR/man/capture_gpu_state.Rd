@@ -12,7 +12,14 @@ A list with shape:
     \item{gpu}{\code{clock_sm}, \code{clock_mem}, \code{temp_c},
       \code{power_w}, \code{pstate}, \code{throttle_hex},
       \code{throttle} (decoded character vector), \code{util_gpu},
-      \code{util_mem}}
+      \code{util_mem}, \code{power_limit_w} (the cap the platform is
+      enforcing), \code{power_limit_default_w} (the card's default),
+      \code{power_limit_max_w} (the VBIOS ceiling),
+      \code{power_below_default} and \code{power_below_max}
+      (\code{TRUE}/\code{FALSE}/\code{NA} -- \code{NA} means the driver
+      did not report a limit, which is NOT the same as "not capped".
+      Both references are kept because this machine's normal state is
+      \code{enforced == max} with a lower default; see issue #207)}
     \item{host}{\code{loadavg}, \code{ac_state}, \code{gpu_mode}}
     \item{iso_time}{ISO 8601 timestamp}
   }
