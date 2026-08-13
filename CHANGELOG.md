@@ -13,6 +13,24 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **The run record now tracks the platform's GPU power envelope (#207).**
+  `capture_gpu_state()` records `enforced.power.limit` and
+  `power.default_limit` alongside the existing fields, and derives
+  `power_capped`; `bench_regress.R` carries all three onto every config row
+  and prints `POWER-CAPPED=<enforced>/<default>W` in the state line when the
+  platform is capping. A new exported `cuasmR::capture_power_policy()` reads
+  the Windows power-mode overlay — the lever that moves the cap — once per
+  session onto the `run_summary` row. Motivation: on 2026-08-13 the overlay
+  had flipped to "Best power efficiency" **on AC**, the platform enforced
+  50 W against a 115 W default, memory sat at 6001 of 7001 MHz, and
+  `conv2d_implicit_gemm` measured 51% of the value it produced the day
+  before. `power.draw` records what the GPU *drew* and so could not
+  distinguish that session from a full-power one. The limits come from the
+  `nvidia-smi` call `capture_gpu_state()` already makes, so the per-sample
+  cost is zero; the overlay read costs ~1 s and is therefore session-scoped.
+  `power_capped` is `TRUE`/`FALSE`/`NA` and never folds `NA` into `FALSE` —
+  "could not tell" and "not capped" are different claims, and only the
+  second licenses a comparison against a baseline.
 - **The regression gate now writes itself down (#186).** Every
   `bench_regress.R` run appends to `results/bench_regress/gate_runs.jsonl`
   (append-only, gitignored): one `config` row per config with its verdict and
