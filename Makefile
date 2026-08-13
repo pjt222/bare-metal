@@ -211,7 +211,11 @@ R_SUITES := 4
 # cannot see inside it: delete four of its seven test files and the count is
 # still 4 (#181). Same discipline, one level in.
 # 6 -> 7: test-power_policy.R added with the power-envelope tracking (#207).
-R_CUASMR_FILES := 7
+# 7 -> 8: test-decode_throttle.R added with the strtoi hex64 fixes (#198/#208).
+# NB both carriers must move together: .github/workflows/tests.yml passes
+# --expect-cuasmr separately, and bumping only this one turns CI red while
+# every local signal stays green (it did, for three pushes, on 2026-08-13).
+R_CUASMR_FILES := 8
 
 test-r:
 	@$(RSCRIPT) scripts/audit/run_r_tests.R --expect $(R_SUITES) \

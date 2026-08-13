@@ -11,8 +11,9 @@ decode_throttle(hex_str)
 \code{clocks_throttle_reasons.active} (e.g. \code{"0x0000000000000004"}).}
 }
 \value{
-Character vector of active reason names; empty vector means
-  "no throttle".
+Character vector of active reason names. \code{character(0)}
+  means "no throttle". \code{NA_character_} means the mask could not be
+  parsed -- deliberately NOT \code{character(0)}, see below.
 }
 \description{
 Decode an nvidia-smi throttle-reason bitmask.
