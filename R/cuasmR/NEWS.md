@@ -1,3 +1,24 @@
+# cuasmR (development version)
+
+## New features
+
+* `capture_gpu_state()` now records the platform's GPU **power envelope**:
+  `power_limit_w` (the enforced limit), `power_limit_default_w`,
+  `power_limit_max_w`, and the derived `power_below_default` /
+  `power_below_max`. All three limits ride the `nvidia-smi` invocation the
+  function already made, so the per-sample cost is unchanged. Both
+  references are kept deliberately: on the project's laptop the normal
+  operating point is `enforced == max` with a lower default, so comparing
+  against the default alone is blind to a documented fallback regime, while
+  comparing against the max alone false-positives on hardware whose normal
+  point *is* the default (issue #207).
+* Added `capture_power_policy()`, which reads the Windows power-mode overlay
+  that moves the enforced limit. Session-scoped and memoised (it costs a
+  `powershell.exe` spawn); takes the observed `ac_state` because Windows
+  keeps a separate overlay per power source and they differ in practice.
+  Returns `source = "unavailable"` rather than a guess off Windows, on a
+  failed query, or on a value that is not GUID-shaped.
+
 # cuasmR 0.2.0
 
 ## New features

@@ -4,15 +4,29 @@
 \alias{capture_power_policy}
 \title{Capture the host power policy that governs the GPU's power envelope.}
 \usage{
-capture_power_policy()
+capture_power_policy(ac_state = "ac", refresh = FALSE)
+}
+\arguments{
+\item{ac_state}{Which overlay governs: \code{"ac"} (default),
+\code{"battery"}, or \code{"unknown"}. Windows keeps a separate
+overlay per power source and they routinely differ -- this machine
+has held \code{best-performance} on AC and
+\code{best-power-efficiency} on DC simultaneously -- so the caller
+must say which one applied. Pass
+\code{capture_gpu_state()$host$ac_state}. Do NOT assume AC: nothing
+in this repo forces a gated measurement onto AC
+(\code{require_ac} defaults to \code{FALSE} and no baseline sets it).}
+
+\item{refresh}{Recompute instead of returning the cached value.}
 }
 \value{
 \code{list(overlay_guid, overlay_name, ac_overlay_guid,
-  dc_overlay_guid, source)}. \code{overlay_name} is a short slug
-  (\code{"best-power-efficiency"}, \code{"balanced"},
+  dc_overlay_guid, governing, source)}. \code{overlay_name} is a short
+  slug (\code{"best-power-efficiency"}, \code{"balanced"},
   \code{"best-performance"}, \code{"better-performance"}) or the raw
   GUID when unrecognised. Every field is \code{NA_character_} with
-  \code{source = "unavailable"} off Windows/WSL -- never a guess.
+  \code{source = "unavailable"} off Windows/WSL, when the query fails,
+  or when the value read is not GUID-shaped -- never a guess.
 }
 \description{
 Session-level provenance for issue #207. On a laptop the dGPU's
@@ -27,4 +41,6 @@ Costs a \code{powershell.exe} spawn (~1s), far too slow for the
 per-sample path -- call it ONCE per measurement session and attach the
 result to the run record, alongside the per-sample
 \code{power_limit_w} that \code{\link{capture_gpu_state}} records.
+The result is memoised per \code{ac_state} for the lifetime of the
+session; pass \code{refresh = TRUE} to re-read.
 }

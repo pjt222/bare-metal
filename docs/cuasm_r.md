@@ -164,7 +164,7 @@ pipeline has one tested implementation. The seven measurement harnesses
 | Sampling | `validate_sample`, `collect_valid_samples`, `report_median_metrics` | `R/cuasmR/R/bench_measure.R` |
 | Regression | `check_regression` | `R/cuasmR/R/bench_regression.R` |
 | JSONL store | `append_jsonl_row`, `read_jsonl` | `R/cuasmR/R/bench_io.R` |
-| GPU metadata | `capture_gpu_state`, `classify_meta`, `decode_throttle`, `summarise_meta` | `R/cuasmR/R/bench_meta.R` |
+| GPU metadata | `capture_gpu_state`, `capture_power_policy`, `classify_meta`, `decode_throttle`, `summarise_meta` | `R/cuasmR/R/bench_meta.R` |
 
 Pipeline order: `run_bench` (launch + GPU-state snapshot) → `parse_throughput`
 (ms + GFLOPS/TOPS from stdout) → `validate_sample` (reject throttled / wrong-clock

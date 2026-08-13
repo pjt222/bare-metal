@@ -365,7 +365,9 @@ meta_digest <- function(current) {
     # queried for "which runs were capped?" without parsing prose.
     power_limit_w         = gpu$power_limit_w,
     power_limit_default_w = gpu$power_limit_default_w,
-    power_capped          = gpu$power_capped)
+    power_limit_max_w     = gpu$power_limit_max_w,
+    power_below_default   = gpu$power_below_default,
+    power_below_max       = gpu$power_below_max)
 }
 
 # The leading token of a verdict message is its classification: OK, IMPROVED,
@@ -531,8 +533,14 @@ main <- function() {
   # is provenance for the whole run, recorded in the summary row rather
   # than per config. Costs a powershell.exe spawn (~1s), which is why it
   # is not in the per-sample path.
+  # Pass the observed AC state: Windows keeps a separate overlay per
+  # power source and they differ on this machine, so which one governs
+  # is a fact to read, not to assume. Nothing forces a gated run onto AC.
+  .ac_now <- if (exists(".pre_session") && !is.null(.pre_session))
+               .pre_session$host$ac_state else "unknown"
   power_policy <- if (exists("capture_power_policy", mode = "function"))
-                    tryCatch(capture_power_policy(), error = function(e) NULL)
+                    tryCatch(capture_power_policy(ac_state = .ac_now),
+                             error = function(e) NULL)
                   else NULL
   if (!is.null(power_policy) &&
       !identical(power_policy$source, "unavailable") &&
