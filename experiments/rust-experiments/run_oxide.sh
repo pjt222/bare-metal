@@ -83,10 +83,18 @@ fi
     obj <- cuasm_read("experiments/rust-experiments/vecadd_oxide.sm_86.cubin")
     fadd <- subset(obj$insns, grepl("FADD", text))
     if (nrow(fadd) != 1) stop("expected exactly 1 FADD")
-    # delta from phase1: opcode last digit 1->0, ctrl bit 0x400000 set
+    # delta from phase1: opcode last digit 1->0, ctrl bit 22 (0x400000) set.
+    #
+    # The control word is 64-bit, so it must NOT go through strtoi(): that
+    # returns int32, and the real word 0x004fe20000000000 overflowed to NA.
+    # sprintf("%016x", NA) then yielded the literal "0x              NA",
+    # which passes every length check downstream and is written out as
+    # EIGHT ZERO BYTES -- zeroing the control word instead of setting one
+    # bit in it. The committed vecadd_oxide.fmul.cubin carries the correct
+    # 0x004fe20000400000, so it predates this bug; regenerating with the
+    # old line would have silently corrupted it (#198).
     new_instr <- sub("1$", "0", fadd$instr_hex[1])
-    new_ctrl  <- sprintf("0x%016x",
-                  bitwOr(strtoi(substr(fadd$ctrl_hex[1], 3, 18), 16L), 0x400000L))
+    new_ctrl  <- hex64_bit_set(fadd$ctrl_hex[1], 22L)
     obj <- cuasm_set(obj, kernel = fadd$kernel[1], slot = fadd$slot[1],
                      instr_hex = new_instr, ctrl_hex = new_ctrl)
     cuasm_write(obj, "experiments/rust-experiments/vecadd_oxide.fmul.cubin")
@@ -96,6 +104,26 @@ fi
 # 9) verify the patched cubin disassembles as FMUL
 echo "--- patched cubin disassembly ---"
 cuobjdump -sass "$SCRIPT_DIR/vecadd_oxide.fmul.cubin" | grep -A1 -E 'FMUL|FADD' | head -4
+
+# 9b) the patch must differ from the source in EXACTLY the two intended bytes
+#     (#198). Step 7 only guards the roundtrip file, so a corrupt
+#     regeneration of the .fmul file passed unnoticed -- which is precisely
+#     how the strtoi overflow above could have overwritten a committed,
+#     known-good artifact with one whose control word was zeroed.
+#
+#     Expected: the opcode byte and the control bit. `cmp -l` prints one
+#     line per differing byte, so the count IS the assertion.
+n_diff=$(cmp -l "$SCRIPT_DIR/vecadd_oxide.sm_86.cubin" \
+                "$SCRIPT_DIR/vecadd_oxide.fmul.cubin" 2>/dev/null | wc -l)
+if [ "$n_diff" -eq 2 ]; then
+  echo "✓ patched cubin differs from source in exactly 2 bytes (opcode + ctrl bit)"
+else
+  echo "✗ patched cubin differs in $n_diff bytes, expected 2"
+  echo "  a zeroed control word shows up here as 8 extra differing bytes."
+  cmp -l "$SCRIPT_DIR/vecadd_oxide.sm_86.cubin" \
+         "$SCRIPT_DIR/vecadd_oxide.fmul.cubin" | head -12
+  exit 1
+fi
 
 echo
 echo "Done. Compare:"
