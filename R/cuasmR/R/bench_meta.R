@@ -145,6 +145,16 @@ decode_throttle <- function(hex_str) {
       !nzchar(hex_str)) {
     return(character(0))
   }
+  # nvidia-smi writes the literal "[N/A]" when a field is unsupported. That
+  # is the SAME condition as NULL/NA above -- "the driver told us nothing" --
+  # and must get the same answer, not the opposite one. Treating it as
+  # malformed would return NA_character_, which classify_meta rejects, and
+  # so would turn every sample on such a driver into a rejection. It is also
+  # how the field behaved before #208 (strtoi("[N/A]") -> NA -> character(0)),
+  # so this keeps the fix scoped to the overflow it was filed for.
+  if (grepl("^\\[?N/A\\]?$", trimws(hex_str), ignore.case = TRUE)) {
+    return(character(0))
+  }
 
   # The mask is a 64-bit word. The previous implementation ran it through
   # strtoi(base = 16L), which is int32: any mask with a bit at or above

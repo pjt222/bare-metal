@@ -95,9 +95,15 @@ hex64_bit_get <- function(hex, bit) {
 hex64_bit_set <- function(hex, bit, value = TRUE) {
     s   <- .hex64_norm(hex)
     bit <- .hex64_check_bit(bit)
-    if (length(value) != 1L || is.na(value))
-        stop("value must be a single non-NA TRUE/FALSE")
-    on  <- isTRUE(as.logical(value))
+    # Reject anything as.logical() cannot parse, rather than letting
+    # isTRUE(NA) collapse it to FALSE. hex64_bit_set(w, 22, "yes") would
+    # otherwise CLEAR bit 22 -- the exact opposite of the caller's intent,
+    # silently, in code that edits machine instructions.
+    if (length(value) != 1L) stop("value must be a single TRUE/FALSE")
+    on <- suppressWarnings(as.logical(value))
+    if (is.na(on))
+        stop("value must be a single non-NA TRUE/FALSE, got: ",
+             paste(format(value), collapse = ","))
     pos <- 16L - (bit %/% 4L)
     d   <- strtoi(substr(s, pos, pos), 16L)
     mask <- bitwShiftL(1L, bit %% 4L)

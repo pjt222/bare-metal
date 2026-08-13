@@ -55,8 +55,10 @@ test_that("hex64_to_bytes rejects malformed input instead of zeroing it", {
 
 test_that("hex64_bit_set edits the bit the old strtoi path could not reach", {
     # The real oxide FADD control word. strtoi() on all 16 digits returns NA,
-    # so run_oxide.sh produced "0x              NA" and would have zeroed the
-    # control word on regeneration instead of setting bit 22 (#198).
+    # so run_oxide.sh produced "0x              NA" instead of setting bit 22.
+    # Before #170 that token was accepted and written as eight zero bytes;
+    # since #170 hex64_to_bytes rejects it outright. Either way the script
+    # could not reproduce its own committed artifact (#198).
     expect_identical(hex64_bit_set("0x004fe20000000000", 22L),
                      "0x004fe20000400000")
     # ...which is exactly the committed vecadd_oxide.fmul.cubin's word.
@@ -117,4 +119,17 @@ test_that("hex64 accepts input with or without the 0x prefix", {
     expect_identical(hex64_bit_set("0X004FE20000000000", 22L), "0x004fe20000400000")
     # Short input is zero-padded, not misaligned.
     expect_identical(hex64_bit_set("1", 4L), "0x0000000000000011")
+})
+
+test_that("hex64_bit_set rejects a value R cannot read as TRUE/FALSE", {
+    # isTRUE(as.logical("yes")) is FALSE, so the old guard silently CLEARED
+    # the bit the caller asked to set -- in code that edits instructions.
+    expect_error(hex64_bit_set("0x004fe20000400000", 22L, "yes"), "non-NA")
+    expect_error(hex64_bit_set("0x0", 0L, "maybe"), "non-NA")
+    expect_error(hex64_bit_set("0x0", 0L, NA), "non-NA")
+    # The strings R DOES understand keep working.
+    expect_identical(hex64_bit_set("0x0", 0L, "TRUE"),  "0x0000000000000001")
+    expect_identical(hex64_bit_set("0x0000000000000001", 0L, "FALSE"),
+                     "0x0000000000000000")
+    expect_identical(hex64_bit_set("0x0", 0L, 1L), "0x0000000000000001")
 })

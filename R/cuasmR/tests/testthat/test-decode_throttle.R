@@ -57,3 +57,18 @@ test_that("decode_throttle tolerates absent input", {
   expect_identical(decode_throttle(""), character(0))
   expect_identical(decode_throttle(NA_character_), character(0))
 })
+
+test_that("nvidia-smi's [N/A] is 'no data', the same as NULL -- not a parse failure", {
+  # Review finding: the first version gave OPPOSITE answers to the two ways
+  # "field unavailable" arrives -- NA_character_ -> character(0) ("clean"),
+  # but the literal "[N/A]" -> NA_character_ (reject). On a driver that does
+  # not report throttle reasons that second path rejects 100% of samples,
+  # a failure mode #208 never asked for. Both are "the driver told us
+  # nothing" and must agree.
+  expect_identical(decode_throttle("[N/A]"), character(0))
+  expect_identical(decode_throttle("N/A"), character(0))
+  expect_identical(decode_throttle(" [N/A] "), character(0))
+  expect_identical(decode_throttle("[n/a]"), character(0))
+  # Genuinely malformed input is still a parse failure, not "clean".
+  expect_identical(decode_throttle("0xnonsense"), NA_character_)
+})
