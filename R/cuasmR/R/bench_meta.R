@@ -25,6 +25,21 @@
 #                                       bitmask (see decode below).
 #   utilization.gpu         -- sanity check that the kernel actually ran.
 #   utilization.memory      -- DRAM bus pressure during the launch.
+#   enforced.power.limit    -- the cap the platform is ACTUALLY applying
+#                             right now (issue #207). On a laptop this is
+#                             set by the OEM/Windows power policy, not by
+#                             us, and it moves without warning.
+#   power.default_limit     -- the card's default cap. The pair matters,
+#                             not either alone: `enforced < default` means
+#                             the platform is holding the GPU below its
+#                             rated envelope, which makes the measurement
+#                             incomparable to a baseline recorded at full
+#                             power. `power.draw` cannot show this -- it
+#                             reports what the GPU drew, never what it was
+#                             allowed to draw.
+#
+# Both come from the SAME nvidia-smi invocation as the fields above, so
+# recording them costs nothing (measured: 0.148s for the query either way).
 .NVIDIA_SMI_FIELDS <- c(
   "clocks.current.sm",
   "clocks.current.memory",
@@ -33,7 +48,9 @@
   "pstate",
   "clocks_throttle_reasons.active",
   "utilization.gpu",
-  "utilization.memory"
+  "utilization.memory",
+  "enforced.power.limit",
+  "power.default_limit"
 )
 
 # Throttle-reason bitmask. From NVIDIA documentation; constants are
@@ -119,6 +136,20 @@ decode_throttle <- function(hex_str) {
   active
 }
 
+# Is the platform holding the GPU below its rated power envelope?
+# (issue #207). Returns TRUE / FALSE / NA. NA means "could not tell"
+# -- a driver reporting [N/A] for either limit, or a non-numeric value.
+# NA is deliberately NOT folded into FALSE: "we do not know whether this
+# session was capped" and "this session was not capped" are different
+# claims, and only the second one licenses a comparison to a baseline.
+.power_capped <- function(enforced, default) {
+  if (is.null(enforced) || is.null(default)) return(NA)
+  if (!is.numeric(enforced) || !is.numeric(default)) return(NA)
+  if (is.na(enforced) || is.na(default) || default <= 0) return(NA)
+  # 1 W of slack: some drivers report the pair a hair apart when uncapped.
+  enforced < (default - 1)
+}
+
 # Read /proc/loadavg into a list. Linux/WSL only; returns NULL on
 # other OSes.
 .read_loadavg <- function() {
@@ -194,7 +225,11 @@ decode_throttle <- function(hex_str) {
 #'     \item{gpu}{\code{clock_sm}, \code{clock_mem}, \code{temp_c},
 #'       \code{power_w}, \code{pstate}, \code{throttle_hex},
 #'       \code{throttle} (decoded character vector), \code{util_gpu},
-#'       \code{util_mem}}
+#'       \code{util_mem}, \code{power_limit_w} (the cap the platform is
+#'       enforcing), \code{power_limit_default_w} (the card's default),
+#'       \code{power_capped} (\code{TRUE}/\code{FALSE}/\code{NA} --
+#'       \code{NA} means the driver did not report the limits, which is
+#'       NOT the same as "not capped"; see issue #207)}
 #'     \item{host}{\code{loadavg}, \code{ac_state}, \code{gpu_mode}}
 #'     \item{iso_time}{ISO 8601 timestamp}
 #'   }
@@ -214,8 +249,14 @@ capture_gpu_state <- function() {
     throttle_hex = gpu_raw[["clocks_throttle_reasons.active"]],
     throttle     = decode_throttle(gpu_raw[["clocks_throttle_reasons.active"]]),
     util_gpu     = gpu_raw[["utilization.gpu"]],
-    util_mem     = gpu_raw[["utilization.memory"]]
+    util_mem     = gpu_raw[["utilization.memory"]],
+    # Platform power envelope (issue #207). Either may be non-numeric on a
+    # driver that reports [N/A]; .power_capped() treats that as "unknown",
+    # never as "not capped".
+    power_limit_w         = gpu_raw[["enforced.power.limit"]],
+    power_limit_default_w = gpu_raw[["power.default_limit"]]
   )
+  gpu$power_capped <- .power_capped(gpu$power_limit_w, gpu$power_limit_default_w)
 
   list(
     gpu      = gpu,
@@ -224,6 +265,77 @@ capture_gpu_state <- function() {
                     gpu_mode = .read_gpu_mode()),
     iso_time = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
   )
+}
+
+# Windows "power mode" overlay GUIDs. These sit on top of the power
+# scheme and are what the taskbar slider / Settings > Power sets.
+.POWER_OVERLAYS <- c(
+  "961cc777-2547-4f9d-8174-7d86181b8a7a" = "best-power-efficiency",
+  "00000000-0000-0000-0000-000000000000" = "balanced",
+  "ded574b5-45a0-4f42-8737-46345c09c238" = "best-performance",
+  "3af9b8d9-7c97-431d-ad78-34a8bfea439f" = "better-performance"
+)
+
+#' Capture the host power policy that governs the GPU's power envelope.
+#'
+#' Session-level provenance for issue #207. On a laptop the dGPU's
+#' \code{enforced.power.limit} is set by the platform, and on Windows the
+#' lever is the power-mode \emph{overlay} -- which Windows changes on its
+#' own (battery state, "automatic improvements", OEM utilities). The
+#' overlay is the field that explains \emph{why} a cap moved, so a session
+#' whose numbers look wrong can be attributed instead of re-litigated.
+#'
+#' Costs a \code{powershell.exe} spawn (~1s), far too slow for the
+#' per-sample path -- call it ONCE per measurement session and attach the
+#' result to the run record, alongside the per-sample
+#' \code{power_limit_w} that \code{\link{capture_gpu_state}} records.
+#'
+#' @return \code{list(overlay_guid, overlay_name, ac_overlay_guid,
+#'   dc_overlay_guid, source)}. \code{overlay_name} is a short slug
+#'   (\code{"best-power-efficiency"}, \code{"balanced"},
+#'   \code{"best-performance"}, \code{"better-performance"}) or the raw
+#'   GUID when unrecognised. Every field is \code{NA_character_} with
+#'   \code{source = "unavailable"} off Windows/WSL -- never a guess.
+#' @export
+capture_power_policy <- function() {
+  unavailable <- list(overlay_guid = NA_character_,
+                      overlay_name = NA_character_,
+                      ac_overlay_guid = NA_character_,
+                      dc_overlay_guid = NA_character_,
+                      source = "unavailable")
+
+  ps <- Sys.which("powershell.exe")
+  if (!nzchar(ps)) return(unavailable)
+
+  key <- paste0("HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power\\User\\",
+                "PowerSchemes")
+  cmd <- sprintf(
+    paste0("$p = Get-ItemProperty '%s' -ErrorAction SilentlyContinue; ",
+           "if ($p) { \"$($p.ActiveOverlayAcPowerScheme)|",
+           "$($p.ActiveOverlayDcPowerScheme)\" }"), key)
+
+  res <- tryCatch(
+    suppressWarnings(system2(ps, c("-NoProfile", "-NonInteractive",
+                                   "-Command", shQuote(cmd)),
+                             stdout = TRUE, stderr = FALSE)),
+    error = function(e) NULL)
+  if (is.null(res) || !length(res)) return(unavailable)
+
+  line <- trimws(paste(res, collapse = ""))
+  parts <- strsplit(line, "|", fixed = TRUE)[[1]]
+  if (length(parts) < 1L || !nzchar(parts[[1]])) return(unavailable)
+
+  ac <- tolower(trimws(parts[[1]]))
+  dc <- if (length(parts) >= 2L) tolower(trimws(parts[[2]])) else NA_character_
+
+  # The AC overlay is the one that governs a benchmark run -- every
+  # gated measurement requires AC (see require_ac in classify_meta).
+  nm <- unname(.POWER_OVERLAYS[ac])
+  list(overlay_guid    = ac,
+       overlay_name    = if (is.na(nm)) ac else nm,
+       ac_overlay_guid = ac,
+       dc_overlay_guid = dc,
+       source          = "windows-registry")
 }
 
 #' Decide whether a measurement is comparable to a baseline.
@@ -294,7 +406,7 @@ classify_meta <- function(pre, post, valid_when = list()) {
 
   ok <- length(reasons) == 0L
   gpu_mode <- if (!is.null(post$host$gpu_mode)) post$host$gpu_mode else "unknown"
-  summary <- sprintf("clk=%d/%d MHz  temp=%d\u00b0C  power=%.1fW  pstate=%s  %s  gpu_mode=%s",
+  summary <- sprintf("clk=%d/%d MHz  temp=%d\u00b0C  power=%.1fW  pstate=%s  %s  gpu_mode=%s%s",
                      as.integer(post$gpu$clock_sm),
                      as.integer(post$gpu$clock_mem),
                      as.integer(post$gpu$temp_c),
@@ -303,7 +415,14 @@ classify_meta <- function(pre, post, valid_when = list()) {
                      if (length(post$gpu$throttle))
                        paste0("throttle=[", paste(post$gpu$throttle, collapse = ","), "]")
                      else "throttle=none",
-                     gpu_mode)
+                     gpu_mode,
+                     # Appended only when the platform is capping (issue #207),
+                     # so existing summaries are unchanged on a normal session.
+                     if (isTRUE(post$gpu$power_capped))
+                       sprintf("  POWER-CAPPED=%.0f/%.0fW",
+                               post$gpu$power_limit_w,
+                               post$gpu$power_limit_default_w)
+                     else "")
 
   list(ok = ok, reasons = reasons, summary = summary)
 }

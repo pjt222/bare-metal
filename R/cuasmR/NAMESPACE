@@ -2,6 +2,7 @@
 
 export(append_jsonl_row)
 export(capture_gpu_state)
+export(capture_power_policy)
 export(check_regression)
 export(classify_meta)
 export(collect_valid_samples)
