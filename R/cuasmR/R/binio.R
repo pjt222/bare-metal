@@ -112,6 +112,23 @@ hex64_bit_set <- function(hex, bit, value = TRUE) {
     paste0("0x", s)
 }
 
+# Validate a nibble index in its OWN right, not by scaling it into the bit
+# check. `.hex64_check_bit(nibble * 4L)` applied the integrality test to the
+# PRODUCT, so any index that is a multiple of 0.25 -- which is what a caller
+# gets from `bit_offset / 4`, since R division yields a double -- multiplied
+# to a whole number, cleared the guard, and was floored by `%/% 4L`. The word
+# then came back patched at a digit the caller never named, with no error.
+# It also reported the wrong parameter and domain: nibble 16 errored with
+# "bit must be a single integer in 0..63, got: 64".
+.hex64_check_nibble <- function(nibble) {
+    if (!is.numeric(nibble) || length(nibble) != 1L || is.na(nibble) ||
+        nibble != as.integer(nibble) || nibble < 0L || nibble > 15L) {
+        stop("nibble must be a single integer in 0..15, got: ",
+             paste(format(nibble), collapse = ","))
+    }
+    as.integer(nibble)
+}
+
 #' Read one nibble (4-bit field) of a 64-bit hex word.
 #'
 #' A nibble IS one hex digit, so a field that happens to be nibble-aligned
@@ -124,7 +141,7 @@ hex64_bit_set <- function(hex, bit, value = TRUE) {
 #' @export
 hex64_nibble_get <- function(hex, nibble) {
     s <- .hex64_norm(hex)
-    n <- .hex64_check_bit(nibble * 4L) %/% 4L
+    n <- .hex64_check_nibble(nibble)
     pos <- 16L - n
     strtoi(substr(s, pos, pos), 16L)
 }
@@ -138,7 +155,7 @@ hex64_nibble_get <- function(hex, nibble) {
 #' @export
 hex64_nibble_set <- function(hex, nibble, value) {
     s <- .hex64_norm(hex)
-    n <- .hex64_check_bit(nibble * 4L) %/% 4L
+    n <- .hex64_check_nibble(nibble)
     if (!is.numeric(value) || length(value) != 1L || is.na(value) ||
         value != as.integer(value) || value < 0L || value > 15L) {
         stop("value must be a single integer in 0..15, got: ",

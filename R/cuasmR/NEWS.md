@@ -11,15 +11,6 @@
   as eight zero bytes. These helpers only ever hand `strtoi` a single character,
   so the overflow is impossible by construction (issues #198, #208).
 
-## Bug fixes
-
-* `decode_throttle()` no longer runs the 64-bit throttle mask through int32
-  `strtoi()`. A mask with a bit at or above `2^31` returned `NA`, and the `NA`
-  branch returned `character(0)` — the same value that means *no throttle* — so
-  a throttled run decoded as a clean one and was compared against a baseline.
-  An unparseable mask now returns `NA_character_`, which `classify_meta()`
-  surfaces as an unrecognised reason and rejects (issue #208).
-
 * `capture_gpu_state()` now records the platform's GPU **power envelope**:
   `power_limit_w` (the enforced limit), `power_limit_default_w`,
   `power_limit_max_w`, and the derived `power_below_default` /
@@ -36,6 +27,16 @@
   keeps a separate overlay per power source and they differ in practice.
   Returns `source = "unavailable"` rather than a guess off Windows, on a
   failed query, or on a value that is not GUID-shaped.
+
+## Bug fixes
+
+* `decode_throttle()` no longer runs the 64-bit throttle mask through int32
+  `strtoi()`. A mask with a bit at or above `2^31` returned `NA`, and the `NA`
+  branch returned `character(0)` — the same value that means *no throttle* — so
+  a throttled run decoded as a clean one and was compared against a baseline.
+  An unparseable mask now returns `NA_character_`, which `classify_meta()`
+  surfaces as an unrecognised reason and rejects (issue #208).
+
 
 # cuasmR 0.2.0
 

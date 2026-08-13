@@ -133,3 +133,23 @@ test_that("hex64_bit_set rejects a value R cannot read as TRUE/FALSE", {
                      "0x0000000000000000")
     expect_identical(hex64_bit_set("0x0", 0L, 1L), "0x0000000000000001")
 })
+
+test_that("hex64_nibble_* reject a fractional or out-of-range index", {
+    # Review finding: validating via .hex64_check_bit(nibble * 4L) applied the
+    # integrality test to the PRODUCT, so any multiple of 0.25 -- which is what
+    # `bit_offset / 4` yields, R division returning a double -- cleared the
+    # guard and was floored. The word came back patched at a digit the caller
+    # never named, silently.
+    expect_error(hex64_nibble_get("0x001f8000fc0007f0", 10.5), "0\\.\\.15")
+    expect_error(hex64_nibble_set("0x001f8000fc0007f0", 10.5, 4L), "0\\.\\.15")
+    expect_error(hex64_nibble_get("0xa000000000000000", 15.75), "0\\.\\.15")
+    expect_error(hex64_nibble_get("0x0", 16L), "0\\.\\.15")
+    expect_error(hex64_nibble_get("0x0", -1L), "0\\.\\.15")
+    # The diagnostic must name the parameter and value the CALLER passed --
+    # it used to report "bit ... in 0..63, got: 64" for nibble = 16.
+    expect_error(hex64_nibble_get("0x0", 16L), "nibble")
+    expect_error(hex64_nibble_get("0x0", 16L), "got: 16")
+    # Valid indices still work at both ends.
+    expect_identical(hex64_nibble_get("0xa000000000000000", 15L), 10L)
+    expect_identical(hex64_nibble_get("0x000000000000000a", 0L), 10L)
+})
