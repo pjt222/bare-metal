@@ -13,6 +13,23 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **64-bit hex words are now edited as digits, not through `strtoi()`
+  (#198, #208).** `strtoi(x, 16L)` returns an int32, so every 64-bit SASS
+  word and every 32-bit half with a leading digit `>= 8` silently becomes
+  `NA`; `sprintf("%016x", NA)` then yields the literal
+  `"0x              NA"`, which passes every downstream length check and is
+  written out as **eight zero bytes**. New `cuasmR::hex64_bit_get/set` and
+  `hex64_nibble_get/set` hand `strtoi` a single character and so cannot
+  overflow. Three call sites moved onto them:
+  `experiments/rust-experiments/run_oxide.sh` (which was **actively
+  corrupting** — it could not reproduce its own committed
+  `vecadd_oxide.fmul.cubin`, and now does so byte-identically),
+  `scripts/bench/handtune_imma_s04.R` (latent), and `decode_throttle()`
+  (which failed *unsafe*: an unreadable mask decoded as "no throttle" and
+  laundered a throttled run as fair — it now returns `NA_character_`, which
+  `classify_meta` rejects). `run_oxide.sh` also gained the byte-identity
+  guard on its patched output that step 7 only ever applied to the
+  roundtrip file, so a corrupt regeneration is caught rather than committed.
 - **The run record now tracks the platform's GPU power envelope (#207).**
   `capture_gpu_state()` records `enforced.power.limit` and
   `power.default_limit` alongside the existing fields, and derives

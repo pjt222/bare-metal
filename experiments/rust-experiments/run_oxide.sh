@@ -83,10 +83,25 @@ fi
     obj <- cuasm_read("experiments/rust-experiments/vecadd_oxide.sm_86.cubin")
     fadd <- subset(obj$insns, grepl("FADD", text))
     if (nrow(fadd) != 1) stop("expected exactly 1 FADD")
-    # delta from phase1: opcode last digit 1->0, ctrl bit 0x400000 set
+    # delta from phase1: opcode last digit 1->0, ctrl bit 22 (0x400000) set.
+    #
+    # The control word is 64-bit, so it must NOT go through strtoi(): that
+    # returns int32, and the real word 0x004fe20000000000 overflowed to NA.
+    # sprintf("%016x", NA) then yielded the literal "0x              NA".
+    #
+    # What that token did depends on when you ran it, and the distinction
+    # matters:
+    #   - BEFORE #170, hex64_to_bytes accepted it (16 chars clears the
+    #     length check), every byte pair parsed as NA, and as.raw() wrote
+    #     EIGHT ZERO BYTES -- the control word silently zeroed.
+    #   - SINCE #170 it is rejected outright:
+    #     "hex64_to_bytes: not hex: 0x              NA".
+    # So on current main this line ERRORS rather than corrupting; the
+    # silent-corruption window closed when #170 landed. Either way the
+    # script could not reproduce its own committed artifact (#198), which
+    # carries the correct 0x004fe20000400000.
     new_instr <- sub("1$", "0", fadd$instr_hex[1])
-    new_ctrl  <- sprintf("0x%016x",
-                  bitwOr(strtoi(substr(fadd$ctrl_hex[1], 3, 18), 16L), 0x400000L))
+    new_ctrl  <- hex64_bit_set(fadd$ctrl_hex[1], 22L)
     obj <- cuasm_set(obj, kernel = fadd$kernel[1], slot = fadd$slot[1],
                      instr_hex = new_instr, ctrl_hex = new_ctrl)
     cuasm_write(obj, "experiments/rust-experiments/vecadd_oxide.fmul.cubin")
@@ -96,6 +111,37 @@ fi
 # 9) verify the patched cubin disassembles as FMUL
 echo "--- patched cubin disassembly ---"
 cuobjdump -sass "$SCRIPT_DIR/vecadd_oxide.fmul.cubin" | grep -A1 -E 'FMUL|FADD' | head -4
+
+# 9b) the patch must differ from the source in exactly the two intended
+#     bytes, AT THE INTENDED OFFSETS AND VALUES (#198). Step 7 only guards
+#     the roundtrip file, so nothing checked the patched one.
+#
+#     `cmp -l` prints "offset old new" per differing byte, in OCTAL, and
+#     exits 1 whenever the files differ -- which here is the success case.
+#     Under this script's `set -euo pipefail` a bare `cmp -l ... | wc -l`
+#     therefore aborts the run before the assertion is even evaluated, so
+#     the failure is trapped explicitly rather than allowed to propagate.
+#
+#     Asserting the exact offsets and values, not merely the byte COUNT:
+#     a patch that flipped the wrong bit would still differ in two bytes
+#     and would sail past a count check.
+#       2273: 41 -> 40   opcode last digit 1 -> 0  (FADD -> FMUL)
+#       2283: 00 -> 40   control bit 22            (octal 100 = 0x40)
+expected_diff="2273  41  40
+2283   0 100"
+actual_diff="$( { cmp -l "$SCRIPT_DIR/vecadd_oxide.sm_86.cubin" \
+                         "$SCRIPT_DIR/vecadd_oxide.fmul.cubin" || true; } )"
+if [ "$actual_diff" = "$expected_diff" ]; then
+  echo "✓ patched cubin differs from source in exactly the 2 intended bytes"
+else
+  echo "✗ patched cubin does not carry the intended edit"
+  echo "  expected (cmp -l, octal):"
+  echo "$expected_diff" | sed 's/^/    /'
+  echo "  actual:"
+  echo "$actual_diff" | head -12 | sed 's/^/    /'
+  echo "  a zeroed control word appears here as 8 extra differing bytes."
+  exit 1
+fi
 
 echo
 echo "Done. Compare:"

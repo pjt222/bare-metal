@@ -46,9 +46,22 @@ test_that("decode_throttle: NULL/empty input -> empty", {
   expect_equal(decode_throttle(""), character(0))
 })
 
-test_that("decode_throttle: invalid hex -> empty", {
-  expect_equal(decode_throttle("not_hex"), character(0))
-  expect_equal(decode_throttle("0xZZZZ"), character(0))
+test_that("decode_throttle: unparseable mask -> NA, NOT empty", {
+  # BEHAVIOUR CHANGE (#208). This group previously asserted character(0)
+  # for an unparseable mask, which pinned the defect rather than the
+  # contract: character(0) is also the value for "no throttle", so a mask
+  # the decoder could not read was reported as a clean GPU and the sample
+  # was compared against a baseline.
+  #
+  # The two answers must stay distinguishable. character(0) says "the GPU
+  # was not throttled" and licenses a comparison; NA says "we could not
+  # tell" and must not. classify_meta surfaces the NA through setdiff() as
+  # an unrecognised reason, so the sample is skipped -- the safe direction.
+  expect_equal(decode_throttle("not_hex"), NA_character_)
+  expect_equal(decode_throttle("0xZZZZ"), NA_character_)
+  # Absent input is still "nothing to report", not a parse failure.
+  expect_equal(decode_throttle(NULL), character(0))
+  expect_equal(decode_throttle(""), character(0))
 })
 
 # ---- classify_meta ------------------------------------------------------

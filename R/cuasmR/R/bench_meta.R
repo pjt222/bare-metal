@@ -64,18 +64,22 @@
   "power.max_limit"
 )
 
-# Throttle-reason bitmask. From NVIDIA documentation; constants are
-# stable across driver versions on Ampere.
+# Throttle reasons, as BIT INDICES (not masks). From NVIDIA
+# documentation; constants are stable across driver versions on Ampere.
+#
+# Indices rather than masks because the mask is a 64-bit word and the
+# only safe way to test it is one hex digit at a time -- see
+# hex64_bit_get() in binio.R and issue #208.
 .THROTTLE_BITS <- c(
-  "GpuIdle"               = 0x0001,
-  "ApplicationsClocksSet" = 0x0002,
-  "SwPowerCap"            = 0x0004,
-  "HwSlowdown"            = 0x0008,
-  "SyncBoost"             = 0x0010,
-  "SwThermalSlowdown"     = 0x0020,
-  "HwThermalSlowdown"     = 0x0040,
-  "HwPowerBrakeSlowdown"  = 0x0080,
-  "DisplayClocksSetting"  = 0x0100
+  "GpuIdle"               = 0L,
+  "ApplicationsClocksSet" = 1L,
+  "SwPowerCap"            = 2L,
+  "HwSlowdown"            = 3L,
+  "SyncBoost"             = 4L,
+  "SwThermalSlowdown"     = 5L,
+  "HwThermalSlowdown"     = 6L,
+  "HwPowerBrakeSlowdown"  = 7L,
+  "DisplayClocksSetting"  = 8L
 )
 
 # Throttle states that make a measurement *unfair* (the GPU was being
@@ -132,18 +136,43 @@
 #'
 #' @param hex_str Hex string from
 #'   \code{clocks_throttle_reasons.active} (e.g. \code{"0x0000000000000004"}).
-#' @return Character vector of active reason names; empty vector means
-#'   "no throttle".
+#' @return Character vector of active reason names. \code{character(0)}
+#'   means "no throttle". \code{NA_character_} means the mask could not be
+#'   parsed -- deliberately NOT \code{character(0)}, see below.
 #' @export
 decode_throttle <- function(hex_str) {
-  if (is.null(hex_str) || !nzchar(hex_str)) return(character(0))
-  v <- suppressWarnings(strtoi(sub("^0x", "", hex_str), base = 16L))
-  if (is.na(v)) return(character(0))
-  if (v == 0) return(character(0))
+  if (is.null(hex_str) || length(hex_str) != 1L || is.na(hex_str) ||
+      !nzchar(hex_str)) {
+    return(character(0))
+  }
+  # nvidia-smi writes the literal "[N/A]" when a field is unsupported. That
+  # is the SAME condition as NULL/NA above -- "the driver told us nothing" --
+  # and must get the same answer, not the opposite one. Treating it as
+  # malformed would return NA_character_, which classify_meta rejects, and
+  # so would turn every sample on such a driver into a rejection. It is also
+  # how the field behaved before #208 (strtoi("[N/A]") -> NA -> character(0)),
+  # so this keeps the fix scoped to the overflow it was filed for.
+  if (grepl("^\\[?N/A\\]?$", trimws(hex_str), ignore.case = TRUE)) {
+    return(character(0))
+  }
+
+  # The mask is a 64-bit word. The previous implementation ran it through
+  # strtoi(base = 16L), which is int32: any mask with a bit at or above
+  # 2^31 returned NA, and the NA branch returned character(0) -- the same
+  # value that means "no throttle". A throttled run therefore decoded as a
+  # clean one and was compared against a baseline (#208). Testing one hex
+  # digit at a time cannot overflow, and a mask we cannot parse now returns
+  # NA_character_ instead, which classify_meta's setdiff() surfaces as an
+  # unrecognised reason -- so the sample is rejected rather than accepted.
+  ok <- TRUE
   active <- character(0)
   for (name in names(.THROTTLE_BITS)) {
-    if (bitwAnd(v, .THROTTLE_BITS[[name]]) != 0L) active <- c(active, name)
+    set <- tryCatch(hex64_bit_get(hex_str, .THROTTLE_BITS[[name]]),
+                    error = function(e) { ok <<- FALSE; FALSE })
+    if (!ok) break
+    if (isTRUE(set)) active <- c(active, name)
   }
+  if (!ok) return(NA_character_)
   active
 }
 
