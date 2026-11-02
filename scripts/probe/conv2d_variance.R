@@ -98,21 +98,65 @@ MEASUREMENTS <- list(
   list(key = "sd128_implicit", section = "SD 128",    match = "Implicit (single kern)", ord = 6L)
 )
 
+# The snapshot fields recorded per sample, by the names capture_gpu_state()
+# emits (R/cuasmR/R/bench_meta.R). Both power references are kept, for the
+# reason #209 keeps both: "below default" alone misses the 115 W fallback
+# on this laptop, and "below max" alone false-positives on hardware whose
+# normal point is the default.
+SNAPSHOT_GPU_FIELDS <- c("clock_sm", "clock_mem", "temp_c", "power_w",
+                         "pstate", "throttle", "power_limit_w",
+                         "power_limit_default_w", "power_limit_max_w",
+                         "power_below_default", "power_below_max")
+SNAPSHOT_LOAD_FIELDS <- c("load_1m", "load_5m", "load_15m")
+
+# Strict on NAMES, lenient on VALUES (#213). This used to read
+# `g$power_capped %||% NA`, a field capture_gpu_state() stopped emitting
+# at #207/#209, so the column was NA on 100% of the pilot's rows and
+# nothing complained. capture_gpu_state() always creates every name, and
+# a value the driver did not report arrives as NULL or NA, which is
+# recorded as NA. A NAME that is absent means this script and cuasmR
+# disagree on the schema, and the run stops before writing rows that only
+# look complete.
+#
+# `snapshot` separates "no snapshot at all" (capture_gpu_state() returned
+# NULL, e.g. nvidia-smi failed) from "a snapshot whose values are NA".
+# Without it the two are indistinguishable in the JSONL.
+#
+# Host loadavg is recorded too (#213 defect 2). The pilot's contamination
+# (load 2.99 -> 12.76) was invisible per sample, so it could not be
+# regressed out.
 gpu_fields <- function(snap, prefix) {
-  if (is.null(snap)) {
-    return(setNames(as.list(rep(NA, 8)),
-                    paste0(prefix, c("clock_sm", "clock_mem", "temp_c",
-                                     "power_w", "pstate", "throttle",
-                                     "power_limit_w", "power_capped"))))
+  out_names <- c("snapshot", SNAPSHOT_GPU_FIELDS, SNAPSHOT_LOAD_FIELDS)
+  out <- setNames(rep(list(NA), length(out_names)), out_names)
+  out$snapshot <- !is.null(snap)
+  if (!is.null(snap)) {
+    g <- snap$gpu
+    missing_gpu <- setdiff(SNAPSHOT_GPU_FIELDS, names(g))
+    if (length(missing_gpu)) {
+      stop(sprintf(paste0("capture_gpu_state() snapshot has no field(s) %s -- ",
+                          "this script and cuasmR disagree on the schema (#213); ",
+                          "fix the names here rather than recording NA"),
+                   paste(missing_gpu, collapse = ", ")), call. = FALSE)
+    }
+    for (f in setdiff(SNAPSHOT_GPU_FIELDS, "throttle")) {
+      out[[f]] <- g[[f]] %||% NA
+    }
+    # character(0) = no active reason -> ""; NA = an unreadable mask (#211)
+    # -> NA, not the literal string "NA" that paste() would produce.
+    thr <- g$throttle
+    out$throttle <- if (length(thr) == 0L) "" else if (anyNA(thr)) NA
+                    else paste(thr, collapse = ",")
+    la <- snap$host$loadavg
+    if (!is.null(la)) {
+      missing_load <- setdiff(SNAPSHOT_LOAD_FIELDS, names(la))
+      if (length(missing_load)) {
+        stop(sprintf("snapshot loadavg has no field(s) %s (#213)",
+                     paste(missing_load, collapse = ", ")), call. = FALSE)
+      }
+      for (f in SNAPSHOT_LOAD_FIELDS) out[[f]] <- la[[f]] %||% NA
+    }
   }
-  g <- snap$gpu
-  out <- list(g$clock_sm, g$clock_mem, g$temp_c, g$power_w, g$pstate,
-              paste(g$throttle, collapse = ","),
-              g$power_limit_w %||% NA, g$power_capped %||% NA)
-  names(out) <- paste0(prefix, c("clock_sm", "clock_mem", "temp_c",
-                                 "power_w", "pstate", "throttle",
-                                 "power_limit_w", "power_capped"))
-  out
+  setNames(out, paste0(prefix, out_names))
 }
 
 # Interleave A/B in blocks so thermal drift and any slow platform state
