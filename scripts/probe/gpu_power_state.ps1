@@ -125,8 +125,11 @@ function Get-SmiFields {
     } catch { $null }
 }
 
-$smi = Get-SmiFields
-if ($smi -and $smi.Count -ge 5) {
+# @(...): a single value comes back from the pipeline as a bare string, and
+# .Count on a string throws PropertyNotFoundStrict under Set-StrictMode
+# Latest -- which skipped this whole block without saying "unavailable".
+$smi = @(Get-SmiFields)
+if ($smi.Count -ge 5) {
     $result.power_limit_w         = $smi[0]
     $result.power_limit_default_w = $smi[1]
     $result.power_limit_max_w     = $smi[2]
@@ -231,8 +234,8 @@ if (-not $result.elevated) {
                 $result.set_mode_applied = $after
                 Log ("SetSmartFanMode({0}) -> mode now {1}" -f $SetMode, $after)
 
-                $smi2 = Get-SmiFields
-                if ($smi2 -and $smi2.Count -ge 3) {
+                $smi2 = @(Get-SmiFields)
+                if ($smi2.Count -ge 3) {
                     Log ("power limit after : {0} / {1} / {2} W" -f $smi2[0], $smi2[1], $smi2[2])
                     if ($smi2[0] -eq $result.power_limit_w) {
                         $msg = "thermal mode changed but the enforced limit did NOT move " +
