@@ -39,7 +39,8 @@
 # before the A/B sequence. They are recorded with burnin = TRUE so a
 # consumer can exclude them. Choose K before the run.
 # An existing --jsonl is refused unless --append is given: a new campaign
-# goes to a new file, so two runs are never pooled by accident.
+# goes to a new file, so two runs are never pooled by accident. --append
+# pools deliberately; it does not resume.
 #
 # Output: one JSONL row per sample per parsed measurement.
 
@@ -208,21 +209,13 @@ assign_conditions <- function(n, block) {
   conds
 }
 
-# Lead-in handling, explicit and recorded (#212 defect 2). Interleaving
-# spreads slow drift but not a transient at the very start of a session,
-# because nothing precedes it. `--burnin K` runs K warm-up samples
-# (condition "W", no gap) BEFORE the A/B sequence. They are written to the
-# JSONL with burnin = TRUE, never silently dropped, so a consumer can
-# exclude them and can also measure whether the lead-in transient exists
-# at all. K is a pre-registered choice: set it before the run, never after
-# seeing the data. The default 0 leaves the design unchanged, and the
-# rows still say so (burnin = FALSE, burnin_n = 0).
-# Refuse to append to an existing JSONL unless --append says so (#224
+# Refuse to write into an existing JSONL unless --append says so (#224
 # review, H1). append_jsonl_row() appends, and the default --jsonl is the
 # committed evidence file of the 2026-11-02 campaign. A re-run would
-# silently pool two campaigns into one file, and every number computed
-# from it would mix them. A new campaign gets a new file; --append is
-# for resuming one deliberately.
+# silently pool two campaigns into one file. A new campaign gets a new
+# file. --append means DELIBERATE pooling: it does not resume a run (a new
+# run_id is minted and sample_idx restarts at 1), and the analysis script
+# refuses a file holding more than one run_id.
 check_output_path <- function(path, append) {
   if (file.exists(path) && !isTRUE(append)) {
     stop(sprintf(paste0("%s already exists. Write a new campaign to a new --jsonl, ",
@@ -232,6 +225,15 @@ check_output_path <- function(path, append) {
   invisible(path)
 }
 
+# Lead-in handling, explicit and recorded (#212 defect 2). Interleaving
+# spreads slow drift but not a transient at the very start of a session,
+# because nothing precedes it. `--burnin K` runs K warm-up samples
+# (condition "W", no gap) BEFORE the A/B sequence. They are written to the
+# JSONL with burnin = TRUE, never silently dropped, so a consumer can
+# exclude them and can also measure whether the lead-in transient exists
+# at all. K is a pre-registered choice: set it before the run, never after
+# seeing the data. The default 0 leaves the design unchanged, and the
+# rows still say so (burnin = FALSE, burnin_n = 0).
 with_burnin <- function(conds, burnin) {
   if (length(burnin) != 1L || is.na(burnin) || burnin < 0L) {
     stop(sprintf("--burnin must be an integer >= 0 (got %s)", format(burnin)),
