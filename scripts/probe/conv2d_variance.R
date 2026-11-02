@@ -38,6 +38,8 @@
 # --burnin K (default 0) runs K warm-up samples, condition W with no gap,
 # before the A/B sequence. They are recorded with burnin = TRUE so a
 # consumer can exclude them. Choose K before the run.
+# An existing --jsonl is refused unless --append is given: a new campaign
+# goes to a new file, so two runs are never pooled by accident.
 #
 # Output: one JSONL row per sample per parsed measurement.
 
@@ -70,7 +72,7 @@ parse_args <- function(argv) {
   # of a session lands on whatever comes first, and with block 5 the first
   # five samples are all condition A (#212). Block interleaving spreads
   # slow drift; only alternation spreads a lead-in transient.
-  out <- list(n = 15L, gap = 90, block = 1L, burnin = 0L, exe = NULL,
+  out <- list(n = 15L, gap = 90, block = 1L, burnin = 0L, exe = NULL, append = FALSE,
               jsonl = "results/probe/conv2d_variance.jsonl")
   i <- 1
   while (i <= length(argv)) {
@@ -81,6 +83,7 @@ parse_args <- function(argv) {
       "--burnin" = { out$burnin <- as.integer(argv[i + 1]); i <- i + 2 },
       "--jsonl" = { out$jsonl <- argv[i + 1];             i <- i + 2 },
       "--exe"   = { out$exe   <- argv[i + 1];             i <- i + 2 },
+      "--append" = { out$append <- TRUE;                  i <- i + 1 },
       stop(sprintf("unknown arg: %s", argv[i])))
   }
   out
@@ -214,6 +217,21 @@ assign_conditions <- function(n, block) {
 # at all. K is a pre-registered choice: set it before the run, never after
 # seeing the data. The default 0 leaves the design unchanged, and the
 # rows still say so (burnin = FALSE, burnin_n = 0).
+# Refuse to append to an existing JSONL unless --append says so (#224
+# review, H1). append_jsonl_row() appends, and the default --jsonl is the
+# committed evidence file of the 2026-11-02 campaign. A re-run would
+# silently pool two campaigns into one file, and every number computed
+# from it would mix them. A new campaign gets a new file; --append is
+# for resuming one deliberately.
+check_output_path <- function(path, append) {
+  if (file.exists(path) && !isTRUE(append)) {
+    stop(sprintf(paste0("%s already exists. Write a new campaign to a new --jsonl, ",
+                        "or pass --append to add to this one deliberately."), path),
+         call. = FALSE)
+  }
+  invisible(path)
+}
+
 with_burnin <- function(conds, burnin) {
   if (length(burnin) != 1L || is.na(burnin) || burnin < 0L) {
     stop(sprintf("--burnin must be an integer >= 0 (got %s)", format(burnin)),
@@ -229,6 +247,7 @@ main <- function() {
   exe <- path_abs(exe)
   if (!file_exists(exe)) stop(sprintf("exe not found: %s", exe))
 
+  check_output_path(args$jsonl, args$append)
   dir_create(path_dir(args$jsonl), recurse = TRUE)
 
   run_id <- format(Sys.time(), "%Y%m%dT%H%M%S")

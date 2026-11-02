@@ -162,3 +162,16 @@ test_that("an unreadable throttle mask is NA, not the string 'NA'", {
   expect_identical(gpu_fields(snap, "")$throttle, "")
   expect_identical(gpu_fields(.real_snapshot(), "")$throttle, "GpuIdle")
 })
+
+# --- #224 review, H1: never pool two campaigns into one file -----------------
+
+test_that("an existing --jsonl is refused unless --append is given", {
+  existing <- tempfile(fileext = ".jsonl")
+  writeLines('{"run_id":"old"}', existing)
+  on.exit(unlink(existing), add = TRUE)
+  expect_error(check_output_path(existing, FALSE), "already exists")
+  expect_silent(check_output_path(existing, TRUE))
+  expect_silent(check_output_path(tempfile(fileext = ".jsonl"), FALSE))
+  expect_false(parse_args(character(0))$append)
+  expect_true(parse_args("--append")$append)
+})
