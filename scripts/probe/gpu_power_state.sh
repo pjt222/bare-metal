@@ -210,7 +210,11 @@ IFS=, read -r enforced defaultw maxw < <(nvidia-smi \
 # string that awk would silently compare as 0.
 is_number() { [[ "${1:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
 if [ "$REFERENCE" = "default" ]; then reference_w="${defaultw:-}"; else reference_w="${maxw:-}"; fi
-if ! is_number "${enforced:-}" || ! is_number "$reference_w"; then
+# A reference of 0 W is not a limit, it is a driver that reported nothing
+# useful. Compared as a number it would read "not capped" (e < 0 - 1 is
+# false), so it is UNKNOWN here, as in the .ps1 ($refw -gt 0).
+if ! is_number "${enforced:-}" || ! is_number "$reference_w" ||
+   ! awk -v r="$reference_w" 'BEGIN{exit !(r > 0)}'; then
   echo "" >&2
   echo "POWER-UNKNOWN: could not read the enforced/${REFERENCE} power limit from nvidia-smi" >&2
   echo "(got enforced='${enforced:-}' ${REFERENCE}='${reference_w}'). Treat this as NOT comparable." >&2
