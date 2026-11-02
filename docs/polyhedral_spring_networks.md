@@ -171,7 +171,7 @@ diminishing as symmetry breaks during deformation.
 - **Academic codes for icosahedral / fullerene relaxation** — most
   use commercial FEM (ANSYS, Abaqus); few open-source GPU codes.
 
-The gap: a hand-tuned CUDA mass-spring solver for moderate `|V|`
+The gap: a purpose-built CUDA mass-spring solver for moderate `|V|`
 (say 10² to 10⁴) with implicit integration is rare in open source.
 This is the niche where the bare-metal kernel approach has
 something to offer.

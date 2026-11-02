@@ -31,7 +31,7 @@ project:
 
 website:
   title: "bare-metal"
-  description: "Hand-tuned NVIDIA SASS kernels for RTX 3070 Ti (GA104, sm_86)"
+  description: "CUDA kernels for RTX 3070 Ti (GA104, sm_86), analysed at SASS level"
   # Without site-url Quarto emits a sitemap.xml with relative locations, which
   # is not a valid sitemap, and social/canonical tags resolve wrongly.
   site-url: "https://pjt222.github.io/bare-metal/"
