@@ -93,6 +93,14 @@ ps1_win="$(wslpath -w "$ps1_wsl")"
 # the log file and we read that. TEMP is used rather than the repo so a
 # diagnostic run never dirties the working tree.
 temp_win="$(powershell.exe -NoProfile -Command 'Write-Output $env:TEMP' 2>/dev/null | tr -d '\r')"
+# An empty or rootless TEMP must stop here. "\gpu_power_state.log" is a
+# valid Windows path relative to the CURRENT DRIVE's root: wslpath maps it
+# to /mnt/<drive>/gpu_power_state.log, and the rm lines below would delete
+# files at a drive root. Accept only a drive path (C:\...) or a UNC path.
+if ! [[ "$temp_win" =~ ^([A-Za-z]:\\|\\\\) ]]; then
+  echo "could not resolve %TEMP% from Windows (got '${temp_win}')." >&2
+  exit 1
+fi
 log_win="${temp_win}\\gpu_power_state.log"
 log_wsl="$(wslpath -u "$log_win")"
 rm -f "$log_wsl" 2>/dev/null || true
@@ -107,7 +115,7 @@ rm -f "$json_wsl" 2>/dev/null || true
 # -File ""D:\...\gpu_power_state.ps1"" and refuses it with "Illegales
 # Zeichen im Pfad". Expanded unquoted instead, any space in the repo path
 # would split the argument. The array is correct on both counts.
-args=(-NoProfile -ExecutionPolicy Bypass -File "$ps1_win")
+args=(-NoProfile -ExecutionPolicy Bypass -File "$ps1_win" -LogPath "$log_win")
 if [ "$SET_MODE" != "0" ]; then
   args+=(-SetMode "$SET_MODE")
 fi
@@ -133,7 +141,8 @@ if [ "$ELEVATED" = "1" ]; then
   # the log is complete.
   elevate_ps='
     $a = @("-NoProfile", "-ExecutionPolicy", "Bypass",
-           "-File", ([char]34 + $env:GPS_PS1 + [char]34))
+           "-File", ([char]34 + $env:GPS_PS1 + [char]34),
+           "-LogPath", ([char]34 + $env:GPS_LOG_PATH + [char]34))
     if ($env:GPS_SET_MODE -and $env:GPS_SET_MODE -ne "0") {
         $a += @("-SetMode", $env:GPS_SET_MODE)
     }
@@ -151,15 +160,23 @@ if [ "$ELEVATED" = "1" ]; then
   # diagnosis. rc is the OUTER process's status -- whether Start-Process
   # succeeded. The elevated child's own exit status is not propagated; the
   # log it writes is the evidence that it ran.
+  # The log path is passed explicitly (GPS_LOG_PATH), like the JSON path,
+  # rather than assumed: the child's default would be ITS %TEMP%, which
+  # need not be this one (e.g. elevation as a different admin account).
   elevate_err="$(GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" GPS_JSON_PATH="$gps_json_path" \
-    GPS_REFERENCE="$REFERENCE" \
-    WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w:GPS_REFERENCE/w" \
+    GPS_REFERENCE="$REFERENCE" GPS_LOG_PATH="$log_win" \
+    WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w:GPS_REFERENCE/w:GPS_LOG_PATH/w" \
     powershell.exe -NoProfile -Command "$elevate_ps" 2>&1 >/dev/null)"
   rc=$?
   elevate_err="${elevate_err//$'\r'/}"
   if [ ! -f "$log_wsl" ]; then
-    echo "no log at $log_wsl -- the elevated child never ran" >&2
-    echo "(powershell.exe exit $rc; a declined UAC prompt is the usual cause)." >&2
+    # "Did not complete", not "never ran": the wrapper cannot tell a
+    # declined prompt from a child that ran and then failed to write the
+    # log. The difference matters with --set-mode, which may already have
+    # changed the thermal mode.
+    echo "no log at $log_wsl -- the elevated child did not complete (powershell.exe" >&2
+    echo "exit $rc). A declined UAC prompt is the usual cause; if it ran and failed to" >&2
+    echo "write the log, a requested --set-mode may still have been applied." >&2
     if [ -n "$elevate_err" ]; then printf '%s\n' "$elevate_err" >&2; fi
     exit 1
   fi
