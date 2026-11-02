@@ -99,7 +99,7 @@ HGEMM is the core of Flash Attention. The key insight of Flash Attention:
 - Standard attention: write full N×N score matrix to VRAM → bandwidth limited
 - Flash Attention: tile Q,K,V and keep scores in shared memory / registers → no VRAM write
 
-Our hand-tuned Flash Attention kernel (Phase 3) will use HMMA for the QK^T and AV
+Our Flash Attention kernel (Phase 3) will use HMMA for the QK^T and AV
 multiplications, with online softmax interleaved in the same kernel loop.
 
 ## Pitfalls

@@ -1,7 +1,7 @@
 # GA104 Memory Hierarchy (RTX 3070 Ti)
 
-Understanding the memory system is essential for writing performant SASS.
-Every data movement decision in a hand-tuned kernel comes down to this hierarchy.
+Understanding the memory system is essential for writing performant kernels.
+Every data movement decision in an optimised kernel comes down to this hierarchy.
 
 ## Overview
 

@@ -28,7 +28,7 @@ export const nodes = [
     id: 'sgemm',
     label: 'SGEMM',
     phase: 'phase2',
-    summary: 'FP32 scalar GEMM. Three stages: naive (global loads), tiled (shared memory + BAR.SYNC), hand-tuned (.cuasm stall code editing). Tiled kernel uses 32×32 smem tiles with FFMA inner loop.',
+    summary: 'FP32 scalar GEMM: naive (global loads), tiled (shared memory + BAR.SYNC) and register-blocked kernels. A .cuasm stall-code tuning stage was planned but never built. Tiled kernel uses 32×32 smem tiles with FFMA inner loop.',
     formulas: [
       'C[i][j] = Σ_k A[i][k] · B[k][j]',
       'GFLOPS = 2·M·N·K / (t_ms / 1000) / 1e9',
