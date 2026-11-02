@@ -51,9 +51,14 @@ suppressMessages(source(.src))
 
 .real_snapshot <- function(...) {
   raw <- .fake_smi(...)
+  # .read_loadavg is mocked too, so the schema check does not depend on the
+  # host having /proc/loadavg (#224 review round 2). The NAMES still come
+  # from cuasmR: only the reader's return value is fixed, in the shape
+  # .read_loadavg() itself returns.
   testthat::with_mocked_bindings(
     cuasmR::capture_gpu_state(),
     .nvidia_smi_query = function(...) raw,
+    .read_loadavg = function() list(load_1m = 1.5, load_5m = 1.25, load_15m = 1),
     .package = "cuasmR")
 }
 
