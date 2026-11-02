@@ -177,15 +177,20 @@ if (-not $result.elevated) {
 
         # Method surface, for discovery. The available methods differ by BIOS
         # and this is the cheapest way to see what this firmware exposes.
-        $result.gamezone_methods = @(
-            $gz.GetType().GetMethods() | ForEach-Object { $_.Name } |
-                Where-Object { $_ -match '^(Get|Set|Is)' } | Sort-Object -Unique)
-        if (-not $result.gamezone_methods) {
+        #
+        # Get-CimClass, not $gz.GetType().GetMethods(): the latter lists the
+        # .NET members of System.Management.ManagementObject, never the
+        # firmware's WMI methods, so GetSmartFanMode could not appear in it.
+        # Its own try: discovery must not cost us the SmartFanMode read below.
+        try {
             $result.gamezone_methods = @(
-                (Get-CimClass -Namespace root\WMI -ClassName LENOVO_GAMEZONE_DATA
+                (Get-CimClass -Namespace root\WMI -ClassName LENOVO_GAMEZONE_DATA -ErrorAction Stop
                     ).CimClassMethods | ForEach-Object { $_.Name } | Sort-Object)
+            Log ("gamezone methods: " + ($result.gamezone_methods -join ', '))
+        } catch {
+            Log ("gamezone methods: unreadable (" + $_.Exception.Message + ")")
+            $result.notes += "gamezone method discovery failed: $($_.Exception.Message)"
         }
-        Log ("gamezone methods: " + ($result.gamezone_methods -join ', '))
 
         try {
             $m = $gz.GetSmartFanMode().Data
