@@ -79,9 +79,11 @@ reset, before each config, whatever state the process entered in. The
 section, which is the gate's measurement, follows the explicit timing plus
 20 warmup launches.
 
-**Temperature did reach it.** Condition A entered at 56.7 °C (55–59) and B
-at 50.9 °C (50–52), a ~6 °C contrast that the CPU-reference idle does not
-erase (Part 4g). Neither the mean nor the spread of `sd64_implicit`
+**Temperature very likely reached it.** Condition A entered at 56.7 °C
+(55–59) and B at 50.9 °C (50–52), a ~6 °C contrast (Part 4g). Temperature
+in the window itself is not measured. A few seconds of CPU-reference idle
+is unlikely to erase the contrast: by the end of the whole ~19 s process
+it is still 1.0 °C (57.9 vs 56.9 °C). Neither the mean nor the spread of `sd64_implicit`
 differed detectably:
 - mean: +0.5%, 95% CI −3.9% to +4.8%;
 - sd ratio A/B: 1.00, 95% CI [0.58, 1.73];
@@ -223,7 +225,8 @@ executable, section `SD 64`, match `Implicit (single kern)` (see
    state.**
    - Entry clock/P-state almost certainly did not reach the timed window,
      because the CPU-reference idle resets it.
-   - A ~6 °C entry-temperature contrast did reach it.
+   - A ~6 °C entry-temperature contrast very likely reached it (not
+     measured in the window; still 1.0 °C at process end).
    - Neither the mean (+0.5%, CI −3.9% to +4.8%) nor the spread (sd ratio
      1.00, CI 0.58–1.73) of `sd64_implicit` differed detectably.
    - A 1.5× difference in spread would not have been detected.
@@ -395,7 +398,7 @@ clock ramp is unmeasured.
 |---|---|
 | `sd32_implicit` A load correlation "driven by sample 15" | false: r = −0.68 without it (p = 0.0075). A contamination-direction signal in one cell of 24, reported |
 | "host load … the opposite of contamination" (unscoped) | true for `sd64_implicit` only, and partly carried by the A low episode |
-| "the spread does not depend on what happened before the process started" / "null result expected whatever the gap does" | entry clock did not reach the window; a ~6 °C entry-temperature contrast did; neither mean nor spread differed detectably (sd ratio CI 0.58–1.73) |
+| "the spread does not depend on what happened before the process started" / "null result expected whatever the gap does" | entry clock did not reach the window; a ~6 °C entry-temperature contrast very likely did (unmeasured in-window); neither mean nor spread differed detectably (sd ratio CI 0.58–1.73) |
 | "the campaign did not reproduce the tail" (threshold = its own minimum; 6577/6751 called push-blocking) | the one push-blocking reading was not sampled; at the gate floor the two are consistent (p = 0.48); 6577/6751 passed |
 | igemm "not necessary" | not sufficient; necessity untestable (no clean control) |
 | config-order permutation dropped ("interval depends on shape") | reinstated: the CPU reference does identical MACs per SD config |
