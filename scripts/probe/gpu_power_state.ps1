@@ -45,6 +45,11 @@ which reads as spaced-out garbage from WSL.
 Emit a single JSON object on stdout instead of the human report, so a
 harness can consume it.
 
+.PARAMETER JsonPath
+With -Json, also write the JSON object to this file (UTF-8, no BOM). The
+elevated relaunch needs it: an elevated child's stdout never reaches the
+WSL terminal that started it, so the wrapper reads this file instead.
+
 .EXAMPLE
   # Report only, no elevation needed for the nvidia-smi half
   powershell.exe -ExecutionPolicy Bypass -File scripts/probe/gpu_power_state.ps1
@@ -58,7 +63,8 @@ param(
     [ValidateSet(1, 2, 3, 255)]
     [int]$SetMode = 0,
     [string]$LogPath,
-    [switch]$Json
+    [switch]$Json,
+    [string]$JsonPath
 )
 
 $ErrorActionPreference = 'Continue'
@@ -244,4 +250,15 @@ try {
     Write-Warning "could not write log to $LogPath : $($_.Exception.Message)"
 }
 
-if ($Json) { $result | ConvertTo-Json -Depth 4 -Compress }
+if ($Json) {
+    $jsonText = $result | ConvertTo-Json -Depth 4 -Compress
+    if ($JsonPath) {
+        try {
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($JsonPath, $jsonText, $utf8NoBom)
+        } catch {
+            Write-Warning "could not write JSON to $JsonPath : $($_.Exception.Message)"
+        }
+    }
+    $jsonText
+}

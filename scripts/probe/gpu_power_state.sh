@@ -72,9 +72,15 @@ ps1_win="$(wslpath -w "$ps1_wsl")"
 # not come back to this terminal -- so both paths route the report through
 # the log file and we read that. TEMP is used rather than the repo so a
 # diagnostic run never dirties the working tree.
-log_win="$(powershell.exe -NoProfile -Command 'Write-Output $env:TEMP' 2>/dev/null | tr -d '\r')\\gpu_power_state.log"
+temp_win="$(powershell.exe -NoProfile -Command 'Write-Output $env:TEMP' 2>/dev/null | tr -d '\r')"
+log_win="${temp_win}\\gpu_power_state.log"
 log_wsl="$(wslpath -u "$log_win")"
 rm -f "$log_wsl" 2>/dev/null || true
+# The JSON counterpart, for --elevated --json: the elevated child writes
+# its JSON object here because its stdout cannot reach this terminal.
+json_win="${temp_win}\\gpu_power_state.json"
+json_wsl="$(wslpath -u "$json_win")"
+rm -f "$json_wsl" 2>/dev/null || true
 
 # An ARRAY, not a string. A quoted string expanded unquoted gets its
 # quotes passed through as literal characters -- PowerShell then sees
@@ -110,9 +116,16 @@ if [ "$ELEVATED" = "1" ]; then
     if ($env:GPS_SET_MODE -and $env:GPS_SET_MODE -ne "0") {
         $a += @("-SetMode", $env:GPS_SET_MODE)
     }
+    if ($env:GPS_JSON_PATH) {
+        $a += @("-Json", "-JsonPath", ([char]34 + $env:GPS_JSON_PATH + [char]34))
+    }
     Start-Process powershell -Verb RunAs -Wait -ArgumentList $a'
-  GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" \
-  WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w" \
+  # --json must survive the relaunch: it used to be dropped here, because
+  # this branch built its own argument list and never added -Json.
+  gps_json_path=""
+  if [ "$JSON" = "1" ]; then gps_json_path="$json_win"; fi
+  GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" GPS_JSON_PATH="$gps_json_path" \
+  WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w" \
     powershell.exe -NoProfile -Command "$elevate_ps" \
     >/dev/null 2>&1
   rc=$?
@@ -120,7 +133,15 @@ if [ "$ELEVATED" = "1" ]; then
     echo "no log at $log_wsl -- UAC was probably declined." >&2
     exit 1
   fi
-  cat "$log_wsl"
+  if [ "$JSON" = "1" ]; then
+    if [ ! -f "$json_wsl" ]; then
+      echo "no JSON at $json_wsl although the elevated child ran (see $log_wsl)." >&2
+      exit 1
+    fi
+    cat "$json_wsl"; echo
+  else
+    cat "$log_wsl"
+  fi
 else
   powershell.exe "${args[@]}" 2>&1 | tr -d '\r'
   rc=${PIPESTATUS[0]:-0}
