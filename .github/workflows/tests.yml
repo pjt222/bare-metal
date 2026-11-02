@@ -157,7 +157,7 @@ jobs:
       #   3x R/cuasmR/tests/testthat/test-roundtrip.R — needs
       #      kernels/tutorial/vector_add.sm_86.cubin (gitignored, .gitignore:2)
       #      and nvdisasm on PATH, neither of which a runner has;
-      #   1x tests/bench_regress/test_meta.R:180-183 — live capture, needs
+      #   1x tests/bench_regress/test_meta.R, test "capture_gpu_state: live capture round-trips on real hardware" — needs
       #      nvidia-smi.
       # So CI runs strictly FEWER assertions than a local run, and is not
       # authoritative for that coverage. If this number changes, something

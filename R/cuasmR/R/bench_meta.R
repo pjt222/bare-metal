@@ -295,9 +295,12 @@ decode_throttle <- function(hex_str) {
 #'       \code{throttle} (decoded character vector), \code{util_gpu},
 #'       \code{util_mem}, \code{power_limit_w} (the cap the platform is
 #'       enforcing), \code{power_limit_default_w} (the card's default),
-#'       \code{power_capped} (\code{TRUE}/\code{FALSE}/\code{NA} --
-#'       \code{NA} means the driver did not report the limits, which is
-#'       NOT the same as "not capped"; see issue #207)}
+#'       \code{power_limit_max_w} (the VBIOS ceiling),
+#'       \code{power_below_default} and \code{power_below_max}
+#'       (\code{TRUE}/\code{FALSE}/\code{NA} -- \code{NA} means the driver
+#'       did not report a limit, which is NOT the same as "not capped".
+#'       Both references are kept because this machine's normal state is
+#'       \code{enforced == max} with a lower default; see issue #207)}
 #'     \item{host}{\code{loadavg}, \code{ac_state}, \code{gpu_mode}}
 #'     \item{iso_time}{ISO 8601 timestamp}
 #'   }
@@ -370,6 +373,8 @@ capture_gpu_state <- function() {
 #' per-sample path -- call it ONCE per measurement session and attach the
 #' result to the run record, alongside the per-sample
 #' \code{power_limit_w} that \code{\link{capture_gpu_state}} records.
+#' The result is memoised per \code{ac_state} for the lifetime of the
+#' session; pass \code{refresh = TRUE} to re-read.
 #'
 #' @param ac_state Which overlay governs: \code{"ac"} (default),
 #'   \code{"battery"}, or \code{"unknown"}. Windows keeps a separate
