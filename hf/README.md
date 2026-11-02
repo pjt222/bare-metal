@@ -11,15 +11,15 @@ tags:
   - sm_86
   - optimization
   - benchmarks
-pretty_name: GA104 Hand-Optimized CUDA Kernel Corpus
+pretty_name: GA104 CUDA Kernel Corpus
 configs:
   - config_name: sass_histogram
     data_files: data/sass_histogram.csv
 ---
 
-# GA104 Hand-Optimized CUDA Kernel Corpus
+# GA104 CUDA Kernel Corpus
 
-A measurement corpus of hand-optimized CUDA / SASS kernels targeting the
+A measurement corpus of CUDA kernels, analysed at SASS level, targeting the
 **RTX 3070 Ti (GA104, sm_86, Ampere)**. Every kernel is written without
 cuBLAS, cuDNN, or PyTorch in the optimized path; vendor libraries are
 linked only for measured comparison under `kernels/reference/`. This
