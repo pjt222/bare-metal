@@ -72,6 +72,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Setting SmartFanMode needs root\WMI, which needs elevation. Without
+# --elevated the .ps1 skips the WMI section, so --set-mode was silently
+# ignored and the run exited 0 as if it had been applied.
+if [ "$SET_MODE" != "0" ] && [ "$ELEVATED" != "1" ]; then
+  echo "--set-mode needs --elevated (root\\WMI requires Administrator); nothing was changed." >&2
+  exit 1
+fi
+
 here_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ps1_wsl="$here_dir/gpu_power_state.ps1"
 if [ ! -f "$ps1_wsl" ]; then
