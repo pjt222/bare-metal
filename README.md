@@ -1,5 +1,7 @@
 # bare-metal GPU
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/pjt222/bare-metal)
+
 > **Hand-optimized SASS assembly kernels targeting RTX 3070 Ti (GA104, sm_86, Ampere).**
 > No cuBLAS, no cuDNN, no PyTorch. Just nvcc, cuobjdump, and our R-native cubin patcher (cuasmR).
 

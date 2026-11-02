@@ -19,17 +19,19 @@ if (dir.exists(WSL_CUDA_LIB) &&
 }
 
 # Bit 40..43 of the 64-bit control word holds the stall count S00..S15.
+#
+# That field is nibble-aligned, so it IS a single hex digit (nibble 10) and
+# needs no arithmetic on the word. Both functions previously did
+# strtoi(substr(s, 1, 8), 16L) on the top 32-bit half, which returns int32
+# and so silently yields NA for any half whose leading hex digit is >= 8
+# (#198). Every observed sm_86 control word starts 0x001f/0x004f/0x004e, so
+# it never fired -- a latent trap waiting on a control word this project has
+# not met yet. cuasmR's helpers only ever hand strtoi one character.
 ctrl_to_stall <- function(hex) {
-    s   <- sub("^0x", "", tolower(hex))
-    top <- strtoi(substr(s, 1, 8), 16L)
-    bitwAnd(bitwShiftR(top, 8), 0xF)
+    cuasmR::hex64_nibble_get(hex, 10L)
 }
 ctrl_set_stall <- function(hex, new_stall) {
-    s   <- sub("^0x", "", tolower(hex))
-    top <- strtoi(substr(s, 1, 8), 16L)
-    top <- bitwAnd(top, bitwNot(bitwShiftL(0xFL, 8)))
-    top <- bitwOr (top, bitwShiftL(as.integer(new_stall), 8))
-    sprintf("0x%08x%s", top, substr(s, 9, 16))
+    cuasmR::hex64_nibble_set(hex, 10L, as.integer(new_stall))
 }
 
 patch_imma <- function(in_path, out_path,
