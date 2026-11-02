@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Report — and optionally set — the platform state that governs the dGPU's
+Report -- and optionally set -- the platform state that governs the dGPU's
 power envelope, so a benchmark session can prove it is comparable.
 
 .DESCRIPTION
