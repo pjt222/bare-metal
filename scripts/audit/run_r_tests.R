@@ -85,8 +85,9 @@
 #
 # Usage:
 #   Rscript scripts/audit/run_r_tests.R             # run every suite, report, exit 0/1
-#   Rscript scripts/audit/run_r_tests.R --expect 4  # ...and fail unless exactly 4 were found
-#   Rscript scripts/audit/run_r_tests.R --expect 4 --expect-cuasmr 6
+#   Rscript scripts/audit/run_r_tests.R --expect <n>  # ...and fail unless exactly <n> were found
+#   Rscript scripts/audit/run_r_tests.R --expect <n> --expect-cuasmr <m>
+#     (the real values live in Makefile R_SUITES / R_CUASMR_FILES and tests.yml)
 #   Rscript scripts/audit/run_r_tests.R --list      # print the discovered suites, run nothing
 #   Rscript scripts/audit/run_r_tests.R --quiet     # suppress this script's own
 #                                                   # banners and summary table.
