@@ -205,6 +205,67 @@ test_that("summarise_meta: clean state produces a one-line summary", {
   expect_match(out, "throttle=none", fixed = TRUE)
 })
 
+# ---- documented schema == emitted schema (#213) -------------------------
+#
+# capture_gpu_state() is documented twice: the roxygen block above it in
+# R/cuasmR/R/bench_meta.R and the hand-written R/cuasmR/man/capture_gpu_state.Rd.
+# roxygen2 is deliberately absent from renv.lock, so nothing regenerates one
+# from the other. At #207/#209 the .Rd was updated and the roxygen block was
+# not; a consumer (scripts/probe/conv2d_variance.R) followed the stale
+# roxygen and recorded `power_capped = NA` on every row of a real run.
+#
+# This pins both copies to what the function EMITS. The real function runs
+# with only its nvidia-smi query mocked, so the comparison is against actual
+# behaviour, not a third hand-maintained list.
+
+.find_repo_file <- function(rel) {
+  for (p in c(rel, file.path("..", "..", rel))) if (file.exists(p)) return(p)
+  NULL
+}
+
+# The \code{} identifiers documented under the `gpu` item, up to `host`.
+.documented_gpu_fields <- function(lines) {
+  start <- grep("\\\\item\\{gpu\\}", lines)[1]
+  end   <- grep("\\\\item\\{host\\}", lines)[1]
+  if (is.na(start) || is.na(end) || end <= start) return(character(0))
+  txt <- paste(lines[start:(end - 1L)], collapse = " ")
+  codes <- regmatches(txt, gregexpr("\\\\code\\{[^}]*\\}", txt))[[1]]
+  ids <- sub("^\\\\code\\{(.*)\\}$", "\\1", codes)
+  unique(ids[grepl("^[a-z][a-z0-9_]*$", ids)])  # drops TRUE/FALSE/NA, `a == b`
+}
+
+.emitted_gpu_fields <- function() {
+  fields <- get(".NVIDIA_SMI_FIELDS", envir = asNamespace("cuasmR"))
+  raw <- setNames(lapply(fields, function(f) switch(f,
+    "pstate" = "P8",
+    "clocks_throttle_reasons.active" = "0x0000000000000001",
+    1)), fields)
+  snap <- testthat::with_mocked_bindings(
+    capture_gpu_state(),
+    .nvidia_smi_query = function(...) raw,
+    .package = "cuasmR")
+  names(snap$gpu)
+}
+
+test_that("capture_gpu_state: the .Rd documents exactly the gpu fields it emits", {
+  rd <- .find_repo_file("R/cuasmR/man/capture_gpu_state.Rd")
+  skip_if(is.null(rd), "source tree not reachable from this working directory")
+  expect_setequal(.documented_gpu_fields(readLines(rd)), .emitted_gpu_fields())
+})
+
+test_that("capture_gpu_state: the roxygen block documents exactly the gpu fields it emits", {
+  src <- .find_repo_file("R/cuasmR/R/bench_meta.R")
+  skip_if(is.null(src), "source tree not reachable from this working directory")
+  lines <- readLines(src)
+  fn <- grep("^capture_gpu_state <- function", lines)[1]
+  expect_false(is.na(fn))
+  # The roxygen block is the run of `#'` lines directly above the function.
+  first <- fn - 1L
+  while (first > 1L && startsWith(lines[first - 1L], "#'")) first <- first - 1L
+  roxy <- sub("^#' ?", "", lines[first:(fn - 1L)])
+  expect_setequal(.documented_gpu_fields(roxy), .emitted_gpu_fields())
+})
+
 # ---- live capture (only if nvidia-smi is reachable) --------------------
 
 test_that("capture_gpu_state: live capture round-trips on real hardware", {
