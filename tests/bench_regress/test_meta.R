@@ -214,19 +214,20 @@ test_that("summarise_meta: clean state produces a one-line summary", {
 # not; a consumer (scripts/probe/conv2d_variance.R) followed the stale
 # roxygen and recorded `power_capped = NA` on every row of a real run.
 #
-# This pins both copies to what the function EMITS. The real function runs
-# with only its nvidia-smi query mocked, so the comparison is against actual
-# behaviour, not a third hand-maintained list.
+# This pins both copies to what the function EMITS -- its top-level names and
+# the field lists under `gpu` and `host`. The real function runs with only its
+# nvidia-smi query mocked, so the comparison is against actual behaviour, not
+# a third hand-maintained list.
 
 .find_repo_file <- function(rel) {
   for (p in c(rel, file.path("..", "..", rel))) if (file.exists(p)) return(p)
   NULL
 }
 
-# The \code{} identifiers documented under the `gpu` item, up to `host`.
-.documented_gpu_fields <- function(lines) {
-  start <- grep("\\\\item\\{gpu\\}", lines)[1]
-  end   <- grep("\\\\item\\{host\\}", lines)[1]
+# The \code{} identifiers documented under \item{<item>}, up to \item{<until>}.
+.documented_fields <- function(lines, item, until) {
+  start <- grep(sprintf("\\\\item\\{%s\\}", item), lines)[1]
+  end   <- grep(sprintf("\\\\item\\{%s\\}", until), lines)[1]
   if (is.na(start) || is.na(end) || end <= start) return(character(0))
   txt <- paste(lines[start:(end - 1L)], collapse = " ")
   codes <- regmatches(txt, gregexpr("\\\\code\\{[^}]*\\}", txt))[[1]]
@@ -234,26 +235,45 @@ test_that("summarise_meta: clean state produces a one-line summary", {
   unique(ids[grepl("^[a-z][a-z0-9_]*$", ids)])  # drops TRUE/FALSE/NA, `a == b`
 }
 
-.emitted_gpu_fields <- function() {
+# The \item{} names: the top level of the documented return value.
+.documented_items <- function(lines) {
+  m <- regmatches(lines, regexpr("\\\\item\\{[a-z_]+\\}", lines))
+  unique(sub("^\\\\item\\{(.*)\\}$", "\\1", m))
+}
+
+.emitted_snapshot <- function() {
   fields <- get(".NVIDIA_SMI_FIELDS", envir = asNamespace("cuasmR"))
   raw <- setNames(lapply(fields, function(f) switch(f,
     "pstate" = "P8",
     "clocks_throttle_reasons.active" = "0x0000000000000001",
     1)), fields)
-  snap <- testthat::with_mocked_bindings(
+  testthat::with_mocked_bindings(
     capture_gpu_state(),
     .nvidia_smi_query = function(...) raw,
     .package = "cuasmR")
-  names(snap$gpu)
 }
 
-test_that("capture_gpu_state: the .Rd documents exactly the gpu fields it emits", {
+# One mocked path only: no field of capture_gpu_state() is conditional today
+# (bench_meta.R builds every name unconditionally). A field added on only some
+# path would need a second snapshot here.
+.expect_docs_match_emitted <- function(lines) {
+  snap <- .emitted_snapshot()
+  expect_false(is.null(snap))
+  # setequal hides duplicates, so check them separately.
+  expect_equal(anyDuplicated(names(snap$gpu)), 0L)
+  expect_equal(anyDuplicated(names(snap$host)), 0L)
+  expect_setequal(.documented_items(lines), names(snap))
+  expect_setequal(.documented_fields(lines, "gpu", "host"), names(snap$gpu))
+  expect_setequal(.documented_fields(lines, "host", "iso_time"), names(snap$host))
+}
+
+test_that("capture_gpu_state: the .Rd documents exactly what it emits", {
   rd <- .find_repo_file("R/cuasmR/man/capture_gpu_state.Rd")
   skip_if(is.null(rd), "source tree not reachable from this working directory")
-  expect_setequal(.documented_gpu_fields(readLines(rd)), .emitted_gpu_fields())
+  .expect_docs_match_emitted(readLines(rd))
 })
 
-test_that("capture_gpu_state: the roxygen block documents exactly the gpu fields it emits", {
+test_that("capture_gpu_state: the roxygen block documents exactly what it emits", {
   src <- .find_repo_file("R/cuasmR/R/bench_meta.R")
   skip_if(is.null(src), "source tree not reachable from this working directory")
   lines <- readLines(src)
@@ -263,7 +283,7 @@ test_that("capture_gpu_state: the roxygen block documents exactly the gpu fields
   first <- fn - 1L
   while (first > 1L && startsWith(lines[first - 1L], "#'")) first <- first - 1L
   roxy <- sub("^#' ?", "", lines[first:(fn - 1L)])
-  expect_setequal(.documented_gpu_fields(roxy), .emitted_gpu_fields())
+  .expect_docs_match_emitted(roxy)
 })
 
 # ---- live capture (only if nvidia-smi is reachable) --------------------
