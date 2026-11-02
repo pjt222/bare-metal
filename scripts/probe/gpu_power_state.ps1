@@ -189,10 +189,15 @@ $overlays = @{
 try {
     $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
     $p = Get-ItemProperty $key -ErrorAction Stop
-    $result.overlay_ac = "$($p.ActiveOverlayAcPowerScheme)".ToLower()
-    $result.overlay_dc = "$($p.ActiveOverlayDcPowerScheme)".ToLower()
-    $result.overlay_name = $overlays[$result.overlay_ac]
-    if (-not $result.overlay_name) { $result.overlay_name = $result.overlay_ac }
+    # Each value read on its own, through PSObject.Properties: under
+    # Set-StrictMode -Version Latest, `$p.ActiveOverlayDcPowerScheme` THROWS
+    # when the value does not exist, which used to discard an AC value
+    # already read and report the whole overlay as unreadable.
+    $acProp = $p.PSObject.Properties['ActiveOverlayAcPowerScheme']
+    $dcProp = $p.PSObject.Properties['ActiveOverlayDcPowerScheme']
+    $result.overlay_ac = $(if ($acProp) { "$($acProp.Value)".ToLower() } else { 'absent' })
+    $result.overlay_dc = $(if ($dcProp) { "$($dcProp.Value)".ToLower() } else { 'absent' })
+    $result.overlay_name = $(if ($overlays.ContainsKey($result.overlay_ac)) { $overlays[$result.overlay_ac] } else { $result.overlay_ac })
     Log ("overlay AC : {0} ({1})" -f $result.overlay_ac, $result.overlay_name)
     Log ("overlay DC : {0}" -f $result.overlay_dc)
 } catch {
