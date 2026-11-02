@@ -37,7 +37,15 @@ JSON=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --elevated) ELEVATED=1; shift ;;
-    --set-mode) SET_MODE="$2"; shift 2 ;;
+    --set-mode)
+      # Validated here, not only by the .ps1's ValidateSet: the value is
+      # handed to an ELEVATED process, and anything that reaches its command
+      # line unvalidated is a way in.
+      case "${2:-}" in
+        1|2|3|255) SET_MODE="$2" ;;
+        *) echo "--set-mode must be 1, 2, 3 or 255 (got '${2:-}')" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     --json)     JSON=1; shift ;;
     -h|--help)  sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -83,10 +91,29 @@ fi
 
 if [ "$ELEVATED" = "1" ]; then
   echo "Requesting elevation -- answer the UAC prompt on the desktop." >&2
+  # Nothing from this shell is spliced into the outer -Command string. It
+  # used to be: the repo path sat inside a PowerShell '...' literal, so a
+  # ' in the path ended the string and the rest ran as code -- in the
+  # process that builds the ELEVATED child's command line. Now the values
+  # travel as environment variables (WSLENV flag /w = WSL -> Win32) and
+  # the -Command text is a fixed bash single-quoted literal.
+  #
+  # Start-Process joins -ArgumentList with bare spaces and quotes nothing,
+  # so the path is wrapped in double quotes ([char]34) for the child's
+  # command line; a Windows path cannot itself contain a double quote.
+  #
   # -Wait so this returns only once the elevated child has finished and
   # the log is complete.
-  powershell.exe -NoProfile -Command \
-    "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$ps1_win'$( [ "$SET_MODE" != "0" ] && echo ",'-SetMode','$SET_MODE'" )" \
+  elevate_ps='
+    $a = @("-NoProfile", "-ExecutionPolicy", "Bypass",
+           "-File", ([char]34 + $env:GPS_PS1 + [char]34))
+    if ($env:GPS_SET_MODE -and $env:GPS_SET_MODE -ne "0") {
+        $a += @("-SetMode", $env:GPS_SET_MODE)
+    }
+    Start-Process powershell -Verb RunAs -Wait -ArgumentList $a'
+  GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" \
+  WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w" \
+    powershell.exe -NoProfile -Command "$elevate_ps" \
     >/dev/null 2>&1
   rc=$?
   if [ ! -f "$log_wsl" ]; then
