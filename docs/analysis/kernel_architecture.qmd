@@ -1,6 +1,6 @@
 ---
 title: "Kernel Architecture Analysis: GA104 Tensor Core GEMM"
-subtitle: "Empirical Performance Models for Hand-Optimized CUDA/SASS on RTX 3070 Ti"
+subtitle: "Empirical Performance Models for CUDA Kernels on RTX 3070 Ti, Analysed at SASS Level"
 author: "Philipp Thoss"
 date: today
 format:
@@ -47,8 +47,8 @@ gpu_grey   <- "#95A5A6"
 
 ## Introduction
 
-This document presents a quantitative analysis of hand-optimized CUDA/SASS
-kernels targeting the NVIDIA RTX 3070 Ti (GA104, sm_86, Ampere architecture).
+This document presents a quantitative analysis of CUDA kernels, analysed at
+SASS level, targeting the NVIDIA RTX 3070 Ti (GA104, sm_86, Ampere architecture).
 All kernels are written from scratch --- no cuBLAS, cuDNN, or PyTorch --- and
 compiled with `nvcc -arch=sm_86 -O2`. SASS-level inspection and hand-editing
 via CuAssembler provides ground-truth for hardware behavior.

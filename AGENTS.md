@@ -8,8 +8,8 @@ only what their tool needs beyond what is documented below.
 
 ## Project
 
-Hand-optimized CUDA / SASS kernels targeting **RTX 3070 Ti
-(GA104, sm_86, Ampere)**. No cuBLAS, cuDNN, or PyTorch in the
+CUDA kernels targeting **RTX 3070 Ti (GA104, sm_86, Ampere)**,
+analysed at SASS level. No cuBLAS, cuDNN, or PyTorch in the
 optimized path; reference libraries are linked only for measured
 comparisons under `kernels/reference/`. R is the only first-class
 tooling language; there are no Python run-time dependencies.
