@@ -109,14 +109,18 @@ The gate measures `conv2d_implicit_gemm` as `sd64_implicit`: the same
 executable, section `SD 64`, match `Implicit (single kern)` (see
 `data/baselines.json`).
 
-1. **The gate-like idle gap does not explain the variance.** The 90 s gap,
-   with its P8 entry, has no detectable effect on any of the six
-   measurements. For `sd64_implicit` it is +0.5%, with a 95% CI of
-   −3.9% to +4.8% of B.
-2. **`sd64_implicit` has intrinsic run-to-run spread at a fixed 150 W
-   regime on a quiet host:** rel sd 5.7%, range 6788–8107 (1.19×), the same
-   in both conditions. Its implicit siblings stay within 0.86% (`sd32`) and
-   0.94% (`sd128`), about six times tighter.
+1. **The gate-like idle gap cannot account for a span of this size.** The
+   90 s gap, with its P8 entry, has no detectable effect on any of the six
+   measurements. For `sd64_implicit` it is +0.5%, with a 95% CI of −3.9% to
+   +4.8% of B. That excludes a gap effect anywhere near the 1.36× of #195.
+   An effect of a few percent is still compatible with the data.
+2. **`sd64_implicit` spreads run to run at a fixed 150 W regime on a quiet
+   host, and no recorded covariate explains it:** rel sd 5.7%, range
+   6788–8107 (1.19×), the same in both conditions. Its implicit siblings
+   stay within 0.86% (`sd32`) and 0.94% (`sd128`), about six times tighter.
+   "Unexplained by recorded covariates" is not the same as "inherent to
+   the kernel": in-window clock or power events remain possible (see the
+   caveat above).
 3. **Whether the cause is SD64's shape or SD64's position cannot be told
    from this design.** SD64 is always the first config in the process
    (deviation 1).
@@ -151,6 +155,34 @@ about 45, which is suggestive but not conclusive at n = 30. Split there:
 The high/low sequence looks random (14 runs in 30 samples). Whatever moves
 `sd64_implicit` happens inside the timed window, where the outside
 snapshots cannot see it.
+
+## Gate history check (post-analysis, before publishing; exploratory)
+
+This campaign ran conv2d alone, on a 54–62 °C GPU. The gate runs it last,
+after six other configs, including `igemm_pipelined_cpasync`, which hits
+`SwPowerCap` at about 130 W and 64–74 °C. So the A/B design tested one
+feature of the gate's cadence (the idle gap) and not the other (running
+straight after a power-bound kernel). Checked against
+`results/bench_regress/gate_runs.jsonl`, with no GPU, using every
+non-throttled conv2d row:
+
+- **The gate shows the same two levels.** There are 23 readings from
+  2026-07-31, 2026-08-12 and 2026-11-02. They cluster near 8000–8080 and
+  near 6900–7250, with rare deeper lows (5935, 6577).
+- **#195's 1.36× is one outlier.** 8081 / 5935 = 1.362, and 5935 is the
+  2026-07-31 15:44 REGRESSION. Without it the gate span is 1.23×.
+- **A preceding power-capped igemm does not separate high from low.**
+  `igemm_pipelined_cpasync` was SKIPPED with `SwPowerCap` in 19 of the 20
+  runs that included it (the 20th crashed), both before high conv2d readings (8006, 8038, 8068,
+  8081, 8067) and before low ones. Runs with no igemm at all still split
+  both ways: 8031 and 8034 high, 7043 low. conv2d's own temperature (55–68
+  °C) does not separate them either.
+- Today's three gate readings (6577, 7104, 6751) are all on the low level.
+  With about half the campaign samples low, three low readings in a row is
+  unremarkable (about 0.15).
+
+So the lead "the gate's preceding power-bound kernel" is **ruled out by
+the trace**. The two-level behaviour appears whatever ran before conv2d.
 
 ## Next steps (proposed, not run)
 
