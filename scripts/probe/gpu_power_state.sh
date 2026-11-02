@@ -23,10 +23,12 @@
 # SmartFanMode: 1 Quiet, 2 Balanced, 3 Performance, 255 Custom.
 #
 # Exit status: 0 report produced and the GPU is at its ceiling; 1 the
-# script could not be run; 2 the GPU is power-capped (enforced limit below
-# the VBIOS ceiling); 3 the power limit could not be read, so nothing is
-# certified -- every non-zero status means "do not benchmark", so a caller
-# can gate a run on `gpu_power_state.sh || exit`.
+# script could not be run, or powershell.exe exited non-zero so the report
+# may be partial; 2 the GPU is power-capped (enforced limit below the VBIOS
+# ceiling); 3 the power limit could not be read, so nothing is certified.
+# 3 and 2 take precedence over a partial report. Every non-zero status
+# means "do not benchmark", so a caller can gate a run on
+# `gpu_power_state.sh || exit`.
 
 set -uo pipefail
 
@@ -47,7 +49,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --json)     JSON=1; shift ;;
-    -h|--help)  sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help)  awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -124,13 +126,20 @@ if [ "$ELEVATED" = "1" ]; then
   # this branch built its own argument list and never added -Json.
   gps_json_path=""
   if [ "$JSON" = "1" ]; then gps_json_path="$json_win"; fi
-  GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" GPS_JSON_PATH="$gps_json_path" \
-  WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w" \
-    powershell.exe -NoProfile -Command "$elevate_ps" \
-    >/dev/null 2>&1
+  # stderr is kept, not discarded: when the relaunch fails, PowerShell's own
+  # message (e.g. "The operation was canceled by the user") is the
+  # diagnosis. rc is the OUTER process's status -- whether Start-Process
+  # succeeded. The elevated child's own exit status is not propagated; the
+  # log it writes is the evidence that it ran.
+  elevate_err="$(GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" GPS_JSON_PATH="$gps_json_path" \
+    WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w" \
+    powershell.exe -NoProfile -Command "$elevate_ps" 2>&1 >/dev/null)"
   rc=$?
+  elevate_err="${elevate_err//$'\r'/}"
   if [ ! -f "$log_wsl" ]; then
-    echo "no log at $log_wsl -- UAC was probably declined." >&2
+    echo "no log at $log_wsl -- the elevated child never ran" >&2
+    echo "(powershell.exe exit $rc; a declined UAC prompt is the usual cause)." >&2
+    if [ -n "$elevate_err" ]; then printf '%s\n' "$elevate_err" >&2; fi
     exit 1
   fi
   if [ "$JSON" = "1" ]; then
@@ -145,6 +154,19 @@ if [ "$ELEVATED" = "1" ]; then
 else
   powershell.exe "${args[@]}" 2>&1 | tr -d '\r'
   rc=${PIPESTATUS[0]:-0}
+fi
+
+# A non-zero PowerShell status means the report above may be partial (a
+# parse error, a blocked execution policy). It used to be captured and
+# never read, so a broken report still exited 0. It is reported now, and
+# turns into exit 1 below unless the power read has something more
+# specific to say (3 unreadable, 2 capped).
+report_failed=0
+if [ "${rc:-0}" != "0" ]; then
+  echo "" >&2
+  echo "REPORT-INCOMPLETE: powershell.exe exited $rc -- the report above may be partial." >&2
+  if [ -n "${elevate_err:-}" ]; then printf '%s\n' "$elevate_err" >&2; fi
+  report_failed=1
 fi
 
 # Re-read the enforced limit here rather than parsing the log: this is the
@@ -172,6 +194,10 @@ if awk -v e="$enforced" -v m="$maxw" 'BEGIN{exit !(e < m - 1)}'; then
   echo "POWER-CAPPED: enforced ${enforced} W < ceiling ${maxw} W." >&2
   echo "Benchmarks taken now are NOT comparable to recorded baselines." >&2
   exit 2
+fi
+
+if [ "$report_failed" = "1" ]; then
+  exit 1
 fi
 
 exit 0
