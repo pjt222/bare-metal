@@ -373,6 +373,8 @@ capture_gpu_state <- function() {
 #' per-sample path -- call it ONCE per measurement session and attach the
 #' result to the run record, alongside the per-sample
 #' \code{power_limit_w} that \code{\link{capture_gpu_state}} records.
+#' The result is memoised per \code{ac_state} for the lifetime of the
+#' session; pass \code{refresh = TRUE} to re-read.
 #'
 #' @param ac_state Which overlay governs: \code{"ac"} (default),
 #'   \code{"battery"}, or \code{"unknown"}. Windows keeps a separate
