@@ -190,7 +190,9 @@ if [ "$ELEVATED" = "1" ]; then
     cat "$log_wsl"
   fi
 else
-  powershell.exe "${args[@]}" 2>&1 | tr -d '\r'
+  # stdout and stderr stay separate (both CR-stripped). Merged with 2>&1,
+  # any PowerShell error text landed in --json output ahead of the object.
+  powershell.exe "${args[@]}" 2> >(tr -d '\r' >&2) | tr -d '\r'
   rc=${PIPESTATUS[0]:-0}
 fi
 

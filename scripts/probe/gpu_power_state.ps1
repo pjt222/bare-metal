@@ -280,21 +280,33 @@ Log "=== done ==="
 
 # UTF-8 without a BOM: the log is read from WSL, and PowerShell's default
 # redirection encoding (UTF-16LE) renders there as spaced-out garbage.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# Failures below go to STDERR and into the record, never to stdout. With
+# -Json, stdout must carry the JSON object and nothing else. Write-Warning
+# used to put text there ahead of it.
 try {
-    $enc = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllLines($LogPath, $script:Lines, $enc)
+    [System.IO.File]::WriteAllLines($LogPath, $script:Lines, $utf8NoBom)
 } catch {
-    Write-Warning "could not write log to $LogPath : $($_.Exception.Message)"
+    $m = "could not write log to $LogPath : $($_.Exception.Message)"
+    $result.notes += $m
+    [Console]::Error.WriteLine($m)
 }
 
 if ($Json) {
     $jsonText = $result | ConvertTo-Json -Depth 4 -Compress
     if ($JsonPath) {
         try {
-            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
             [System.IO.File]::WriteAllText($JsonPath, $jsonText, $utf8NoBom)
         } catch {
-            Write-Warning "could not write JSON to $JsonPath : $($_.Exception.Message)"
+            $m = "could not write JSON to $JsonPath : $($_.Exception.Message)"
+            [Console]::Error.WriteLine($m)
+            # In the elevated case this console closes with the child, and the
+            # wrapper points the user at the log when the JSON is missing. So
+            # the reason goes into the log too.
+            try {
+                [System.IO.File]::AppendAllText($LogPath, $m + [Environment]::NewLine, $utf8NoBom)
+            } catch { }
         }
     }
     $jsonText
