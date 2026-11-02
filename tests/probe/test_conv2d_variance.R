@@ -111,9 +111,13 @@ test_that("every recorded field exists in a real capture_gpu_state() snapshot", 
   expect_true(f$pre_snapshot)
   # No recorded column may be NA when the driver reported everything: that
   # was the #213 symptom (power_capped NA on 36 of 36 rows).
+  # Load fields too (#224 review, H2): the host$loadavg read is lenient,
+  # so a renamed field would otherwise record NA on every row with this
+  # suite still green -- the #213 failure class, one level down.
   power_and_load <- c("pre_power_limit_w", "pre_power_limit_default_w",
                       "pre_power_limit_max_w", "pre_power_below_default",
-                      "pre_power_below_max")
+                      "pre_power_below_max",
+                      "pre_load_1m", "pre_load_5m", "pre_load_15m")
   for (nm in power_and_load) expect_false(is.na(f[[nm]]), label = nm)
   expect_equal(f$pre_power_limit_w, 150)
   expect_equal(f$pre_power_limit_default_w, 115)
