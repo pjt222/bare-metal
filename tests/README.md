@@ -13,6 +13,7 @@ These files validate hardware assumptions, fragment layouts, and race conditions
 | `flash_attention/verify_wmma_layout.cu` | WMMA accumulator fragment layout (sm_86) |
 | `bench_all/test_bench_all.R` | GPU-free unit tests for `scripts/bench/bench_all.R` and `bench_all_collect.R` (#124, #152): corpus discovery, spec merge, the taxonomy×regime planner, status classification, summary aggregation, markdown render |
 | `bench_regress/test_meta.R`   | Metadata tests for cuasmR's GPU/host capture (`R/cuasmR/R/bench_meta.R`) — throttle-reason decode and `classify_meta` policies against canned snapshots; the live-capture smoke test skips without `nvidia-smi`. It attaches the package directly since #173; it used to reach these functions through the `scripts/bench/bench_meta.R` compatibility shim |
+| `probe/test_conv2d_variance.R` | The #195 probe harness `scripts/probe/conv2d_variance.R`. #212: the A/B assignment must interleave, not merely balance (a `--block >= --n` design is refused), and burn-in samples are explicit. #213: every recorded snapshot field must exist in a real `capture_gpu_state()` snapshot, with only cuasmR's nvidia-smi query mocked, so a renamed field fails here instead of being recorded as NA |
 | `bench_regress/test_verdict.R` | The run verdict and run record in `scripts/bench/bench_regress.R`. #176: PASSED / FAILED / INCONCLUSIVE and their three exit codes, pinning that an all-skipped run can never print "all benchmarks within tolerance" again. #186: the append-only `gate_runs.jsonl`, including that a record which cannot be written leaves the verdict untouched. Both are covered end to end by running the real script against a throwaway repo fixture — no GPU, no built corpus |
 
 Build any CUDA test individually with the same `nvcc` commands used for production kernels.
@@ -25,7 +26,7 @@ The GPU-free R suites are a **pre-push gate** (#163). Run all of them with:
 make test-r
 ```
 
-That covers the three R files above plus the `cuasmR` package's own testthat suite
+That covers the four R files above plus the `cuasmR` package's own testthat suite
 (`R/cuasmR/tests/testthat/`), which is not under `tests/` but is gated the same
 way — it holds the only characterization test for the parser that
 `scripts/bench/bench_regress.R` calls in the regression gate.
