@@ -95,7 +95,9 @@ scripts/
   which raises a UAC prompt) the Lenovo SmartFanMode. It exits **2** when
   the enforced limit is below the VBIOS ceiling and **3** when the limit
   cannot be read at all (fail closed), so it can gate a run:
-  `scripts/probe/gpu_power_state.sh || exit`. Motivation (#207): on
+  `scripts/probe/gpu_power_state.sh || exit`. On hardware whose normal
+  operating point is the default limit rather than the ceiling (a stock
+  desktop card), pass `--reference default`. Motivation (#207): on
   2026-08-13 the platform enforced 50 W against a 150 W ceiling and
   `conv2d_implicit_gemm` measured 51% of normal, with nothing in the run
   record to explain it. Note that neither the Windows overlay nor the

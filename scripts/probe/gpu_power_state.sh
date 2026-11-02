@@ -19,13 +19,24 @@
 #   scripts/probe/gpu_power_state.sh --elevated         # full report, UAC
 #   scripts/probe/gpu_power_state.sh --elevated --set-mode 3
 #   scripts/probe/gpu_power_state.sh --json
+#   scripts/probe/gpu_power_state.sh --reference default
 #
 # SmartFanMode: 1 Quiet, 2 Balanced, 3 Performance, 255 Custom.
 #
-# Exit status: 0 report produced and the GPU is at its ceiling; 1 the
+# --reference max|default picks what "capped" is measured against
+# (default: max). `max` fits this laptop, whose normal operating point is
+# the 150 W VBIOS ceiling an OEM performance mode raises it to; there even
+# the documented 115 W default is a 23% cut. `default` fits stock hardware
+# whose normal operating point IS the default (e.g. a desktop card at
+# 220 / 220 / 250 W), which `max` would report as capped forever. The same
+# two references #207 records in the run record (power_below_max /
+# power_below_default).
+#
+# Exit status: 0 report produced and the GPU is at its reference; 1 the
 # script could not be run, or powershell.exe exited non-zero so the report
-# may be partial; 2 the GPU is power-capped (enforced limit below the VBIOS
-# ceiling); 3 the power limit could not be read, so nothing is certified.
+# may be partial; 2 the GPU is power-capped (enforced limit below the
+# chosen reference); 3 the power limit could not be read, so nothing is
+# certified.
 # 3 and 2 take precedence over a partial report. Every non-zero status
 # means "do not benchmark", so a caller can gate a run on
 # `gpu_power_state.sh || exit`.
@@ -35,6 +46,7 @@ set -uo pipefail
 ELEVATED=0
 SET_MODE=0
 JSON=0
+REFERENCE=max
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +61,12 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --json)     JSON=1; shift ;;
+    --reference)
+      case "${2:-}" in
+        max|default) REFERENCE="$2" ;;
+        *) echo "--reference must be max or default (got '${2:-}')" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
     -h|--help)  awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -96,6 +114,7 @@ fi
 if [ "$JSON" = "1" ]; then
   args+=(-Json)
 fi
+args+=(-Reference "$REFERENCE")
 
 if [ "$ELEVATED" = "1" ]; then
   echo "Requesting elevation -- answer the UAC prompt on the desktop." >&2
@@ -121,6 +140,7 @@ if [ "$ELEVATED" = "1" ]; then
     if ($env:GPS_JSON_PATH) {
         $a += @("-Json", "-JsonPath", ([char]34 + $env:GPS_JSON_PATH + [char]34))
     }
+    $a += @("-Reference", $env:GPS_REFERENCE)
     Start-Process powershell -Verb RunAs -Wait -ArgumentList $a'
   # --json must survive the relaunch: it used to be dropped here, because
   # this branch built its own argument list and never added -Json.
@@ -132,7 +152,8 @@ if [ "$ELEVATED" = "1" ]; then
   # succeeded. The elevated child's own exit status is not propagated; the
   # log it writes is the evidence that it ran.
   elevate_err="$(GPS_PS1="$ps1_win" GPS_SET_MODE="$SET_MODE" GPS_JSON_PATH="$gps_json_path" \
-    WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w" \
+    GPS_REFERENCE="$REFERENCE" \
+    WSLENV="${WSLENV:+$WSLENV:}GPS_PS1/w:GPS_SET_MODE/w:GPS_JSON_PATH/w:GPS_REFERENCE/w" \
     powershell.exe -NoProfile -Command "$elevate_ps" 2>&1 >/dev/null)"
   rc=$?
   elevate_err="${elevate_err//$'\r'/}"
@@ -172,9 +193,9 @@ fi
 # Re-read the enforced limit here rather than parsing the log: this is the
 # value the exit status promises, and reading it directly keeps the
 # contract independent of the report's formatting.
-read -r enforced maxw < <(nvidia-smi \
-  --query-gpu=enforced.power.limit,power.max_limit \
-  --format=csv,noheader,nounits 2>/dev/null | tr -d ',' | awk '{print $1, $2}')
+read -r enforced defaultw maxw < <(nvidia-smi \
+  --query-gpu=enforced.power.limit,power.default_limit,power.max_limit \
+  --format=csv,noheader,nounits 2>/dev/null | tr -d ',' | awk '{print $1, $2, $3}')
 
 # Fail CLOSED when the limit cannot be read. "Could not observe" is not "not
 # capped": a gate that exits 0 here certifies a run nobody checked, which
@@ -182,16 +203,17 @@ read -r enforced maxw < <(nvidia-smi \
 # checks matter too -- a driver that reports "[N/A]" yields a non-empty
 # string that awk would silently compare as 0.
 is_number() { [[ "${1:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
-if ! is_number "${enforced:-}" || ! is_number "${maxw:-}"; then
+if [ "$REFERENCE" = "default" ]; then reference_w="${defaultw:-}"; else reference_w="${maxw:-}"; fi
+if ! is_number "${enforced:-}" || ! is_number "$reference_w"; then
   echo "" >&2
-  echo "POWER-UNKNOWN: could not read the enforced/max power limit from nvidia-smi" >&2
-  echo "(got enforced='${enforced:-}' max='${maxw:-}'). Treat this as NOT comparable." >&2
+  echo "POWER-UNKNOWN: could not read the enforced/${REFERENCE} power limit from nvidia-smi" >&2
+  echo "(got enforced='${enforced:-}' ${REFERENCE}='${reference_w}'). Treat this as NOT comparable." >&2
   exit 3
 fi
 
-if awk -v e="$enforced" -v m="$maxw" 'BEGIN{exit !(e < m - 1)}'; then
+if awk -v e="$enforced" -v r="$reference_w" 'BEGIN{exit !(e < r - 1)}'; then
   echo "" >&2
-  echo "POWER-CAPPED: enforced ${enforced} W < ceiling ${maxw} W." >&2
+  echo "POWER-CAPPED: enforced ${enforced} W < ${REFERENCE} ${reference_w} W." >&2
   echo "Benchmarks taken now are NOT comparable to recorded baselines." >&2
   exit 2
 fi

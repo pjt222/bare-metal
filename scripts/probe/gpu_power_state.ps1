@@ -50,6 +50,12 @@ With -Json, also write the JSON object to this file (UTF-8, no BOM). The
 elevated relaunch needs it: an elevated child's stdout never reaches the
 WSL terminal that started it, so the wrapper reads this file instead.
 
+.PARAMETER Reference
+What "capped" is measured against: 'max' (the VBIOS ceiling, the default,
+right for this laptop whose normal point is the 150 W an OEM performance
+mode raises it to) or 'default' (right for stock hardware whose normal
+operating point IS the default limit). Matches the wrapper's --reference.
+
 .EXAMPLE
   # Report only, no elevation needed for the nvidia-smi half
   powershell.exe -ExecutionPolicy Bypass -File scripts/probe/gpu_power_state.ps1
@@ -64,7 +70,9 @@ param(
     [int]$SetMode = 0,
     [string]$LogPath,
     [switch]$Json,
-    [string]$JsonPath
+    [string]$JsonPath,
+    [ValidateSet('max', 'default')]
+    [string]$Reference = 'max'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -84,6 +92,7 @@ $result = [ordered]@{
     power_limit_w         = $null
     power_limit_default_w = $null
     power_limit_max_w     = $null
+    power_reference       = $Reference
     clock_max_sm_mhz      = $null
     clock_max_mem_mhz     = $null
     overlay_ac            = $null
@@ -134,17 +143,23 @@ if ($smi -and $smi.Count -ge 5) {
     # every number in the report was wrong by 100x.
     $inv = [System.Globalization.CultureInfo]::InvariantCulture
     $sty = [System.Globalization.NumberStyles]::Float
-    $enforced = 0.0; $maxw = 0.0
+    $enforced = 0.0; $refw = 0.0
+    $refField = $(if ($Reference -eq 'default') { $smi[1] } else { $smi[2] })
     if ([double]::TryParse($smi[0], $sty, $inv, [ref]$enforced) -and
-        [double]::TryParse($smi[2], $sty, $inv, [ref]$maxw) -and $maxw -gt 0) {
-        if ($enforced -lt ($maxw - 1)) {
-            $msg = "CAPPED: enforced $enforced W is below the $maxw W ceiling. " +
+        [double]::TryParse($refField, $sty, $inv, [ref]$refw) -and $refw -gt 0) {
+        if ($enforced -lt ($refw - 1)) {
+            $msg = "CAPPED: enforced $enforced W is below the $refw W $Reference reference. " +
                    "Measurements taken now are NOT comparable to baselines."
             Log ("  !! " + $msg)
             $result.notes += $msg
         } else {
-            Log "  ok: enforced limit is at the ceiling."
+            Log "  ok: enforced limit is at or above the $Reference reference ($refw W)."
         }
+    } else {
+        $msg = "UNKNOWN: enforced or $Reference limit is not a number " +
+               "(enforced='$($smi[0])', $Reference='$refField')."
+        Log ("  !! " + $msg)
+        $result.notes += $msg
     }
 } else {
     Log "nvidia-smi: unavailable"
