@@ -1,6 +1,6 @@
 ---
 title: "bare-metal"
-subtitle: "Hand-tuned NVIDIA SASS kernels for RTX 3070 Ti (GA104, sm_86)"
+subtitle: "CUDA kernels for RTX 3070 Ti (GA104, sm_86), analysed at SASS level"
 toc: false
 ---
 
