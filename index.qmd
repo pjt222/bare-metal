@@ -4,8 +4,8 @@ subtitle: "CUDA kernels for RTX 3070 Ti (GA104, sm_86), analysed at SASS level"
 toc: false
 ---
 
-CUDA and hand-edited SASS kernels for a single, fully characterised GPU — no
-cuBLAS, no cuDNN, no PyTorch in the optimised path. Reference libraries are
+CUDA kernels (a few also patched at SASS level) for a single, fully
+characterised GPU — no cuBLAS, no cuDNN, no PyTorch in the optimised path. Reference libraries are
 linked only for measured comparisons.
 
 Everything published here is generated from the repository's own documents.
