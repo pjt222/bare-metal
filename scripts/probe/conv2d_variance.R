@@ -30,8 +30,11 @@
 #   B  gate-like idle gap     (--gap seconds before each sample)
 #
 # Usage:
-#   Rscript scripts/probe/conv2d_variance.R --n 15 --gap 90 --block 5 \
+#   Rscript scripts/probe/conv2d_variance.R --n 15 --gap 90 --block 1 \
 #     --jsonl results/probe/conv2d_variance.jsonl
+#
+# --block must be < --n, or the run is refused (#212): with block >= n the
+# sequence degenerates to AAA...BBB, balanced but not interleaved.
 #
 # Output: one JSONL row per sample per parsed measurement.
 
@@ -60,7 +63,11 @@ suppressMessages(library(cuasmR))
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 parse_args <- function(argv) {
-  out <- list(n = 15L, gap = 90, block = 5L, exe = NULL,
+  # block = 1 (ABAB...) by default, not 5: a transient at the very start
+  # of a session lands on whatever comes first, and with block 5 the first
+  # five samples are all condition A (#212). Block interleaving spreads
+  # slow drift; only alternation spreads a lead-in transient.
+  out <- list(n = 15L, gap = 90, block = 1L, exe = NULL,
               jsonl = "results/probe/conv2d_variance.jsonl")
   i <- 1
   while (i <= length(argv)) {
@@ -104,6 +111,52 @@ gpu_fields <- function(snap, prefix) {
   out
 }
 
+# Interleave A/B in blocks so thermal drift and any slow platform state
+# hit both conditions rather than confounding one of them.
+#
+# Draw from a per-condition remaining count rather than building a
+# pattern and truncating it. Truncation silently unbalances the design
+# whenever n is not a multiple of block -- n=15, block=4 gives 16 A and
+# 14 B, and an unbalanced A/B is exactly the defect this harness exists
+# to avoid. Guaranteed here: exactly `n` of each, for any block size.
+#
+# Balance is necessary, not sufficient (#212). With block >= n the loop
+# takes min(block, n) = n per condition and emits AAA...BBB: perfectly
+# balanced, so a balance check passes, but there is no interleave at all
+# and condition is confounded with time order. That design is rejected
+# here rather than run, and the result must switch condition more than
+# once.
+assign_conditions <- function(n, block) {
+  if (length(n) != 1L || is.na(n) || n < 2L) {
+    stop(sprintf("--n must be an integer >= 2 (got %s): fewer than two samples per condition cannot interleave",
+                 format(n)), call. = FALSE)
+  }
+  if (length(block) != 1L || is.na(block) || block < 1L) {
+    stop(sprintf("--block must be an integer >= 1 (got %s)", format(block)),
+         call. = FALSE)
+  }
+  if (block >= n) {
+    stop(sprintf(paste0("--block %d >= --n %d: each condition would run as one ",
+                        "contiguous block (%s%s), which confounds condition with ",
+                        "time order. Use --block < --n; --block 1 gives ABAB..."),
+                 block, n, strrep("A", n), strrep("B", n)), call. = FALSE)
+  }
+  left <- c(A = n, B = n)
+  conds <- character(0)
+  while (sum(left) > 0L) {
+    for (cd in c("A", "B")) {
+      take <- min(block, left[[cd]])
+      if (take > 0L) {
+        conds <- c(conds, rep(cd, take))
+        left[[cd]] <- left[[cd]] - take
+      }
+    }
+  }
+  stopifnot(sum(conds == "A") == n, sum(conds == "B") == n,
+            length(rle(conds)$lengths) > 2L)
+  conds
+}
+
 main <- function() {
   args <- parse_args(commandArgs(trailingOnly = TRUE))
 
@@ -119,27 +172,7 @@ main <- function() {
                  error = function(e) NA_character_)
   policy <- tryCatch(capture_power_policy(), error = function(e) NULL)
 
-  # Interleave A/B in blocks so thermal drift and any slow platform state
-  # hit both conditions rather than confounding one of them.
-  #
-  # Draw from a per-condition remaining count rather than building a
-  # pattern and truncating it. Truncation silently unbalances the design
-  # whenever n is not a multiple of block -- n=15, block=4 gives 16 A and
-  # 14 B, and an unbalanced A/B is exactly the defect this harness exists
-  # to avoid. Guaranteed here: exactly `n` of each, for any block size.
-  left <- c(A = args$n, B = args$n)
-  conds <- character(0)
-  cond_order <- c("A", "B")
-  while (sum(left) > 0L) {
-    for (cd in cond_order) {
-      take <- min(args$block, left[[cd]])
-      if (take > 0L) {
-        conds <- c(conds, rep(cd, take))
-        left[[cd]] <- left[[cd]] - take
-      }
-    }
-  }
-  stopifnot(sum(conds == "A") == args$n, sum(conds == "B") == args$n)
+  conds <- assign_conditions(args$n, args$block)
 
   message(sprintf("probe #195: %d samples (%d per condition), gap=%.0fs, block=%d",
                   length(conds), args$n, args$gap, args$block))
