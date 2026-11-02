@@ -1,6 +1,6 @@
 # Contributing to bare-metal GPU
 
-This project builds ML primitives from hand-optimized SASS on GA104 (RTX 3070 Ti, sm_86). Every kernel is benchmarked and correctness-checked against a CPU reference.
+This project builds ML primitives as CUDA kernels for GA104 (RTX 3070 Ti, sm_86), analysed at SASS level. Every kernel is benchmarked and correctness-checked against a CPU reference.
 
 ## Quick Start
 
