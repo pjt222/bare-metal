@@ -22,9 +22,11 @@
 #
 # SmartFanMode: 1 Quiet, 2 Balanced, 3 Performance, 255 Custom.
 #
-# Exit status: 0 report produced; 1 the script could not be run; 2 the
-# GPU is power-capped (enforced limit below the VBIOS ceiling) -- so a
-# caller can gate a benchmark on `gpu_power_state.sh || exit`.
+# Exit status: 0 report produced and the GPU is at its ceiling; 1 the
+# script could not be run; 2 the GPU is power-capped (enforced limit below
+# the VBIOS ceiling); 3 the power limit could not be read, so nothing is
+# certified -- every non-zero status means "do not benchmark", so a caller
+# can gate a run on `gpu_power_state.sh || exit`.
 
 set -uo pipefail
 
@@ -104,13 +106,24 @@ read -r enforced maxw < <(nvidia-smi \
   --query-gpu=enforced.power.limit,power.max_limit \
   --format=csv,noheader,nounits 2>/dev/null | tr -d ',' | awk '{print $1, $2}')
 
-if [ -n "${enforced:-}" ] && [ -n "${maxw:-}" ]; then
-  if awk -v e="$enforced" -v m="$maxw" 'BEGIN{exit !(e < m - 1)}'; then
-    echo "" >&2
-    echo "POWER-CAPPED: enforced ${enforced} W < ceiling ${maxw} W." >&2
-    echo "Benchmarks taken now are NOT comparable to recorded baselines." >&2
-    exit 2
-  fi
+# Fail CLOSED when the limit cannot be read. "Could not observe" is not "not
+# capped": a gate that exits 0 here certifies a run nobody checked, which
+# inverts the NA-vs-FALSE convention #207 set for the run record. Numeric
+# checks matter too -- a driver that reports "[N/A]" yields a non-empty
+# string that awk would silently compare as 0.
+is_number() { [[ "${1:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
+if ! is_number "${enforced:-}" || ! is_number "${maxw:-}"; then
+  echo "" >&2
+  echo "POWER-UNKNOWN: could not read the enforced/max power limit from nvidia-smi" >&2
+  echo "(got enforced='${enforced:-}' max='${maxw:-}'). Treat this as NOT comparable." >&2
+  exit 3
+fi
+
+if awk -v e="$enforced" -v m="$maxw" 'BEGIN{exit !(e < m - 1)}'; then
+  echo "" >&2
+  echo "POWER-CAPPED: enforced ${enforced} W < ceiling ${maxw} W." >&2
+  echo "Benchmarks taken now are NOT comparable to recorded baselines." >&2
+  exit 2
 fi
 
 exit 0
