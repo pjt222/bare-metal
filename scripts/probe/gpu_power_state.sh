@@ -14,12 +14,18 @@
 # `Start-Process -Verb RunAs`, which raises a UAC prompt on the desktop.
 # That prompt is interactive: the run blocks until it is answered.
 #
-# Usage:
-#   scripts/probe/gpu_power_state.sh                    # report, no UAC
-#   scripts/probe/gpu_power_state.sh --elevated         # full report, UAC
-#   scripts/probe/gpu_power_state.sh --elevated --set-mode 3
-#   scripts/probe/gpu_power_state.sh --json
-#   scripts/probe/gpu_power_state.sh --reference default
+# Usage (run with bash, as the repo's other .sh scripts are documented):
+#   bash scripts/probe/gpu_power_state.sh                    # report, no UAC
+#   bash scripts/probe/gpu_power_state.sh --elevated         # full report, UAC
+#   bash scripts/probe/gpu_power_state.sh --elevated --set-mode 3
+#   bash scripts/probe/gpu_power_state.sh --json
+#   bash scripts/probe/gpu_power_state.sh --reference default
+#
+# Not `sh`: /bin/sh is dash here, which rejects `set -o pipefail` and exits
+# 2 -- the same code as "capped", so a gate would misread the failure. The
+# file is committed 100644 like every .sh in the repo; a bare invocation
+# works only on the /mnt/d drvfs mount, which shows every file as
+# executable.
 #
 # SmartFanMode: 1 Quiet, 2 Balanced, 3 Performance, 255 Custom.
 #
@@ -37,9 +43,12 @@
 # may be partial; 2 the GPU is power-capped (enforced limit below the
 # chosen reference); 3 the power limit could not be read, so nothing is
 # certified.
-# 3 and 2 take precedence over a partial report. Every non-zero status
-# means "do not benchmark", so a caller can gate a run on
-# `gpu_power_state.sh || exit`.
+# Once a report exists, 3 and 2 take precedence over a partial one (1).
+# Failures BEFORE any power read -- bad arguments, an unresolvable %TEMP%,
+# a declined or failed elevation -- exit 1 directly, so a declined UAC
+# prompt on a capped GPU returns 1, not 2. Every non-zero status means
+# "do not benchmark", so a caller can gate a run on
+# `bash scripts/probe/gpu_power_state.sh || exit`.
 
 set -uo pipefail
 
@@ -97,8 +106,10 @@ fi
 ps1_win="$(wslpath -w "$ps1_wsl")"
 
 # The elevated child is a separate process with its own stdout, which does
-# not come back to this terminal -- so both paths route the report through
-# the log file and we read that. TEMP is used rather than the repo so a
+# not come back to this terminal -- so the ELEVATED path reads the report
+# back from the log (or, with --json, the JSON file) that the child writes.
+# The non-elevated path prints PowerShell's stdout directly; it writes the
+# log too but never reads it. TEMP is used rather than the repo so a
 # diagnostic run never dirties the working tree.
 temp_win="$(powershell.exe -NoProfile -Command 'Write-Output $env:TEMP' 2>/dev/null | tr -d '\r')"
 # An empty or rootless TEMP must stop here. "\gpu_power_state.log" is a

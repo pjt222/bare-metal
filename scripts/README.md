@@ -49,7 +49,7 @@ scripts/
 ├── probe/                    ── GPU power/clock probes + grid sweep (need GPU; cuasmR, #134)
 │   ├── grid_measure.R        ── per-cell measure (multi-kernel × clock grid)
 │   ├── grid_collect.R        ── materialise the JSONL sample store → RDS
-│   ├── gpu_power_state.sh    ── platform power-envelope check (+ .ps1); exit 2 = capped, 3 = unreadable
+│   ├── gpu_power_state.sh    ── platform power-envelope check (+ .ps1); exit 1 = could not run, 2 = capped, 3 = unreadable
 │   ├── probe_gpu_power.R     ── read-only power/clock envelope probe
 │   ├── rebaseline_measure.R  ── hgemm + igemm re-baseline driver
 │   ├── clock_lock_sweep.R    ── clock-lock sweep for igemm 4096³
@@ -77,7 +77,7 @@ scripts/
 |---|---|
 | Build a single cubin                        | `Rscript scripts/build.R compile path/to/kernel.cu` |
 | Disassemble + cuasmR roundtrip a cubin      | `Rscript scripts/build.R disasm path/to/kernel.sm_86.cubin` |
-| Check the GPU is at full power before benching | `scripts/probe/gpu_power_state.sh` (exit 2 = capped, 3 = unreadable) |
+| Check the GPU is at full power before benching | `bash scripts/probe/gpu_power_state.sh` (non-zero = do not bench) |
 | Run all benches vs baselines                | `Rscript scripts/bench/bench_regress.R` |
 | Run local reference benches                 | `Rscript scripts/bench/bench_reference.R` |
 | Compare project vs local references         | `Rscript scripts/bench/compare_reference.R` |
@@ -90,12 +90,14 @@ scripts/
 ## Notes
 
 - **Check the power envelope before trusting a benchmark.**
-  `scripts/probe/gpu_power_state.sh` reports the enforced/default/max
+  `bash scripts/probe/gpu_power_state.sh` reports the enforced/default/max
   power limits, the Windows power-mode overlay, and (with `--elevated`,
   which raises a UAC prompt) the Lenovo SmartFanMode. It exits **2** when
-  the enforced limit is below the VBIOS ceiling and **3** when the limit
-  cannot be read at all (fail closed), so it can gate a run:
-  `scripts/probe/gpu_power_state.sh || exit`. On hardware whose normal
+  the enforced limit is below the VBIOS ceiling, **3** when the limit
+  cannot be read at all (fail closed), and **1** when the report itself
+  could not be produced (bad arguments, a declined UAC prompt, a PowerShell
+  failure), so it can gate a run:
+  `bash scripts/probe/gpu_power_state.sh || exit`. On hardware whose normal
   operating point is the default limit rather than the ceiling (a stock
   desktop card), pass `--reference default`. Motivation (#207): on
   2026-08-13 the platform enforced 50 W against a 150 W ceiling and
