@@ -35,6 +35,9 @@
 #
 # --block must be < --n, or the run is refused (#212): with block >= n the
 # sequence degenerates to AAA...BBB, balanced but not interleaved.
+# --burnin K (default 0) runs K warm-up samples, condition W with no gap,
+# before the A/B sequence. They are recorded with burnin = TRUE so a
+# consumer can exclude them. Choose K before the run.
 #
 # Output: one JSONL row per sample per parsed measurement.
 
@@ -67,7 +70,7 @@ parse_args <- function(argv) {
   # of a session lands on whatever comes first, and with block 5 the first
   # five samples are all condition A (#212). Block interleaving spreads
   # slow drift; only alternation spreads a lead-in transient.
-  out <- list(n = 15L, gap = 90, block = 1L, exe = NULL,
+  out <- list(n = 15L, gap = 90, block = 1L, burnin = 0L, exe = NULL,
               jsonl = "results/probe/conv2d_variance.jsonl")
   i <- 1
   while (i <= length(argv)) {
@@ -75,6 +78,7 @@ parse_args <- function(argv) {
       "--n"     = { out$n     <- as.integer(argv[i + 1]); i <- i + 2 },
       "--gap"   = { out$gap   <- as.numeric(argv[i + 1]); i <- i + 2 },
       "--block" = { out$block <- as.integer(argv[i + 1]); i <- i + 2 },
+      "--burnin" = { out$burnin <- as.integer(argv[i + 1]); i <- i + 2 },
       "--jsonl" = { out$jsonl <- argv[i + 1];             i <- i + 2 },
       "--exe"   = { out$exe   <- argv[i + 1];             i <- i + 2 },
       stop(sprintf("unknown arg: %s", argv[i])))
@@ -157,6 +161,23 @@ assign_conditions <- function(n, block) {
   conds
 }
 
+# Lead-in handling, explicit and recorded (#212 defect 2). Interleaving
+# spreads slow drift but not a transient at the very start of a session,
+# because nothing precedes it. `--burnin K` runs K warm-up samples
+# (condition "W", no gap) BEFORE the A/B sequence. They are written to the
+# JSONL with burnin = TRUE, never silently dropped, so a consumer can
+# exclude them and can also measure whether the lead-in transient exists
+# at all. K is a pre-registered choice: set it before the run, never after
+# seeing the data. The default 0 leaves the design unchanged, and the
+# rows still say so (burnin = FALSE, burnin_n = 0).
+with_burnin <- function(conds, burnin) {
+  if (length(burnin) != 1L || is.na(burnin) || burnin < 0L) {
+    stop(sprintf("--burnin must be an integer >= 0 (got %s)", format(burnin)),
+         call. = FALSE)
+  }
+  c(rep("W", burnin), conds)
+}
+
 main <- function() {
   args <- parse_args(commandArgs(trailingOnly = TRUE))
 
@@ -172,10 +193,10 @@ main <- function() {
                  error = function(e) NA_character_)
   policy <- tryCatch(capture_power_policy(), error = function(e) NULL)
 
-  conds <- assign_conditions(args$n, args$block)
+  conds <- with_burnin(assign_conditions(args$n, args$block), args$burnin)
 
-  message(sprintf("probe #195: %d samples (%d per condition), gap=%.0fs, block=%d",
-                  length(conds), args$n, args$gap, args$block))
+  message(sprintf("probe #195: %d samples (%d burn-in + %d per condition), gap=%.0fs, block=%d",
+                  length(conds), args$burnin, args$n, args$gap, args$block))
   message(sprintf("  exe    : %s", exe))
   message(sprintf("  jsonl  : %s", args$jsonl))
   message(sprintf("  overlay: %s", if (is.null(policy)) "unknown"
@@ -211,7 +232,9 @@ main <- function() {
                             pick = "first")
       row <- c(
         list(run_id = run_id, ts_utc = ts, git_head = gh,
-             sample_idx = i, condition = cond, gap_s = args$gap,
+             sample_idx = i, condition = cond,
+             burnin = identical(cond, "W"), burnin_n = args$burnin,
+             block = args$block, gap_s = args$gap,
              measurement = m$key, order_in_run = m$ord,
              ms = p$ms, throughput = p$throughput, unit = p$unit,
              rc = r$rc,
