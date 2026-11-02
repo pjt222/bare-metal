@@ -92,6 +92,7 @@ $result = [ordered]@{
     power_limit_w         = $null
     power_limit_default_w = $null
     power_limit_max_w     = $null
+    power_limit_before_set_w = $null
     power_reference       = $Reference
     clock_max_sm_mhz      = $null
     clock_max_mem_mhz     = $null
@@ -125,6 +126,41 @@ function Get-SmiFields {
     } catch { $null }
 }
 
+# The verdict on one nvidia-smi reading: enforced vs the chosen -Reference.
+# A function because it runs twice: on the initial reading, and again
+# after -SetMode with the reading taken after the change (labelled by
+# $when), so the report never carries a verdict about a state that no
+# longer holds.
+#
+# InvariantCulture, explicitly. nvidia-smi always emits "50.00" with a
+# dot, but the shell locale here is de-DE, where the bare
+# [double]::TryParse overload reads "." as a THOUSANDS separator and
+# turns 50.00 W into 5000 W. Observed: "enforced 5000 W is below the
+# 15000 W ceiling". The verdict survived (both sides scale alike) but
+# every number in the report was wrong by 100x.
+function Write-PowerVerdict([object[]]$fields, [string]$when) {
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    $sty = [System.Globalization.NumberStyles]::Float
+    $enforced = 0.0; $refw = 0.0
+    $refField = $(if ($Reference -eq 'default') { $fields[1] } else { $fields[2] })
+    if ([double]::TryParse($fields[0], $sty, $inv, [ref]$enforced) -and
+        [double]::TryParse($refField, $sty, $inv, [ref]$refw) -and $refw -gt 0) {
+        if ($enforced -lt ($refw - 1)) {
+            $msg = "CAPPED${when}: enforced $enforced W is below the $refw W $Reference reference. " +
+                   "Measurements taken now are NOT comparable to baselines."
+            Log ("  !! " + $msg)
+            $result.notes += $msg
+        } else {
+            Log "  ok${when}: enforced limit is at or above the $Reference reference ($refw W)."
+        }
+    } else {
+        $msg = "UNKNOWN${when}: enforced or $Reference limit is not a positive number " +
+               "(enforced='$($fields[0])', $Reference='$refField')."
+        Log ("  !! " + $msg)
+        $result.notes += $msg
+    }
+}
+
 # @(...): a single value comes back from the pipeline as a bare string, and
 # .Count on a string throws PropertyNotFoundStrict under Set-StrictMode
 # Latest -- which skipped this whole block without saying "unavailable".
@@ -137,33 +173,7 @@ if ($smi.Count -ge 5) {
     $result.clock_max_mem_mhz     = $smi[4]
     Log ("power limit (enforced/default/max) : {0} / {1} / {2} W" -f $smi[0], $smi[1], $smi[2])
     Log ("max clocks  (sm/mem)               : {0} / {1} MHz" -f $smi[3], $smi[4])
-
-    # InvariantCulture, explicitly. nvidia-smi always emits "50.00" with a
-    # dot, but the shell locale here is de-DE, where the bare
-    # [double]::TryParse overload reads "." as a THOUSANDS separator and
-    # turns 50.00 W into 5000 W. Observed: "enforced 5000 W is below the
-    # 15000 W ceiling". The verdict survived (both sides scale alike) but
-    # every number in the report was wrong by 100x.
-    $inv = [System.Globalization.CultureInfo]::InvariantCulture
-    $sty = [System.Globalization.NumberStyles]::Float
-    $enforced = 0.0; $refw = 0.0
-    $refField = $(if ($Reference -eq 'default') { $smi[1] } else { $smi[2] })
-    if ([double]::TryParse($smi[0], $sty, $inv, [ref]$enforced) -and
-        [double]::TryParse($refField, $sty, $inv, [ref]$refw) -and $refw -gt 0) {
-        if ($enforced -lt ($refw - 1)) {
-            $msg = "CAPPED: enforced $enforced W is below the $refw W $Reference reference. " +
-                   "Measurements taken now are NOT comparable to baselines."
-            Log ("  !! " + $msg)
-            $result.notes += $msg
-        } else {
-            Log "  ok: enforced limit is at or above the $Reference reference ($refw W)."
-        }
-    } else {
-        $msg = "UNKNOWN: enforced or $Reference limit is not a number " +
-               "(enforced='$($smi[0])', $Reference='$refField')."
-        Log ("  !! " + $msg)
-        $result.notes += $msg
-    }
+    Write-PowerVerdict $smi ''
 } else {
     Log "nvidia-smi: unavailable"
     $result.notes += 'nvidia-smi unavailable'
@@ -244,7 +254,16 @@ if (-not $result.elevated) {
                         Log ("  !! " + $msg)
                         $result.notes += $msg
                     }
-                    $result.power_limit_w = $smi2[0]
+                    # Refresh ALL three limits and re-run the verdict on
+                    # this reading. Only power_limit_w used to be updated,
+                    # so the JSON could say CAPPED about a state the mode
+                    # change had already fixed, while the wrapper (which
+                    # re-reads after this) exited 0 -- or the reverse.
+                    $result.power_limit_before_set_w = $result.power_limit_w
+                    $result.power_limit_w            = $smi2[0]
+                    $result.power_limit_default_w    = $smi2[1]
+                    $result.power_limit_max_w        = $smi2[2]
+                    Write-PowerVerdict $smi2 ' (after set-mode)'
                 }
             } catch {
                 Log ("SetSmartFanMode failed: " + $_.Exception.Message)
