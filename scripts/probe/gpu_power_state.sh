@@ -193,9 +193,15 @@ fi
 # Re-read the enforced limit here rather than parsing the log: this is the
 # value the exit status promises, and reading it directly keeps the
 # contract independent of the report's formatting.
-read -r enforced defaultw maxw < <(nvidia-smi \
+#
+# Split on COMMAS, not whitespace. A field such as "[Not Supported]"
+# contains a space, and a whitespace split shifts every later field:
+# "50.00, [Not Supported], 150.00" read max as "Supported]". Spaces and
+# CRs are stripped first, so that field arrives as "[NotSupported]", which
+# the numeric check below rejects as it should.
+IFS=, read -r enforced defaultw maxw < <(nvidia-smi \
   --query-gpu=enforced.power.limit,power.default_limit,power.max_limit \
-  --format=csv,noheader,nounits 2>/dev/null | tr -d ',' | awk '{print $1, $2, $3}')
+  --format=csv,noheader,nounits 2>/dev/null | tr -d ' \r')
 
 # Fail CLOSED when the limit cannot be read. "Could not observe" is not "not
 # capped": a gate that exits 0 here certifies a run nobody checked, which
