@@ -13,6 +13,17 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **The #195 probe harness is now gated (#212, #213).**
+  `tests/probe/test_conv2d_variance.R` pins that
+  `scripts/probe/conv2d_variance.R` refuses a degenerate A/B design
+  (`--block >= --n` emitted a balanced but un-interleaved `AAA…BBB`), and
+  that every snapshot field it records exists in a real
+  `capture_gpu_state()` snapshot. Only cuasmR's internal nvidia-smi query
+  is mocked, so the suite runs without a GPU and does not skip on a runner.
+  The pilot recorded `power_capped = NA` on all 36 rows because that field
+  had been renamed; the suite fails on exactly that mutation, and on
+  removing the block guard. `R_SUITES` and the `tests.yml` denominators go
+  4 → 5. The CI skip count stays at 4.
 - **64-bit hex words are now edited as digits, not through `strtoi()`
   (#198, #208).** `strtoi(x, 16L)` returns an int32, so every 64-bit SASS
   word and every 32-bit half with a leading digit `>= 8` silently becomes

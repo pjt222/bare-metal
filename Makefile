@@ -205,7 +205,7 @@ test: cubins $(GEMM_BENCH) $(REDUCTIONS_BENCH) $(ELEMENTWISE_BENCH) $(REGRESS_BE
 # deleting a suite passes without the tracked edit the design depends on.
 # Nothing in the repo or CI overrides it (CI calls the runner directly with
 # --expect), so closing the override costs nothing.
-R_SUITES := 4
+R_SUITES := 5
 
 # The cuasmR package suite is ONE invocation but several files, so R_SUITES
 # cannot see inside it: delete four of its seven test files and the count is
