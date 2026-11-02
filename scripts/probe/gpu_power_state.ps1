@@ -35,6 +35,12 @@ which is the reference implementation for the Lenovo WMI surface.
 .PARAMETER SetMode
 Set the Lenovo SmartFanMode: 1 Quiet, 2 Balanced, 3 Performance,
 255 Custom. Requires elevation. Omit to report only.
+This CHANGES THE MACHINE, not just the report: it switches the physical
+thermal profile (fan curve and the platform's power behaviour), and the
+setting persists after the script exits. Every baseline in
+data/baselines.json was recorded in Performance mode. Changing the mode in
+the middle of a measurement campaign breaks comparability with what came
+before, so set it before a campaign or not at all.
 
 .PARAMETER LogPath
 Where to write the transcript. Defaults to gpu_power_state.log in TEMP.
