@@ -79,3 +79,68 @@ cat("\nmeans by cluster of other variables in the SAME sample:\n")
 for (v in c("sd64_explicit","sd32_explicit","sd32_implicit","sd128_explicit","sd128_implicit","post_clock_sm","post_temp_c","pre_temp_c","pre_load_1m","post_power_w")) cat(sprintf("  %-15s high %8.1f  low %8.1f\n", v, mean(w[[v]][w$cluster=="high"]), mean(w[[v]][w$cluster=="low"])))
 cat("\ncluster sequence by sample_idx (H/L):\n"); w <- w[order(w$sample_idx),]; cat(paste0(substr(toupper(w$cluster),1,1), collapse=""), "\n")
 cat("runs of the same cluster:", length(rle(w$cluster)$lengths), "of", nrow(w), "samples\n")
+
+# ---- Part 4: added after review round 1 on #224 (EXPLORATORY, post hoc) -----
+# Each block answers one review finding. Nothing here was pre-registered.
+suppressMessages(library(jsonlite))
+d <- stream_in(file("results/probe/conv2d_variance.jsonl"), verbose = FALSE)
+# H1: this file must hold exactly one campaign, or every number above pools runs.
+stopifnot(length(unique(d$run_id)) == 1L)
+ab <- d[!d$burnin, ]
+w <- reshape(ab[, c("sample_idx","condition","measurement","throughput")],
+             idvar = c("sample_idx","condition"), timevar = "measurement", direction = "wide")
+names(w) <- sub("throughput.", "", names(w))
+s1 <- ab[ab$measurement == "sd64_implicit", c("sample_idx","pre_load_1m","post_load_1m")]
+w <- merge(w, s1, by = "sample_idx"); w <- w[order(w$sample_idx), ]
+x <- w$sd64_implicit
+thr <- 7694; w$cluster <- ifelse(x > thr, "high", "low")
+
+cat("\n== 4a. (S1) Recorded covariates, high vs low sd64_implicit, Welch -- uncorrected p\n")
+vars <- c("pre_load_1m","post_load_1m","sd64_explicit","sd32_explicit","sd32_implicit","sd128_explicit","sd128_implicit")
+for (v in vars) { t <- t.test(w[[v]][w$cluster=="high"], w[[v]][w$cluster=="low"])
+  cat(sprintf("  %-15s high-low = %+8.2f  95%% CI [%+.2f, %+.2f]  p = %.3f\n", v, diff(rev(t$estimate)), t$conf.int[1], t$conf.int[2], t$p.value)) }
+for (cd in c("A","B","all")) { k <- if (cd == "all") rep(TRUE, nrow(w)) else w$condition == cd
+  ct <- cor.test(w$sd64_implicit[k], w$pre_load_1m[k])
+  cat(sprintf("  cor(sd64_implicit, pre_load_1m) %-3s r = %+.2f  p = %.3f  n = %d\n", cd, ct$estimate, ct$p.value, sum(k))) }
+
+cat("\n== 4b. (S2) Is sd64_implicit bimodal? Normal null, n = 30, 20000 draws (seed 195)\n")
+gap_stat <- function(v) { g <- diff(sort(v)); c(max = max(g), ratio = max(g) / mean(g)) }
+obs <- gap_stat(x); set.seed(195)
+null <- replicate(20000, gap_stat(rnorm(length(x), mean(x), sd(x))))
+cat(sprintf("  observed max gap %.0f, max-gap/mean-spacing %.2f\n", obs["max"], obs["ratio"]))
+cat(sprintf("  P(null max gap >= observed) = %.2f; null median ratio %.2f -> consistent with unimodal\n",
+            mean(null["max", ] >= obs["max"]), median(null["ratio", ])))
+
+cat("\n== 4c. (S9) Load over the session\n")
+cat(sprintf("  pre_load_1m range %.2f-%.2f; cor(pre_load_1m, sample_idx) = %+.2f\n",
+            min(w$pre_load_1m), max(w$pre_load_1m), cor(w$pre_load_1m, w$sample_idx)))
+cat("  pre_load_1m by sample:", paste(sprintf("%d:%.2f", w$sample_idx, w$pre_load_1m), collapse = " "), "\n")
+cat("  (S8) post_load_1m as covariate, within condition:\n")
+for (m in c("sd64_explicit","sd64_implicit","sd32_explicit","sd32_implicit","sd128_explicit","sd128_implicit"))
+  cat(sprintf("    %-15s r(A) = %+.2f  r(B) = %+.2f\n", m,
+      cor(w[[m]][w$condition=="A"], w$post_load_1m[w$condition=="A"]),
+      cor(w[[m]][w$condition=="B"], w$post_load_1m[w$condition=="B"])))
+
+cat("\n== 4d. (S6) Single-measurement drops > 10% below their condition mean (mean excludes the sample)\n")
+for (m in c("sd64_explicit","sd64_implicit","sd32_explicit","sd32_implicit","sd128_explicit","sd128_implicit"))
+  for (i in seq_len(nrow(w))) { cd <- w$condition[i]; others <- w[[m]][w$condition == cd & w$sample_idx != w$sample_idx[i]]
+    dev <- w[[m]][i] / mean(others) - 1
+    if (dev < -0.10) cat(sprintf("  sample %2d cond %s  %-15s %6.0f  %+5.1f%%\n", w$sample_idx[i], cd, m, w[[m]][i], 100 * dev)) }
+
+cat("\n== 4e. (S2/S3/S5/S7) Gate history of the same config (results/probe/gate_conv2d_history.tsv)\n")
+g <- read.delim("results/probe/gate_conv2d_history.tsv", stringsAsFactors = FALSE)
+g <- g[!grepl("SwPowerCap", g$conv2d_throttle), ]
+cat(sprintf("  non-throttled gate readings: n = %d, range %.0f-%.0f, max/min %.3f\n",
+            nrow(g), min(g$conv2d_gflops), max(g$conv2d_gflops), max(g$conv2d_gflops)/min(g$conv2d_gflops)))
+hi <- g$conv2d_gflops[g$conv2d_gflops >= 7900]
+cat(sprintf("  >= 7900: n = %d, mean %.0f, sd %.0f   (campaign high cluster: n = %d, sd %.0f)\n",
+            length(hi), mean(hi), sd(hi), sum(x > thr), sd(x[x > thr])))
+cat("  sorted:", paste(sort(g$conv2d_gflops), collapse = " "), "\n")
+below <- sum(g$conv2d_gflops < min(x))
+ft <- fisher.test(matrix(c(below, nrow(g) - below, 0, length(x)), 2))
+cat(sprintf("  below the campaign minimum (%.0f): gate %d of %d, campaign 0 of %d; Fisher p = %.3f\n",
+            min(x), below, nrow(g), length(x), ft$p.value))
+ig <- table(ifelse(g$igemm_pipelined_verdict == "absent", "no igemm in run",
+             ifelse(grepl("SwPowerCap", g$igemm_pipelined_throttle), "igemm SwPowerCap", "igemm other")),
+            ifelse(g$conv2d_gflops >= 7694, "conv2d high", "conv2d low"))
+cat("  conv2d level vs the igemm row in the same run:\n"); print(ig)
