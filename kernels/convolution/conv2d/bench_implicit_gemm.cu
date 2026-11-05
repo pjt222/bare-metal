@@ -35,6 +35,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <chrono>
 #include <cuda.h>
 #include <cuda_fp16.h>
 
@@ -109,6 +110,15 @@ struct LaunchTimeline {
 static inline void mark_start(LaunchTimeline *timeline, size_t j) { if (timeline) timeline->record_start(j); }
 static inline void mark_stop(LaunchTimeline *timeline, size_t j)  { if (timeline) timeline->record_stop(j); }
 
+// One event with RAII lifetime: the per-config time origin.
+struct ScopedEvent {
+    CUevent event = nullptr;
+    ScopedEvent()  { CHECK_CU(cuEventCreate(&event, CU_EVENT_DEFAULT)); }
+    ~ScopedEvent() { cuEventDestroy(event); }
+    ScopedEvent(const ScopedEvent &) = delete;
+    ScopedEvent &operator=(const ScopedEvent &) = delete;
+};
+
 // Nearest-rank percentile: the smallest value with at least
 // `fraction` of the sample at or below it.
 static float nearest_rank(const std::vector<float> &sorted_values, double fraction) {
@@ -138,7 +148,8 @@ static double sum_of(const std::vector<float> &values) {
 //   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> metric=<span|gap> n=<count> us=<v1,v2,...>
 //   per-launch-summary config=... kernel=... phase=... metric=... n=... min_us=... p10_us=... p50_us=...
 //       p90_us=... max_us=... idx0_us=... head5_p50_us=... tail5_p50_us=... sum_us=...
-//   per-launch-phase config=... path=<explicit|implicit> phase=... launches=<count> total_us=... [aggregate_us=...]
+//   per-launch-config config=... cpu_ref=<ran|skipped> cpu_ref_wall_us=...
+//   per-launch-phase config=... path=<explicit|implicit> phase=... launches=<count> offset_us=... total_us=... [aggregate_us=...]
 //
 // One raw and one summary line per (kernel, phase, metric), except
 // explicit_pair (start of im2col to end of the GEMM, per iteration), which
@@ -152,6 +163,12 @@ static double sum_of(const std::vector<float> &values) {
 // 1.02 us on this machine (most values sit on a 1.024 us grid). The %.2f
 // format prints two decimals, but differences below about 1 us are not
 // readable, which matters for the Small config's 60-140 us kernels.
+//
+// cpu_ref_wall_us is the host wall time of the CPU reference, the idle the
+// ramp candidate is about (#223 steps 2-3). offset_us puts every phase of a
+// config on one axis: GPU time from the config's origin, an event recorded
+// as the CPU reference returns, to the phase's own origin. Read a ramp
+// against offset_us + the launch's position, not against launch index.
 //
 // total_us runs from the phase's origin to its last stop event, so it is
 // the sum of all its spans and gaps. aggregate_us, on timed phases only,
@@ -197,9 +214,11 @@ static void print_series(const char *config_key, const char *kernel_name,
 
 static void print_phase_total(const char *config_key, const char *path_name,
                               const char *phase_name, const LaunchTimeline &timeline,
-                              double aggregate_us) {
-    printf("  per-launch-phase config=%s path=%s phase=%s launches=%zu total_us=%.2f",
-           config_key, path_name, phase_name, timeline.launch_count(), (double)timeline.total_us());
+                              CUevent config_origin, double aggregate_us) {
+    printf("  per-launch-phase config=%s path=%s phase=%s launches=%zu offset_us=%.2f total_us=%.2f",
+           config_key, path_name, phase_name, timeline.launch_count(),
+           (double)LaunchTimeline::elapsed_us(config_origin, timeline.origin),
+           (double)timeline.total_us());
     if (aggregate_us >= 0.0) printf(" aggregate_us=%.2f", aggregate_us);
     printf("\n");
 }
@@ -422,10 +441,37 @@ int main(int argc, char **argv) {
         fill_rand(host_W, W_elems, 0.1f / sqrtf((float)(Cin * kH * kW)));
         reshape_weights_to_col(host_W, host_Wt, Cout, Cin, kH, kW);
 
+        // Per-launch timelines and the config's time origin, created before
+        // the CPU reference so that event creation falls outside the window
+        // after the idle. Default mode creates none, and every mark_* call
+        // below is then a no-op.
+        char config_key[64];
+        snprintf(config_key, sizeof(config_key), "%d_%d_%d_%d_%d", N, H, W_dim, Cin, Cout);
+        std::unique_ptr<LaunchTimeline> explicit_warmup_timeline, explicit_timed_timeline;
+        std::unique_ptr<LaunchTimeline> implicit_warmup_timeline, implicit_timed_timeline;
+        std::unique_ptr<ScopedEvent> config_origin;
+        if (per_launch) {
+            explicit_warmup_timeline.reset(new LaunchTimeline(2 * (size_t)warmup_launches));
+            explicit_timed_timeline.reset(new LaunchTimeline(2 * (size_t)timed_launches));
+            implicit_warmup_timeline.reset(new LaunchTimeline((size_t)warmup_launches));
+            implicit_timed_timeline.reset(new LaunchTimeline((size_t)timed_launches));
+            config_origin.reset(new ScopedEvent());
+        }
+
         // CPU reference (skip for large configs)
         bool ran_cpu = (X_elems < 16 * 1024 * 1024 / 4);  // skip if X > 16 MB
+        std::chrono::steady_clock::time_point cpu_ref_begin;
+        if (per_launch) cpu_ref_begin = std::chrono::steady_clock::now();
         if (ran_cpu) {
             cpu_conv2d_nhwc_ref(host_X, host_W, host_Y_ref, N, H, W_dim, Cin, Cout);
+        }
+        double cpu_ref_wall_us = 0.0;
+        if (per_launch) {
+            cpu_ref_wall_us = std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - cpu_ref_begin).count();
+            // The idle #223's ramp candidate is about ends here; every
+            // phase's offset_us is measured from this event.
+            CHECK_CU(cuEventRecord(config_origin->event, NULL));
         }
 
         // ---- Device allocations ----
@@ -484,20 +530,6 @@ int main(int argc, char **argv) {
             for (size_t i = 0; i < Y_elems; i++)
                 max_abs_vs_ref = fmaxf(max_abs_vs_ref, fabsf(host_Y_imp[i] - host_Y_ref[i]));
             printf("  vs CPU ref:  max_abs=%.2e\n", (double)max_abs_vs_ref);
-        }
-
-        // Per-launch timelines, created before any timed section so event
-        // creation never falls inside a window. Default mode creates none,
-        // and every mark_* call below is then a no-op.
-        char config_key[64];
-        snprintf(config_key, sizeof(config_key), "%d_%d_%d_%d_%d", N, H, W_dim, Cin, Cout);
-        std::unique_ptr<LaunchTimeline> explicit_warmup_timeline, explicit_timed_timeline;
-        std::unique_ptr<LaunchTimeline> implicit_warmup_timeline, implicit_timed_timeline;
-        if (per_launch) {
-            explicit_warmup_timeline.reset(new LaunchTimeline(2 * (size_t)warmup_launches));
-            explicit_timed_timeline.reset(new LaunchTimeline(2 * (size_t)timed_launches));
-            implicit_warmup_timeline.reset(new LaunchTimeline((size_t)warmup_launches));
-            implicit_timed_timeline.reset(new LaunchTimeline((size_t)timed_launches));
         }
 
         // ---- Timing: explicit (im2col + GEMM combined) ----
@@ -564,6 +596,8 @@ int main(int argc, char **argv) {
         // or BenchTimer::stop_ms(), which synchronizes on an event recorded
         // after the phase's last stop event.
         if (per_launch) {
+            printf("  per-launch-config config=%s cpu_ref=%s cpu_ref_wall_us=%.2f\n",
+                   config_key, ran_cpu ? "ran" : "skipped", cpu_ref_wall_us);
             struct Phase { const char *name; LaunchTimeline *timeline; double aggregate_us; };
             Phase explicit_phases[] = {
                 { "warmup", explicit_warmup_timeline.get(), -1.0 },
@@ -587,7 +621,7 @@ int main(int argc, char **argv) {
                 print_series(config_key, "wmma_gemm_conv",   phase.name, "span", gemm_span,   true);
                 print_series(config_key, "wmma_gemm_conv",   phase.name, "gap",  gemm_gap,    true);
                 print_series(config_key, "explicit_pair",    phase.name, "span", pair_span,   false);
-                print_phase_total(config_key, "explicit", phase.name, timeline, phase.aggregate_us);
+                print_phase_total(config_key, "explicit", phase.name, timeline, config_origin->event, phase.aggregate_us);
             }
             Phase implicit_phases[] = {
                 { "warmup", implicit_warmup_timeline.get(), -1.0 },
@@ -602,7 +636,7 @@ int main(int argc, char **argv) {
                 }
                 print_series(config_key, "implicit_gemm_conv", phase.name, "span", implicit_span, true);
                 print_series(config_key, "implicit_gemm_conv", phase.name, "gap",  implicit_gap,  true);
-                print_phase_total(config_key, "implicit", phase.name, timeline, phase.aggregate_us);
+                print_phase_total(config_key, "implicit", phase.name, timeline, config_origin->event, phase.aggregate_us);
             }
         }
         printf("\n");
