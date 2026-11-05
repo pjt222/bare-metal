@@ -186,6 +186,15 @@ test_that("bench_implicit_gemm --per-launch lines are invisible to every conv2d 
   lines <- fx("conv2d_implicit_per_launch")
   is_per_launch <- grepl("^\\s*per-launch", lines)
   expect_gt(sum(is_per_launch), 0)
+  # All four kinds are present, so a fixture recaptured from a bench that
+  # dropped one cannot pass silently.
+  for (kind in c("per-launch config=", "per-launch-summary config=",
+                 "per-launch-phase config=", "per-launch-config config=")) {
+    expect_true(any(startsWith(trimws(lines), kind)), info = kind)
+  }
+  # Neither parser match string appears in a per-launch line.
+  expect_false(any(grepl("Explicit (im2col+GEMM)", lines[is_per_launch], fixed = TRUE)))
+  expect_false(any(grepl("Implicit (single kern)", lines[is_per_launch], fixed = TRUE)))
   # By construction the lines carry neither filter token.
   expect_false(any(grepl("ms", lines[is_per_launch], fixed = TRUE)))
   expect_false(any(grepl("GFLOPS|TOPS", lines[is_per_launch], ignore.case = TRUE)))
