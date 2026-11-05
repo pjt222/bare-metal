@@ -16,8 +16,8 @@
  *   bench_implicit_gemm                # default: the gate's measurement
  *   bench_implicit_gemm --per-launch   # also print per-launch timing (#223)
  *
- * Positional arguments are ignored (bench_regress passes the config key
- * as `1 64 64 320 320`); unknown options exit 2.
+ * Positional arguments must be all digits and are ignored (bench_regress
+ * passes the config key as `1 64 64 320 320`); anything else exits 2.
  *
  * --per-launch records a CUevent pair around every launch of the 20 warmup
  * and 100 timed launches, per config, and prints each launch's span and the
@@ -325,17 +325,26 @@ static void fill_rand(float *arr, size_t n, float scale = 0.1f) {
 }
 
 static void print_usage(const char *program_name) {
-    fprintf(stderr, "usage: %s [--per-launch] [ignored positional args]\n", program_name);
+    fprintf(stderr, "usage: %s [--per-launch] [ignored numeric positional args]\n", program_name);
+}
+
+static bool is_all_digits(const char *text) {
+    if (*text == '\0') return false;
+    for (; *text; text++)
+        if (*text < '0' || *text > '9') return false;
+    return true;
 }
 
 int main(int argc, char **argv) {
-    // Positional arguments are accepted and ignored, as they always were:
-    // bench_regress.R passes the data/baselines.json config key split on
-    // '_' (`1 64 64 320 320`), and this bench runs every config regardless.
-    // Its other runners pass none: bench_all.R (bench_all.yml `args: []`),
-    // grid_measure.R (grid_sweep.yml `args: []`) and conv2d_variance.R. Unknown OPTIONS (anything starting with '-') are
-    // refused, so a mistyped flag cannot silently run the default mode in
-    // a campaign that meant to record per-launch.
+    // Numeric positional arguments are accepted and ignored, as they always
+    // were: bench_regress.R passes the data/baselines.json config key split
+    // on '_' (`1 64 64 320 320`), and this bench runs every config
+    // regardless. Its other runners pass none: bench_all.R (bench_all.yml
+    // `args: []`), grid_measure.R (grid_sweep.yml `args: []`) and
+    // conv2d_variance.R. Every other argument exits 2: an unknown option,
+    // and also a flag that lost its dashes (`per-launch`) or was pasted with
+    // a Unicode dash, which would otherwise run the default mode silently
+    // in a campaign that meant to record per-launch.
     bool per_launch = false;
     for (int arg_index = 1; arg_index < argc; arg_index++) {
         const char *arg = argv[arg_index];
@@ -344,8 +353,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_usage(argv[0]);
             return 0;
-        } else if (arg[0] == '-') {
-            fprintf(stderr, "unknown option: %s\n", arg);
+        } else if (!is_all_digits(arg)) {
+            fprintf(stderr, "unknown argument: %s\n", arg);
             print_usage(argv[0]);
             return 2;
         }
