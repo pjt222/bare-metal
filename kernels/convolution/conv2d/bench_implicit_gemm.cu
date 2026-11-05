@@ -66,8 +66,16 @@
 //             waited for the start event itself, or stalled between
 //             commands. A small gap does not rule out a host wait: that
 //             wait can sit in the span instead.
-//             gap[0] holds the host's submission latency for the first
-//             launch, because the origin event is processed on an idle GPU.
+//
+// Launch 0 of every phase follows an idle GPU, because each phase starts
+// after a synchronization. Its post-idle latency is split three ways:
+// - before the origin (in timed phases, between BenchTimer's start event
+//   and the origin);
+// - in gap[0] (origin to start[0], two back-to-back event commands);
+// - in span[0], which by construction takes the delay of the launch
+//   command, the last of the three to reach the GPU.
+// The instrument cannot tell that latency from a slow first launch after
+// idle.
 //
 // gap[j] + span[j] is what one event between consecutive launches would
 // report. On the explicit path the launches alternate im2col, GEMM,
@@ -162,11 +170,13 @@ static double sum_of(const std::vector<float> &values) {
 // explicit_pair (start of im2col to end of the GEMM, per iteration), which
 // gets a summary only. Values are microseconds in launch order.
 //
-// Percentiles are nearest-rank. idx0_us is the first launch of the phase
-// on its own, because its gap holds the submission latency after an idle
-// GPU. head5_p50_us is the median of indices 1..5 and tail5_p50_us the
-// median of the last five, so a ramp has to show in several launches:
-// one stall cannot move a median of five. Event timestamps step in about
+// Percentiles are nearest-rank. idx0_us is the series' first value on its
+// own, because launch 0 follows an idle GPU and both its gap and its span
+// carry post-idle latency (see LaunchTimeline). For wmma_gemm_conv the
+// first value is the phase's second launch (j = 1), which is kept apart
+// only for uniformity. head5_p50_us is the median of indices 1..5 and
+// tail5_p50_us the median of the last five, so a ramp has to show in
+// several launches: one stall cannot move a median of five. Event timestamps step in about
 // 1.02 us on this machine (most values sit on a 1.024 us grid). The %.2f
 // format prints two decimals, but differences below about 1 us are not
 // readable, which matters for the Small config's 60-140 us kernels.
