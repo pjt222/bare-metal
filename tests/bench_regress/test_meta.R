@@ -213,10 +213,12 @@ test_that("summarise_meta: clean state produces a one-line summary", {
 # the .Rd was updated while the roxygen block was not. A consumer
 # (scripts/probe/conv2d_variance.R) followed the stale roxygen and recorded
 # `power_capped = NA` on every row of a real run. Since #225, roxygen2 is in
-# renv.lock and `make roxygen-check` (CI) fails if the .Rd differs from what
-# the roxygen block generates, so the two can no longer drift apart. This test
-# still earns its place: that check proves the copies AGREE, this one proves
-# they are TRUE -- that they match what the function emits.
+# renv.lock and scripts/audit/roxygen_check.R (CI, or `make roxygen-check`
+# locally; not part of the pre-push gate) fails when the .Rd differs from what
+# the roxygen block generates, so drift between the two fails CI instead of
+# going unnoticed. This test still earns its place: that check proves the
+# copies AGREE, this one proves they are TRUE -- that they match what the
+# function emits.
 #
 # What this pins, for capture_gpu_state() only, in BOTH copies: the top-level
 # names (gpu, host, iso_time), the field list under `gpu`, and the field list
