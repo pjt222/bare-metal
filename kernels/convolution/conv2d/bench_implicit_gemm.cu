@@ -186,6 +186,14 @@ static double sum_of(const std::vector<float> &values) {
 // config on one axis: GPU time from the config's origin, an event recorded
 // as the CPU reference returns, to the phase's own origin. Read a ramp
 // against offset_us + the launch's position, not against launch index.
+// The first GPU work after the idle is NOT instrumented:
+// - the device allocations and host-to-device copies;
+// - one run of each kernel for the correctness check, each followed by a
+//   synchronization and a device-to-host copy;
+// - a host-only comparison, during which the GPU idles a second time.
+// All of it comes before the explicit warmup's origin, so the window's
+// length is that phase's offset_us. A ramp that starts and ends inside it
+// is invisible here.
 //
 // total_us runs from the phase's origin to its last stop event, so it is
 // the sum of all its spans and gaps. aggregate_us, on timed phases only,
