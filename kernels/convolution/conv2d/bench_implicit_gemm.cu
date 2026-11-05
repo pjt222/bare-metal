@@ -11,6 +11,16 @@
  * Build:
  *   nvcc -arch=sm_86 -O2 -o bench_implicit_gemm bench_implicit_gemm.cu \
  *        -lcuda -I../../kernels/_common
+ *
+ * Usage:
+ *   bench_implicit_gemm                # default: the gate's measurement
+ *   bench_implicit_gemm --per-launch   # also print per-launch timing (#223)
+ *
+ * --per-launch records a CUevent after every launch of the 20 warmup and
+ * 100 timed launches, per config, and prints one raw line and one summary
+ * line per kernel and phase. The default path creates no extra events and
+ * prints no extra lines, so bench_regress and conv2d_variance.R see the
+ * same output as before. See print_per_launch() for the line format.
  */
 
 #include <cstdio>
@@ -18,11 +28,111 @@
 #include <cmath>
 #include <cstring>
 #include <unistd.h>
+#include <vector>
+#include <memory>
+#include <algorithm>
 #include <cuda.h>
 #include <cuda_fp16.h>
 
 #include "../../_common/bench.h"
 #include "../../_common/check.h"
+
+// -----------------------------------------------------------------------
+// Per-launch timing (#223 step 1). Off unless --per-launch is given.
+//
+// A chain of events in the default stream: event 0 is recorded before the
+// first launch of a phase, then one event after every launch. The time
+// between consecutive events is the GPU time of the launch in between,
+// so a clock ramp shows up as slow early launches, a throttle event as a
+// slow run in the middle, and a uniformly slow window as neither.
+//
+// Event 0 of a phase is recorded while the GPU is idle, so the first
+// interval also contains the host's submission latency for the first
+// launch (microseconds against a ~1 ms kernel).
+// -----------------------------------------------------------------------
+struct LaunchEventChain {
+    std::vector<CUevent> events;
+
+    explicit LaunchEventChain(size_t event_count) : events(event_count) {
+        for (CUevent &event : events)
+            CHECK_CU(cuEventCreate(&event, CU_EVENT_DEFAULT));
+    }
+    ~LaunchEventChain() {
+        for (CUevent event : events) cuEventDestroy(event);
+    }
+    LaunchEventChain(const LaunchEventChain &) = delete;
+    LaunchEventChain &operator=(const LaunchEventChain &) = delete;
+
+    void record(size_t event_index) {
+        CHECK_CU(cuEventRecord(events[event_index], NULL));
+    }
+    // Caller must have synchronized past events[to_index].
+    float elapsed_us(size_t from_index, size_t to_index) const {
+        float elapsed_ms = 0.0f;
+        CHECK_CU(cuEventElapsedTime(&elapsed_ms, events[from_index], events[to_index]));
+        return elapsed_ms * 1000.0f;
+    }
+};
+
+// Nearest-rank percentile: the smallest value with at least
+// `fraction` of the sample at or below it.
+static float nearest_rank(const std::vector<float> &sorted_values, double fraction) {
+    size_t sample_count = sorted_values.size();
+    size_t rank = (size_t)ceil(fraction * (double)sample_count);
+    if (rank < 1) rank = 1;
+    if (rank > sample_count) rank = sample_count;
+    return sorted_values[rank - 1];
+}
+
+static double mean_of_range(const std::vector<float> &values, size_t begin, size_t end) {
+    double total = 0.0;
+    for (size_t index = begin; index < end; index++) total += values[index];
+    return end > begin ? total / (double)(end - begin) : 0.0;
+}
+
+// Two lines per (kernel, phase), tab-free, `key=value` fields:
+//
+//   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> n=<count> us=<v1,v2,...>
+//   per-launch-summary config=... kernel=... phase=... n=... min_us=... p10_us=... p50_us=...
+//       p90_us=... max_us=... first5_us=... last5_us=... sum_us=... [aggregate_us=...]
+//
+// Values are microseconds in launch order. aggregate_us, on timed phases
+// only, is the BenchTimer window the default output reports (as ms per
+// launch). Comparing it with sum_us shows how much the extra events cost
+// inside the window. The lines avoid the substrings `ms` and `GFLOPS` and
+// never start with `===`/`---`, so parse_throughput() cannot select them.
+// `print_raw = false` prints only the summary (used for the explicit pair,
+// whose raw values are im2col + gemm per index).
+static void print_per_launch(const char *config_key, const char *kernel_name,
+                             const char *phase_name, const std::vector<float> &values_us,
+                             bool print_raw, double aggregate_us) {
+    size_t sample_count = values_us.size();
+    if (sample_count == 0) return;
+    if (print_raw) {
+        printf("  per-launch config=%s kernel=%s phase=%s n=%zu us=",
+               config_key, kernel_name, phase_name, sample_count);
+        for (size_t index = 0; index < sample_count; index++)
+            printf(index == 0 ? "%.2f" : ",%.2f", (double)values_us[index]);
+        printf("\n");
+    }
+    std::vector<float> sorted_values(values_us);
+    std::sort(sorted_values.begin(), sorted_values.end());
+    size_t edge_count = sample_count < 5 ? sample_count : 5;
+    printf("  per-launch-summary config=%s kernel=%s phase=%s n=%zu"
+           " min_us=%.2f p10_us=%.2f p50_us=%.2f p90_us=%.2f max_us=%.2f"
+           " first5_us=%.2f last5_us=%.2f sum_us=%.2f",
+           config_key, kernel_name, phase_name, sample_count,
+           (double)sorted_values.front(),
+           (double)nearest_rank(sorted_values, 0.10),
+           (double)nearest_rank(sorted_values, 0.50),
+           (double)nearest_rank(sorted_values, 0.90),
+           (double)sorted_values.back(),
+           mean_of_range(values_us, 0, edge_count),
+           mean_of_range(values_us, sample_count - edge_count, sample_count),
+           mean_of_range(values_us, 0, sample_count) * (double)sample_count);
+    if (aggregate_us >= 0.0) printf(" aggregate_us=%.2f", aggregate_us);
+    printf("\n");
+}
 
 // Helper: find cubin in CWD or in the binary's directory
 static bool find_cubin(const char *name, char *out_path, size_t out_len) {
@@ -125,7 +235,30 @@ static void fill_rand(float *arr, size_t n, float scale = 0.1f) {
         arr[i] = scale * (2.0f * (float)rand() / RAND_MAX - 1.0f);
 }
 
-int main(void) {
+static void print_usage(const char *program_name) {
+    fprintf(stderr, "usage: %s [--per-launch]\n", program_name);
+}
+
+int main(int argc, char **argv) {
+    // Unknown arguments are refused, so a mistyped flag cannot silently
+    // run the default mode in a campaign that meant to record per-launch.
+    bool per_launch = false;
+    for (int arg_index = 1; arg_index < argc; arg_index++) {
+        if (strcmp(argv[arg_index], "--per-launch") == 0) {
+            per_launch = true;
+        } else if (strcmp(argv[arg_index], "--help") == 0 || strcmp(argv[arg_index], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "unknown argument: %s\n", argv[arg_index]);
+            print_usage(argv[0]);
+            return 2;
+        }
+    }
+
+    const int warmup_launches = 20;
+    const int timed_launches  = 100;
+
     // Test configurations: (N, H, W, Cin, Cout, label)
     struct Config {
         int N, H, W_dim, Cin, Cout;
@@ -164,7 +297,11 @@ int main(void) {
 
     printf("=== Implicit GEMM vs Explicit im2col + GEMM ===\n");
     printf("  Explicit: im2col_nhwc_fp16 → col buffer → wmma_gemm_conv\n");
-    printf("  Implicit: implicit_gemm_conv (indices on-the-fly, no col buffer)\n\n");
+    printf("  Implicit: implicit_gemm_conv (indices on-the-fly, no col buffer)\n");
+    if (per_launch)
+        printf("  Per-launch timing: on (--per-launch), %d warmup + %d timed launches per kernel\n",
+               warmup_launches, timed_launches);
+    printf("\n");
 
     for (int ci = 0; ci < num_configs; ci++) {
         int N     = configs[ci].N;
@@ -273,40 +410,105 @@ int main(void) {
             printf("  vs CPU ref:  max_abs=%.2e\n", (double)max_abs_vs_ref);
         }
 
+        // Per-launch event chains, created before any timed section so
+        // event creation never falls inside a window. Explicit: event 0,
+        // then one event after im2col and one after the GEMM per launch.
+        // Implicit: event 0, then one event per launch. Default mode
+        // creates none of them.
+        char config_key[64];
+        snprintf(config_key, sizeof(config_key), "%d_%d_%d_%d_%d", N, H, W_dim, Cin, Cout);
+        std::unique_ptr<LaunchEventChain> explicit_warmup_chain, explicit_timed_chain;
+        std::unique_ptr<LaunchEventChain> implicit_warmup_chain, implicit_timed_chain;
+        if (per_launch) {
+            explicit_warmup_chain.reset(new LaunchEventChain(1 + 2 * (size_t)warmup_launches));
+            explicit_timed_chain.reset(new LaunchEventChain(1 + 2 * (size_t)timed_launches));
+            implicit_warmup_chain.reset(new LaunchEventChain(1 + (size_t)warmup_launches));
+            implicit_timed_chain.reset(new LaunchEventChain(1 + (size_t)timed_launches));
+        }
+
         // ---- Timing: explicit (im2col + GEMM combined) ----
-        float ms_explicit = 0.0f;
+        float ms_explicit = 0.0f, explicit_window_ms = 0.0f;
         {
-            for (int t = 0; t < 20; t++) {
+            if (per_launch) explicit_warmup_chain->record(0);
+            for (int t = 0; t < warmup_launches; t++) {
                 CHECK_CU(cuLaunchKernel(fn_im2col, im2col_blocks,1,1, im2col_threads,1,1, 0,0, im2col_args,0));
+                if (per_launch) explicit_warmup_chain->record(1 + 2 * (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_gemm_explicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_EXPLICIT,0, gemm_exp_args,0));
+                if (per_launch) explicit_warmup_chain->record(2 + 2 * (size_t)t);
             }
             CHECK_CU(cuCtxSynchronize());
             BenchTimer bt; bt.start();
-            for (int t = 0; t < 100; t++) {
+            if (per_launch) explicit_timed_chain->record(0);
+            for (int t = 0; t < timed_launches; t++) {
                 CHECK_CU(cuLaunchKernel(fn_im2col, im2col_blocks,1,1, im2col_threads,1,1, 0,0, im2col_args,0));
+                if (per_launch) explicit_timed_chain->record(1 + 2 * (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_gemm_explicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_EXPLICIT,0, gemm_exp_args,0));
+                if (per_launch) explicit_timed_chain->record(2 + 2 * (size_t)t);
             }
-            ms_explicit = bt.stop_ms() / 100.0f;
+            explicit_window_ms = bt.stop_ms();
+            ms_explicit = explicit_window_ms / (float)timed_launches;
         }
 
         // ---- Timing: implicit GEMM (single kernel) ----
-        float ms_implicit = 0.0f;
+        float ms_implicit = 0.0f, implicit_window_ms = 0.0f;
         {
-            for (int t = 0; t < 20; t++)
+            if (per_launch) implicit_warmup_chain->record(0);
+            for (int t = 0; t < warmup_launches; t++) {
                 CHECK_CU(cuLaunchKernel(fn_gemm_implicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_IMPLICIT,0, gemm_imp_args,0));
+                if (per_launch) implicit_warmup_chain->record(1 + (size_t)t);
+            }
             CHECK_CU(cuCtxSynchronize());
             BenchTimer bt; bt.start();
-            for (int t = 0; t < 100; t++)
+            if (per_launch) implicit_timed_chain->record(0);
+            for (int t = 0; t < timed_launches; t++) {
                 CHECK_CU(cuLaunchKernel(fn_gemm_implicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_IMPLICIT,0, gemm_imp_args,0));
-            ms_implicit = bt.stop_ms() / 100.0f;
+                if (per_launch) implicit_timed_chain->record(1 + (size_t)t);
+            }
+            implicit_window_ms = bt.stop_ms();
+            ms_implicit = implicit_window_ms / (float)timed_launches;
         }
 
         double gflops_exp = flops_g / (ms_explicit * 1e-3);
         double gflops_imp = flops_g / (ms_implicit * 1e-3);
 
         printf("  Explicit (im2col+GEMM): %.3f ms  → %6.0f GFLOPS\n", ms_explicit, gflops_exp);
-        printf("  Implicit (single kern): %.3f ms  → %6.0f GFLOPS  (%.2f× speedup)\n\n",
+        printf("  Implicit (single kern): %.3f ms  → %6.0f GFLOPS  (%.2f× speedup)\n",
                ms_implicit, gflops_imp, ms_explicit / ms_implicit);
+
+        // Every chain is complete: each phase ended in cuCtxSynchronize()
+        // or BenchTimer::stop_ms(), which synchronizes on an event
+        // recorded after the chain's last event.
+        if (per_launch) {
+            struct ExplicitPhase { const char *name; LaunchEventChain *chain; int launches; double aggregate_us; };
+            ExplicitPhase explicit_phases[] = {
+                { "warmup", explicit_warmup_chain.get(), warmup_launches, -1.0 },
+                { "timed",  explicit_timed_chain.get(),  timed_launches,  (double)explicit_window_ms * 1000.0 },
+            };
+            for (const ExplicitPhase &phase : explicit_phases) {
+                std::vector<float> im2col_us, gemm_us, pair_us;
+                for (int t = 0; t < phase.launches; t++) {
+                    size_t before_im2col = 2 * (size_t)t, after_im2col = before_im2col + 1, after_gemm = before_im2col + 2;
+                    im2col_us.push_back(phase.chain->elapsed_us(before_im2col, after_im2col));
+                    gemm_us.push_back(phase.chain->elapsed_us(after_im2col, after_gemm));
+                    pair_us.push_back(phase.chain->elapsed_us(before_im2col, after_gemm));
+                }
+                print_per_launch(config_key, "im2col_nhwc_fp16", phase.name, im2col_us, true,  -1.0);
+                print_per_launch(config_key, "wmma_gemm_conv",   phase.name, gemm_us,   true,  -1.0);
+                print_per_launch(config_key, "explicit_pair",    phase.name, pair_us,   false, phase.aggregate_us);
+            }
+            struct ImplicitPhase { const char *name; LaunchEventChain *chain; int launches; double aggregate_us; };
+            ImplicitPhase implicit_phases[] = {
+                { "warmup", implicit_warmup_chain.get(), warmup_launches, -1.0 },
+                { "timed",  implicit_timed_chain.get(),  timed_launches,  (double)implicit_window_ms * 1000.0 },
+            };
+            for (const ImplicitPhase &phase : implicit_phases) {
+                std::vector<float> implicit_us;
+                for (int t = 0; t < phase.launches; t++)
+                    implicit_us.push_back(phase.chain->elapsed_us((size_t)t, (size_t)t + 1));
+                print_per_launch(config_key, "implicit_gemm_conv", phase.name, implicit_us, true, phase.aggregate_us);
+            }
+        }
+        printf("\n");
 
         cuMemFree(d_X); cuMemFree(d_col); cuMemFree(d_Wt); cuMemFree(d_Y);
         delete[] host_X; delete[] host_W; delete[] host_Y_ref;

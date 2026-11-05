@@ -23,7 +23,7 @@ buffer, implicit GEMM eliminates it entirely.
 |---|---|
 | `bench.cu`                       | direct vs im2col baseline |
 | `bench_im2col.cu`                | im2col path in isolation |
-| `bench_implicit_gemm.cu`         | implicit GEMM v1 alone |
+| `bench_implicit_gemm.cu`         | explicit im2col + GEMM vs implicit GEMM v1 (the gate's conv2d config). `--per-launch` adds per-launch timing lines (#223) |
 | `bench_implicit_v2.cu`           | implicit GEMM v2 alone |
 
 ### Debug harnesses (kept; gitignored binaries)
