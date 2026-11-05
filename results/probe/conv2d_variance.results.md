@@ -68,8 +68,8 @@ Found by review, after the run.
 
 **Clock and P-state almost certainly did not reach the timed window.** The
 bench runs `cpu_conv2d_nhwc_ref` before **every** config's GPU work
-(`bench_implicit_gemm.cu:212-216`; explicit timed at `:276-290`, implicit at
-`:292-302`). It is several seconds of CPU per config. The reference is
+(`bench_implicit_gemm.cu:212-216` at `50bc147`; explicit timed at `:276-290`,
+implicit at `:292-302`, same commit). It is several seconds of CPU per config. The reference is
 skipped only for inputs over 16 MB, and all four configs are under that:
 SD64 1.3 M floats, SD32 0.66 M, SD128 2.6 M, Small 0.26 M, against a 4.2 M
 limit. A process takes about 19 s (median 19.2 s between samples); its
