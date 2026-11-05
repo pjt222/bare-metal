@@ -137,6 +137,14 @@ jobs:
       - name: Install cuasmR from the working tree
         run: R CMD INSTALL R/cuasmR
 
+      # cuasmR's man/*.Rd and NAMESPACE are generated, not hand-kept (#225):
+      # regenerate them with the roxygen2 renv.lock pins, in a temporary copy,
+      # and fail on any byte that differs from the committed files, or on any
+      # man page without roxygen2's header. A separate step, not a test suite,
+      # so the R_SUITES / --expect carriers do not move.
+      - name: Check cuasmR docs match their roxygen blocks
+        run: Rscript scripts/audit/roxygen_check.R
+
       # --expect is the outside denominator: "all discovered suites passed" is
       # always 100% of whatever was found, so without it a vanished or renamed
       # suite is invisible. Keep in step with R_SUITES in the Makefile.

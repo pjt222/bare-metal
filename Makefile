@@ -73,7 +73,7 @@ REGRESS_BENCH := \
 # ------------------------------------------------------------------
 # Default target
 # ------------------------------------------------------------------
-.PHONY: all cubins benches test test-r clean disasm sass help renv-check \
+.PHONY: all cubins benches test test-r clean disasm sass help renv-check roxygen roxygen-check \
         setup verify bench bench-all bench-reference compare-reference reference-pipeline reproduce figures \
         publish-hf \
         tutorial gemm reductions attention convolution elementwise memory_layout composition reference
@@ -272,6 +272,16 @@ setup:
 renv-check:
 	@$(RSCRIPT) scripts/audit/renv_check.R
 
+# cuasmR's man/*.Rd and NAMESPACE are generated from the roxygen blocks in
+# R/cuasmR/R/*.R by the roxygen2 that renv.lock pins (#225). Edit the roxygen
+# block, never the .Rd, then `make roxygen`. CI runs `make roxygen-check`,
+# which regenerates into a temporary copy and fails on any difference.
+roxygen:
+	@$(RSCRIPT) scripts/audit/roxygen_check.R --write
+
+roxygen-check:
+	@$(RSCRIPT) scripts/audit/roxygen_check.R
+
 verify:
 	@$(RSCRIPT) scripts/verify_setup.R
 
@@ -398,6 +408,8 @@ help:
 	@echo "  make reproduce — one-stop: setup + verify + build + bench + figures"
 	@echo "  make setup     — renv::restore() + install cuasmR + renv sync check"
 	@echo "  make renv-check — verify renv.lock matches the installed library"
+	@echo "  make roxygen   — regenerate cuasmR man/*.Rd + NAMESPACE from the roxygen blocks"
+	@echo "  make roxygen-check — fail if cuasmR's generated docs differ from the roxygen blocks"
 	@echo "  make verify    — environment check (CUDA, GPU, cuasmR)"
 	@echo "  make bench     — run benches vs data/baselines.json"
 	@echo "  make figures   — regenerate docs/figures via R scripts"
