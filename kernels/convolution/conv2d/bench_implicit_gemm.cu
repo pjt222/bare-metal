@@ -228,14 +228,22 @@ static double sum_of(const std::vector<float> &values) {
 // this launch's submission and the previous one's (launch 0: from the
 // phase's host origin), in microseconds. It is about zero when the host
 // keeps the queue fed, and spikes when the host thread was late submitting
-// (host starvation). It separates a host-starvation gap from a GPU-side
-// one: a large GPU gap[j] with a small host_gap[j] is the GPU waiting on
-// its own (it had the launch queued but had not reached it, or it
-// stalled); a large GPU gap[j] with a large host_gap[j] is the host
-// arriving late. The GPU and host clocks have different origins, so only
-// their per-launch deltas (gap vs host_gap) are comparable, not absolute
-// positions. It does not separate slow clocks from preemption inside a
-// span (that still needs #223 step 5).
+// (host starvation). It is the companion of the GPU gap at the same index,
+// not of the span: host_gap[j] and gap[j] both span the interval ending at
+// launch j's start, whereas the commands that inflate span[j] (launch[j],
+// stop[j]) are submitted after submit[j] and so fall in host_gap[j+1].
+// On the gap axis it reads one way cleanly and one way only partly:
+// a large gap[j] with a SMALL host_gap[j] is the GPU waiting on its own
+// (the host was prompt; the GPU had the launch queued but had not reached
+// it, or it stalled). A large gap[j] with a LARGE host_gap[j] is only
+// consistent with the host arriving late: while the host runs ahead of the
+// GPU, a host hiccup inflates host_gap without the GPU ever waiting for it,
+// so a coincident GPU stall would trip the same pattern. The GPU and host
+// clocks have different origins, so only their per-launch deltas (gap vs
+// host_gap) are comparable, not absolute positions. host_gap does not
+// resolve a slow span: the late-command cause of span[j] sits in
+// host_gap[j+1], mixed there with launch j+1's own start (#223 step 5's
+// clock telemetry is what a slow span needs).
 //
 // total_us runs from the phase's origin to its last stop event, so it is
 // the sum of all its spans and gaps. aggregate_us, on timed phases only,
