@@ -3,8 +3,10 @@
 #
 # R/cuasmR/man/*.Rd and R/cuasmR/NAMESPACE are generated from the roxygen
 # blocks in R/cuasmR/R/*.R. There is one copy to edit: the roxygen block.
-# roxygen2 is pinned in renv.lock at the version DESCRIPTION's RoxygenNote
-# names, so a regeneration on any machine produces the same bytes.
+# The roxygen2 that generates them is the one renv.lock pins, and
+# DESCRIPTION's RoxygenNote must name that same version. Both are enforced
+# below, so a regeneration on any machine with the restored library
+# produces the same bytes.
 #
 # Run from the repo root:
 #   Rscript scripts/audit/roxygen_check.R           # check (make roxygen-check, CI)
@@ -44,6 +46,23 @@ if (!requireNamespace("roxygen2", quietly = TRUE)) {
 roxygen_version <- as.character(utils::packageVersion("roxygen2"))
 roxygen_note <- unname(read.dcf(file.path(package_dir, "DESCRIPTION"),
                                 fields = "RoxygenNote")[1, 1])
+
+# The installed roxygen2 must be the one renv.lock pins, in both modes:
+# another version regenerates different bytes (and --write would rewrite
+# every page and RoxygenNote with it). To upgrade, change the pin first
+# (renv::install("roxygen2@<version>"), then snapshot), then `make roxygen`.
+locked_version <- tryCatch(
+  jsonlite::fromJSON("renv.lock", simplifyVector = FALSE)$Packages$roxygen2$Version,
+  error = function(e) NULL)
+if (is.null(locked_version)) {
+  fail_to_run("renv.lock has no roxygen2 record, so there is no pinned version to check against.")
+}
+if (!identical(roxygen_version, locked_version)) {
+  fail_to_run(sprintf(paste0(
+    "roxygen2 %s is installed, but renv.lock pins %s. Run `make setup` ",
+    "(renv::restore()). To upgrade roxygen2, change the pin in renv.lock first."),
+    roxygen_version, locked_version))
+}
 
 if (write_mode) {
   regenerated <- tryCatch({
@@ -116,6 +135,15 @@ run_check <- function() {
   page_count <- sum(grepl("\\.Rd$", compared_files))
 
   drift <- character()
+
+  # A RoxygenNote that names another version than the pinned roxygen2 is
+  # drift in either direction. A newer note would otherwise pass: roxygen2
+  # only remarks on it and leaves DESCRIPTION alone.
+  if (!identical(roxygen_note, roxygen_version)) {
+    drift <- c(drift, sprintf(paste0(
+      "DESCRIPTION: RoxygenNote is %s, but the pinned roxygen2 is %s; ",
+      "regenerate with `make roxygen` and commit"), roxygen_note, roxygen_version))
+  }
 
   # roxygen2 overwrites (or deletes) a file only when it carries roxygen2's
   # header, and leaves a header-less file alone: a hand-written page or
