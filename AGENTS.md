@@ -340,20 +340,29 @@ compares byte for byte. It fails (exit 1) on:
 - a `DESCRIPTION` `RoxygenNote` that is not the pinned version.
 
 Both modes refuse to run (exit 2) when the installed roxygen2 is not the
-version `renv.lock` pins. The check is not part of the pre-push gate, so
+version `renv.lock` pins. Through `make`, both failure codes surface as
+`make`'s exit status 2; run the script directly to tell them apart. The check is not part of the pre-push gate, so
 drift is caught in CI, or locally if you run it.
 
 After pulling the change that added roxygen2 to `renv.lock`, run
 `make setup`. Otherwise the pre-push `renv_check` fails, and `make roxygen*`
 exits 2.
 
-Upgrading roxygen2 is a deliberate change, made in one commit:
-1. `renv::install("roxygen2@<version>")`, then `renv::snapshot()`.
-2. Revert the snapshot's rewrite of `R.Version` to the CI-pinned version.
-   Local R is newer than CI's (#230).
-3. `make roxygen`.
-4. Commit `renv.lock`, `DESCRIPTION` (the new `RoxygenNote`), `man/` and
-   `NAMESPACE` together.
+Upgrading roxygen2 is a deliberate change, made in one commit. Order
+matters: the check refuses to run until the lock pins the installed
+version, and a snapshot records the *installed* cuasmR, so cuasmR has to
+be reinstalled after regenerating and snapshotted again.
+1. `renv::install("roxygen2@<version>")`, then `renv::snapshot()`. Revert
+   the snapshot's rewrite of `R.Version` to the CI-pinned version; local R
+   is newer than CI's (#230).
+2. `make roxygen`. This regenerates the pages and sets the new
+   `RoxygenNote`.
+3. `Rscript scripts/install_cuasmR.R`, so the installed cuasmR carries the
+   new `RoxygenNote`.
+4. `renv::snapshot()` again, so the lock's cuasmR record matches. Revert
+   `R.Version` again.
+5. `make roxygen-check` and `make renv-check`, both clean.
+6. Commit `renv.lock`, `DESCRIPTION`, `man/` and `NAMESPACE` together.
 
 Required packages: `jsonlite`, `ggplot2`, `scales`, `patchwork`,
 `dplyr`, `tidyr`, `tibble`, `rmarkdown`, `yaml`, `testthat`, `roxygen2`
