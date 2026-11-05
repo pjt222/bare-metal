@@ -21,8 +21,9 @@
  *
  * --per-launch records a CUevent pair around every launch of the 20 warmup
  * and 100 timed iterations, per config (an explicit iteration is two
- * launches, im2col then GEMM), and prints each launch's span and the gap
- * before it, per kernel and phase (see LaunchTimeline). The default
+ * launches, im2col then GEMM), and prints each launch's GPU span, the GPU
+ * gap before it, and a host-side submission gap (host_gap), per kernel and
+ * phase (see LaunchTimeline). The default
  * path creates no extra events and prints no extra lines, so bench_regress
  * and conv2d_variance.R see the same output as before. See print_series()
  * for the line format.
@@ -93,9 +94,16 @@
 struct LaunchTimeline {
     CUevent origin = nullptr;
     std::vector<CUevent> start_events, stop_events;
+    // Host-side (CLOCK_MONOTONIC) submission times, one per launch, in
+    // microseconds from host_origin. They sit beside the GPU events to tell
+    // a host-starvation gap from a GPU-side one (#223): the two clocks have
+    // different origins, so only their per-launch deltas are comparable.
+    std::chrono::steady_clock::time_point host_origin;
+    std::vector<double> host_submit_us;
 
     explicit LaunchTimeline(size_t launch_count)
-        : start_events(launch_count), stop_events(launch_count) {
+        : start_events(launch_count), stop_events(launch_count),
+          host_submit_us(launch_count) {
         CHECK_CU(cuEventCreate(&origin, CU_EVENT_DEFAULT));
         for (size_t j = 0; j < launch_count; j++) {
             CHECK_CU(cuEventCreate(&start_events[j], CU_EVENT_DEFAULT));
@@ -111,8 +119,17 @@ struct LaunchTimeline {
     LaunchTimeline &operator=(const LaunchTimeline &) = delete;
 
     size_t launch_count() const { return start_events.size(); }
-    void record_origin()        { CHECK_CU(cuEventRecord(origin, NULL)); }
-    void record_start(size_t j) { CHECK_CU(cuEventRecord(start_events[j], NULL)); }
+    void record_origin() {
+        host_origin = std::chrono::steady_clock::now();
+        CHECK_CU(cuEventRecord(origin, NULL));
+    }
+    // Host time is read just before the start event is enqueued, so it marks
+    // when the host reached this launch's submission.
+    void record_start(size_t j) {
+        host_submit_us[j] = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - host_origin).count();
+        CHECK_CU(cuEventRecord(start_events[j], NULL));
+    }
     void record_stop(size_t j)  { CHECK_CU(cuEventRecord(stop_events[j],  NULL)); }
 
     // Callers must have synchronized past the phase's last event.
@@ -124,6 +141,11 @@ struct LaunchTimeline {
     float span_us(size_t j) const { return elapsed_us(start_events[j], stop_events[j]); }
     float gap_us(size_t j) const  { return elapsed_us(j == 0 ? origin : stop_events[j - 1], start_events[j]); }
     float total_us() const        { return elapsed_us(origin, stop_events.back()); }
+    // Host time between this launch's submission and the previous one's
+    // (launch 0: from host_origin). Large when the host fell behind.
+    double host_gap_us(size_t j) const {
+        return host_submit_us[j] - (j == 0 ? 0.0 : host_submit_us[j - 1]);
+    }
 };
 
 // No-ops when timeline is null, which is the default mode.
@@ -165,7 +187,7 @@ static double sum_of(const std::vector<float> &values) {
 
 // Output lines, all `key=value` fields:
 //
-//   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> metric=<span|gap> n=<count> us=<v1,v2,...>
+//   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> metric=<span|gap|host_gap> n=<count> us=<v1,v2,...>
 //   per-launch-summary config=... kernel=... phase=... metric=... n=... min_us=... p10_us=... p50_us=...
 //       p90_us=... max_us=... idx0_us=... head5_p50_us=... tail5_p50_us=... sum_us=...
 //   per-launch-config config=... cpu_ref=<ran|skipped> cpu_ref_wall_us=...
@@ -201,6 +223,19 @@ static double sum_of(const std::vector<float> &values) {
 // All of it comes before the explicit warmup's origin, so the window's
 // length is that phase's offset_us. A ramp that starts and ends inside it
 // is invisible here.
+//
+// host_gap is a host-side (CLOCK_MONOTONIC) metric: the host time between
+// this launch's submission and the previous one's (launch 0: from the
+// phase's host origin), in microseconds. It is about zero when the host
+// keeps the queue fed, and spikes when the host thread was late submitting
+// (host starvation). It separates a host-starvation gap from a GPU-side
+// one: a large GPU gap[j] with a small host_gap[j] is the GPU waiting on
+// its own (it had the launch queued but had not reached it, or it
+// stalled); a large GPU gap[j] with a large host_gap[j] is the host
+// arriving late. The GPU and host clocks have different origins, so only
+// their per-launch deltas (gap vs host_gap) are comparable, not absolute
+// positions. It does not separate slow clocks from preemption inside a
+// span (that still needs #223 step 5).
 //
 // total_us runs from the phase's origin to its last stop event, so it is
 // the sum of all its spans and gaps. aggregate_us, on timed phases only,
@@ -655,20 +690,25 @@ int main(int argc, char **argv) {
                 const LaunchTimeline &timeline = *phase.timeline;
                 size_t iterations = timeline.launch_count() / 2;
                 std::vector<float> im2col_span, im2col_gap, gemm_span, gemm_gap, pair_span;
+                std::vector<float> im2col_host_gap, gemm_host_gap;
                 for (size_t t = 0; t < iterations; t++) {
                     size_t im2col_j = 2 * t, gemm_j = 2 * t + 1;
                     im2col_span.push_back(timeline.span_us(im2col_j));
                     im2col_gap.push_back(timeline.gap_us(im2col_j));
+                    im2col_host_gap.push_back((float)timeline.host_gap_us(im2col_j));
                     gemm_span.push_back(timeline.span_us(gemm_j));
                     gemm_gap.push_back(timeline.gap_us(gemm_j));
+                    gemm_host_gap.push_back((float)timeline.host_gap_us(gemm_j));
                     pair_span.push_back(LaunchTimeline::elapsed_us(timeline.start_events[im2col_j],
                                                                    timeline.stop_events[gemm_j]));
                 }
-                print_series(config_key, "im2col_nhwc_fp16", phase.name, "span", im2col_span, true);
-                print_series(config_key, "im2col_nhwc_fp16", phase.name, "gap",  im2col_gap,  true);
-                print_series(config_key, "wmma_gemm_conv",   phase.name, "span", gemm_span,   true);
-                print_series(config_key, "wmma_gemm_conv",   phase.name, "gap",  gemm_gap,    true);
-                print_series(config_key, "explicit_pair",    phase.name, "span", pair_span,   false);
+                print_series(config_key, "im2col_nhwc_fp16", phase.name, "span",     im2col_span,     true);
+                print_series(config_key, "im2col_nhwc_fp16", phase.name, "gap",      im2col_gap,      true);
+                print_series(config_key, "im2col_nhwc_fp16", phase.name, "host_gap", im2col_host_gap, true);
+                print_series(config_key, "wmma_gemm_conv",   phase.name, "span",     gemm_span,       true);
+                print_series(config_key, "wmma_gemm_conv",   phase.name, "gap",      gemm_gap,        true);
+                print_series(config_key, "wmma_gemm_conv",   phase.name, "host_gap", gemm_host_gap,   true);
+                print_series(config_key, "explicit_pair",    phase.name, "span",     pair_span,       false);
                 print_phase_total(config_key, "explicit", phase.name, timeline, config_origin->event, phase.aggregate_us);
             }
             Phase implicit_phases[] = {
@@ -677,13 +717,15 @@ int main(int argc, char **argv) {
             };
             for (const Phase &phase : implicit_phases) {
                 const LaunchTimeline &timeline = *phase.timeline;
-                std::vector<float> implicit_span, implicit_gap;
+                std::vector<float> implicit_span, implicit_gap, implicit_host_gap;
                 for (size_t j = 0; j < timeline.launch_count(); j++) {
                     implicit_span.push_back(timeline.span_us(j));
                     implicit_gap.push_back(timeline.gap_us(j));
+                    implicit_host_gap.push_back((float)timeline.host_gap_us(j));
                 }
-                print_series(config_key, "implicit_gemm_conv", phase.name, "span", implicit_span, true);
-                print_series(config_key, "implicit_gemm_conv", phase.name, "gap",  implicit_gap,  true);
+                print_series(config_key, "implicit_gemm_conv", phase.name, "span",     implicit_span,     true);
+                print_series(config_key, "implicit_gemm_conv", phase.name, "gap",      implicit_gap,      true);
+                print_series(config_key, "implicit_gemm_conv", phase.name, "host_gap", implicit_host_gap, true);
                 print_phase_total(config_key, "implicit", phase.name, timeline, config_origin->event, phase.aggregate_us);
             }
         }

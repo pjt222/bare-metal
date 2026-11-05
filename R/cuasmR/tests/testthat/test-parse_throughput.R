@@ -172,17 +172,17 @@ test_that("parse_throughput reproduces rebaseline/clock_lock (parse_bench_line, 
 })
 
 test_that("bench_implicit_gemm --per-launch lines are invisible to every conv2d selector (#223)", {
-  # Fixture: raw stdout of `bench_implicit_gemm --per-launch` at 5dc8901,
-  # 2026-11-05. FORMAT FIXTURE ONLY: one uncontrolled smoke run, with no
-  # pre-registration and no peer hold, captured while another session's R
-  # jobs held the host at ~88% CPU. Its timings are not evidence for #223
-  # and must not be cited.
-  # The mode adds per-launch* lines (per-launch, -summary, -phase, -config)
-  # inside each config section. They must never be selected: the gate
-  # (pick = first) and conv2d_variance.R must read the aggregate LINE in
-  # both modes. It is the same line, not the same measurement: in
-  # --per-launch mode its window also holds the extra events, so a
-  # consumer that stores it must record the mode.
+  # Fixture: raw stdout of `bench_implicit_gemm --per-launch`, recaptured
+  # 2026-11-05 for the host_gap addition on this branch. FORMAT FIXTURE
+  # ONLY: one uncontrolled smoke run at the 150 W reference, no
+  # pre-registration, on a shared host with another session active. Its
+  # timings are not evidence for #223 and must not be cited.
+  # The mode adds per-launch* lines (per-launch, -summary, -phase, -config),
+  # with metric in {span, gap, host_gap}, inside each config section. They
+  # must never be selected: the gate (pick = first) and conv2d_variance.R
+  # must read the aggregate LINE in both modes. It is the same line, not the
+  # same measurement: in --per-launch mode its window also holds the extra
+  # events, so a consumer that stores it must record the mode.
   lines <- fx("conv2d_implicit_per_launch")
   is_per_launch <- grepl("^\\s*per-launch", lines)
   expect_gt(sum(is_per_launch), 0)
