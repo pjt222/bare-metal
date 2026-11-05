@@ -51,14 +51,21 @@
 // launch. Two readings per launch, both spans on the GPU timeline:
 //
 //   span[j] = stop[j] - start[j]. The kernel's execution, plus any time
-//             the GPU spent on something other than this stream inside
-//             that window: another context's time slice, or a GPU-wide
-//             stall such as a clock switch. No event scheme can split a
-//             span excursion into "ran on slow clocks" and "was
-//             preempted"; that needs clock telemetry (#223 step 5).
+//             inside that window when the GPU was not running it: another
+//             context's time slice, a GPU-wide stall such as a clock
+//             switch, or idling because the launch command itself had not
+//             arrived. start[j] is stamped as soon as it reaches the GPU,
+//             so if the queue had drained (the host was late in
+//             cuLaunchKernel, or a submission batch ended between the two
+//             commands), the wait for the launch lands in span[j], not in
+//             gap[j]. Only a host-side timestamp separates that case, and
+//             step 1 records none. Clock telemetry (#223 step 5) is
+//             needed to tell slow clocks from preemption.
 //   gap[j]  = start[j] - stop[j-1] (j = 0: start[0] - origin). About zero
 //             while the host keeps the queue fed; larger when the GPU
-//             waited for the host to submit, or stalled between commands.
+//             waited for the start event itself, or stalled between
+//             commands. A small gap does not rule out a host wait: that
+//             wait can sit in the span instead.
 //             gap[0] holds the host's submission latency for the first
 //             launch, because the origin event is processed on an idle GPU.
 //
