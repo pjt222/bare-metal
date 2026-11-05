@@ -274,8 +274,9 @@ renv-check:
 
 # cuasmR's man/*.Rd and NAMESPACE are generated from the roxygen blocks in
 # R/cuasmR/R/*.R by the roxygen2 that renv.lock pins (#225). Edit the roxygen
-# block, never the .Rd, then `make roxygen`. CI runs `make roxygen-check`,
-# which regenerates into a temporary copy and fails on any difference.
+# block, never the .Rd, then `make roxygen`. `make roxygen-check` (CI runs the
+# same script) regenerates into a temporary copy and fails on any difference,
+# on a header-less page or NAMESPACE, or on a roxygen2/RoxygenNote off the pin.
 roxygen:
 	@$(RSCRIPT) scripts/audit/roxygen_check.R --write
 

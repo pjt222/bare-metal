@@ -18,13 +18,22 @@ historical reference.
   and once in a hand-edited `man/*.Rd`, and nothing kept the two in step.
   They drifted in both directions (#213, #222). roxygen2 7.3.3 is now in
   `renv.lock`, together with `brew`, `commonmark` and `xml2`.
-  `make roxygen` regenerates the pages. `make roxygen-check`
-  (`scripts/audit/roxygen_check.R`), which CI runs as its own step, fails
-  on any difference from the roxygen output and on any page without
-  roxygen2's header. At the switch, regeneration was already a no-op: all
-  25 pages, `NAMESPACE` and `DESCRIPTION` were byte-identical to roxygen2
-  7.3.3's output, so no hand edit needed folding back. The `.Rd` header,
-  "do not edit by hand", is now true.
+  `make roxygen` regenerates the pages.
+
+  `make roxygen-check` runs `scripts/audit/roxygen_check.R`; CI runs the
+  same script as the last step of `tests.yml`. It fails:
+  - on any difference from the roxygen output;
+  - on any page or `NAMESPACE` without roxygen2's header;
+  - on a `RoxygenNote` that is not the pinned version;
+  - and refuses to run when the installed roxygen2 is not the one
+    `renv.lock` pins.
+
+  At the switch, regeneration was already a no-op: all 25 pages,
+  `NAMESPACE` and `DESCRIPTION` were byte-identical to roxygen2 7.3.3's
+  output, so no hand edit needed folding back. The `.Rd` header, "do not
+  edit by hand", is now true. Existing checkouts need `make setup` once
+  after pulling, or the pre-push `renv_check` fails on the new
+  packages.
 - **The #195 probe harness is now gated (#212, #213).**
   `tests/probe/test_conv2d_variance.R` pins that
   `scripts/probe/conv2d_variance.R` refuses a degenerate A/B design
