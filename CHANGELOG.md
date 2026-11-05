@@ -13,6 +13,18 @@ historical reference.
 ## Unreleased
 
 ### Added
+- **cuasmR's man pages are generated, with one copy to edit (#225).** Each
+  cuasmR function used to be documented twice, once in its roxygen block
+  and once in a hand-edited `man/*.Rd`, and nothing kept the two in step.
+  They drifted in both directions (#213, #222). roxygen2 7.3.3 is now in
+  `renv.lock`, together with `brew`, `commonmark` and `xml2`.
+  `make roxygen` regenerates the pages. `make roxygen-check`
+  (`scripts/audit/roxygen_check.R`), which CI runs as its own step, fails
+  on any difference from the roxygen output and on any page without
+  roxygen2's header. At the switch, regeneration was already a no-op: all
+  25 pages, `NAMESPACE` and `DESCRIPTION` were byte-identical to roxygen2
+  7.3.3's output, so no hand edit needed folding back. The `.Rd` header,
+  "do not edit by hand", is now true.
 - **The #195 probe harness is now gated (#212, #213).**
   `tests/probe/test_conv2d_variance.R` pins that
   `scripts/probe/conv2d_variance.R` refuses a degenerate A/B design

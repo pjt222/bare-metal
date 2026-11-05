@@ -325,6 +325,16 @@ install leaves the project permanently `[Local != unknown]` out of sync.
 This regressed once already (fixed in #133, reverted by the installer
 script, re-fixed in #162) — the script now asserts the stamp landed.
 
+**cuasmR's man pages are generated, never hand-edited (#225).**
+`R/cuasmR/man/*.Rd` and `R/cuasmR/NAMESPACE` come from the roxygen blocks
+in `R/cuasmR/R/*.R`. Edit the roxygen block, run `make roxygen`, and commit
+both. `make roxygen-check`, which CI runs, regenerates them into a temporary
+copy with the roxygen2 that `renv.lock` pins (7.3.3, the version
+`DESCRIPTION`'s `RoxygenNote` names). It fails on any byte that differs, and
+on any man page without roxygen2's header. Upgrading roxygen2 is a
+deliberate change: bump it in `renv.lock`, run `make roxygen`, and commit
+the regenerated pages and the new `RoxygenNote` together.
+
 Required packages: `jsonlite`, `ggplot2`, `scales`, `patchwork`,
 `dplyr`, `tidyr`, `tibble`, `rmarkdown`, `yaml`, `testthat`, and
 the local `cuasmR` package installed via
