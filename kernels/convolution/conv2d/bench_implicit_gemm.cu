@@ -101,8 +101,12 @@ static double mean_of_range(const std::vector<float> &values, size_t begin, size
 //
 // Values are microseconds in launch order. aggregate_us, on timed phases
 // only, is the BenchTimer window the default output reports (as ms per
-// launch). Comparing it with sum_us shows how much the extra events cost
-// inside the window. The lines avoid the substrings `ms` and `GFLOPS` and
+// launch). sum_us telescopes to the chain's span (last event - event 0),
+// so it matches aggregate_us up to the gaps at the window's edges: a
+// consistency check on the chain, NOT a measure of what the extra events
+// cost, which sits inside every interval. Whether --per-launch perturbs
+// the timing is read only by comparing the default-mode aggregate with
+// the --per-launch aggregate across runs. The lines avoid `ms`/`GFLOPS` and
 // never start with `===`/`---`, so parse_throughput() cannot select them.
 // `print_raw = false` prints only the summary (used for the explicit pair,
 // whose raw values are im2col + gemm per index).
