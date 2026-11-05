@@ -171,6 +171,56 @@ test_that("parse_throughput reproduces rebaseline/clock_lock (parse_bench_line, 
   }
 })
 
+test_that("bench_implicit_gemm --per-launch lines are invisible to every conv2d selector (#223)", {
+  # Fixture: raw stdout of `bench_implicit_gemm --per-launch`, recaptured
+  # 2026-11-05 for the host_gap addition on this branch. FORMAT FIXTURE
+  # ONLY: one uncontrolled smoke run at the 150 W reference, no
+  # pre-registration, on a shared host with another session active. Its
+  # timings are not evidence for #223 and must not be cited.
+  # The mode adds per-launch* lines (per-launch, -summary, -phase, -config),
+  # with metric in {span, gap, host_gap}, inside each config section. They
+  # must never be selected: the gate (pick = first) and conv2d_variance.R
+  # must read the aggregate LINE in both modes. It is the same line, not the
+  # same measurement: in --per-launch mode its window also holds the extra
+  # events, so a consumer that stores it must record the mode.
+  lines <- fx("conv2d_implicit_per_launch")
+  is_per_launch <- grepl("^\\s*per-launch", lines)
+  expect_gt(sum(is_per_launch), 0)
+  # All four kinds are present, so a fixture recaptured from a bench that
+  # dropped one cannot pass silently.
+  for (kind in c("per-launch config=", "per-launch-summary config=",
+                 "per-launch-phase config=", "per-launch-config config=")) {
+    expect_true(any(startsWith(trimws(lines), kind)), info = kind)
+  }
+  # Neither parser match string appears in a per-launch line.
+  expect_false(any(grepl("Explicit (im2col+GEMM)", lines[is_per_launch], fixed = TRUE)))
+  expect_false(any(grepl("Implicit (single kern)", lines[is_per_launch], fixed = TRUE)))
+  # By construction the lines carry neither filter token.
+  expect_false(any(grepl("ms", lines[is_per_launch], fixed = TRUE)))
+  expect_false(any(grepl("GFLOPS|TOPS", lines[is_per_launch], ignore.case = TRUE)))
+  expect_false(any(grepl("^(===|---)", trimws(lines[is_per_launch]))))
+
+  stripped <- lines[!is_per_launch]
+  selectors <- list(
+    c("SD 64",  "Explicit (im2col+GEMM)"), c("SD 64",  "Implicit (single kern)"),
+    c("SD 32",  "Explicit (im2col+GEMM)"), c("SD 32",  "Implicit (single kern)"),
+    c("SD 128", "Explicit (im2col+GEMM)"), c("SD 128", "Implicit (single kern)")
+  )
+  for (s in selectors) for (pick in c("first", "last")) {
+    label <- paste(s[1], s[2], pick)
+    got  <- parse_throughput(lines,    match = s[2], section = s[1], pick = pick)
+    want <- parse_throughput(stripped, match = s[2], section = s[1], pick = pick)
+    expect_identical(got, want, info = label)
+    expect_false(is.na(got$throughput), info = label)
+    expect_true(startsWith(trimws(got$line), s[2]), info = label)
+  }
+  # The legacy bench_regress oracle agrees on the gate's own selector.
+  gate <- oracle_bench_regress(lines, match = "Implicit (single kern)", section = "SD 64")
+  expect_equal(parse_throughput(lines, match = "Implicit (single kern)",
+                                section = "SD 64", pick = "first")$throughput,
+               gate$throughput)
+})
+
 test_that("igemm_sparse value_label selects dense-equiv (second number), not eff", {
   lines <- fx("igemm_sparse_2048")
   got <- parse_throughput(lines, match = "igemm_sparse_tiled",
