@@ -135,6 +135,7 @@ jobs:
           fi
 
       - name: Install cuasmR from the working tree
+        id: install_cuasmr
         run: R CMD INSTALL R/cuasmR
 
       # --expect is the outside denominator: "all discovered suites passed" is
@@ -212,8 +213,10 @@ jobs:
       # page or NAMESPACE without roxygen2's header, or on a roxygen2 or
       # RoxygenNote that is not the pinned version. A separate step, not a test
       # suite, so the R_SUITES / --expect carriers do not move. It runs last,
-      # and also when an earlier step failed, so a docs failure never hides the
-      # suites' results and a suite failure never hides the docs check.
+      # and also when a suite step failed, so a docs failure never hides the
+      # suites' results and a suite failure never hides the docs check. It is
+      # skipped when setup failed (restore, cuasmR install): without the
+      # library it could only add a second, misleading red step.
       - name: Check cuasmR docs match their roxygen blocks
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install_cuasmr.outcome == 'success' }}
         run: Rscript scripts/audit/roxygen_check.R
