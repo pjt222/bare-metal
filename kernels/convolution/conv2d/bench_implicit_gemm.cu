@@ -16,6 +16,9 @@
  *   bench_implicit_gemm                # default: the gate's measurement
  *   bench_implicit_gemm --per-launch   # also print per-launch timing (#223)
  *
+ * Positional arguments are ignored (bench_regress passes the config key
+ * as `1 64 64 320 320`); unknown options exit 2.
+ *
  * --per-launch records a CUevent after every launch of the 20 warmup and
  * 100 timed launches, per config, and prints one raw line and one summary
  * line per kernel and phase. The default path creates no extra events and
@@ -236,21 +239,26 @@ static void fill_rand(float *arr, size_t n, float scale = 0.1f) {
 }
 
 static void print_usage(const char *program_name) {
-    fprintf(stderr, "usage: %s [--per-launch]\n", program_name);
+    fprintf(stderr, "usage: %s [--per-launch] [ignored positional args]\n", program_name);
 }
 
 int main(int argc, char **argv) {
-    // Unknown arguments are refused, so a mistyped flag cannot silently
-    // run the default mode in a campaign that meant to record per-launch.
+    // Positional arguments are accepted and ignored, as they always were:
+    // bench_regress.R and bench_reference.R pass the baselines.json config
+    // key split on '_' (`1 64 64 320 320`), and this bench runs every
+    // config regardless. Unknown OPTIONS (anything starting with '-') are
+    // refused, so a mistyped flag cannot silently run the default mode in
+    // a campaign that meant to record per-launch.
     bool per_launch = false;
     for (int arg_index = 1; arg_index < argc; arg_index++) {
-        if (strcmp(argv[arg_index], "--per-launch") == 0) {
+        const char *arg = argv[arg_index];
+        if (strcmp(arg, "--per-launch") == 0) {
             per_launch = true;
-        } else if (strcmp(argv[arg_index], "--help") == 0 || strcmp(argv[arg_index], "-h") == 0) {
+        } else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_usage(argv[0]);
             return 0;
-        } else {
-            fprintf(stderr, "unknown argument: %s\n", argv[arg_index]);
+        } else if (arg[0] == '-') {
+            fprintf(stderr, "unknown option: %s\n", arg);
             print_usage(argv[0]);
             return 2;
         }
