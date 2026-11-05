@@ -248,9 +248,10 @@ static void print_usage(const char *program_name) {
 
 int main(int argc, char **argv) {
     // Positional arguments are accepted and ignored, as they always were:
-    // bench_regress.R and bench_reference.R pass the baselines.json config
-    // key split on '_' (`1 64 64 320 320`), and this bench runs every
-    // config regardless. Unknown OPTIONS (anything starting with '-') are
+    // bench_regress.R passes the data/baselines.json config key split on
+    // '_' (`1 64 64 320 320`), and this bench runs every config regardless.
+    // Its other runners pass none: bench_all.R (bench_all.yml `args: []`),
+    // grid_measure.R (grid_sweep.yml `args: []`) and conv2d_variance.R. Unknown OPTIONS (anything starting with '-') are
     // refused, so a mistyped flag cannot silently run the default mode in
     // a campaign that meant to record per-launch.
     bool per_launch = false;
