@@ -438,7 +438,7 @@
       "Version": "0.2.0",
       "Source": "Local",
       "Type": "Package",
-      "Title": "R-Native SASS Disassembler and Patcher for NVIDIA sm_8x cubins",
+      "Title": "R-Native SASS Disassembler and Patcher for NVIDIA sm_8x Cubins",
       "Authors@R": "person(\"Philipp\", \"Thoss\", , \"ph.thoss@gmx.de\", role = c(\"aut\", \"cre\"), comment = c(ORCID = \"0000-0002-4672-2792\"))",
       "Description": "Read NVIDIA cubin files emitted by nvcc (CUDA 12.x and 13.x), decode their per-kernel SASS instructions via nvdisasm, allow byte-level edits of instruction or control-code words, and write a patched cubin. Targets the sm_8x (Ampere) family. Supersedes the upstream Python 'CuAssembler' for our hand-edit workflow; tracks nvdisasm output rather than internal cubin layout, so it survives CUDA major-version bumps.",
       "License": "MIT + file LICENSE",
@@ -446,12 +446,17 @@
       "Depends": [
         "R (>= 4.0)"
       ],
+      "Imports": [
+        "jsonlite",
+        "stats",
+        "utils"
+      ],
       "SystemRequirements": "NVIDIA CUDA Toolkit 12.x or 13.x (nvdisasm on PATH)",
       "Suggests": [
-        "testthat (>= 3.0.0)"
+        "testthat (>= 3.1.5)"
       ],
       "Config/testthat/edition": "3",
-      "RoxygenNote": "7.3.2",
+      "RoxygenNote": "7.3.3",
       "Author": "Philipp Thoss [aut, cre] (ORCID: <https://orcid.org/0000-0002-4672-2792>)",
       "Maintainer": "Philipp Thoss <ph.thoss@gmx.de>",
       "RemoteType": "local",
