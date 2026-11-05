@@ -119,22 +119,39 @@ static float nearest_rank(const std::vector<float> &sorted_values, double fracti
     return sorted_values[rank - 1];
 }
 
-static double mean_of_range(const std::vector<float> &values, size_t begin, size_t end) {
+// Median (nearest-rank) of values[begin, end); NAN for an empty range.
+static double median_of_range(const std::vector<float> &values, size_t begin, size_t end) {
+    if (end <= begin) return NAN;
+    std::vector<float> window(values.begin() + begin, values.begin() + end);
+    std::sort(window.begin(), window.end());
+    return (double)nearest_rank(window, 0.50);
+}
+
+static double sum_of(const std::vector<float> &values) {
     double total = 0.0;
-    for (size_t index = begin; index < end; index++) total += values[index];
-    return end > begin ? total / (double)(end - begin) : 0.0;
+    for (float value : values) total += value;
+    return total;
 }
 
 // Output lines, all `key=value` fields:
 //
 //   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> metric=<span|gap> n=<count> us=<v1,v2,...>
 //   per-launch-summary config=... kernel=... phase=... metric=... n=... min_us=... p10_us=... p50_us=...
-//       p90_us=... max_us=... first5_us=... last5_us=... sum_us=...
+//       p90_us=... max_us=... idx0_us=... head5_p50_us=... tail5_p50_us=... sum_us=...
 //   per-launch-phase config=... path=<explicit|implicit> phase=... launches=<count> total_us=... [aggregate_us=...]
 //
 // One raw and one summary line per (kernel, phase, metric), except
 // explicit_pair (start of im2col to end of the GEMM, per iteration), which
 // gets a summary only. Values are microseconds in launch order.
+//
+// Percentiles are nearest-rank. idx0_us is the first launch of the phase
+// on its own, because its gap holds the submission latency after an idle
+// GPU. head5_p50_us is the median of indices 1..5 and tail5_p50_us the
+// median of the last five, so a ramp has to show in several launches:
+// one stall cannot move a median of five. Event timestamps step in about
+// 1.02 us on this machine (most values sit on a 1.024 us grid). The %.2f
+// format prints two decimals, but differences below about 1 us are not
+// readable, which matters for the Small config's 60-140 us kernels.
 //
 // total_us runs from the phase's origin to its last stop event, so it is
 // the sum of all its spans and gaps. aggregate_us, on timed phases only,
@@ -161,19 +178,21 @@ static void print_series(const char *config_key, const char *kernel_name,
     }
     std::vector<float> sorted_values(values_us);
     std::sort(sorted_values.begin(), sorted_values.end());
-    size_t edge_count = sample_count < 5 ? sample_count : 5;
+    size_t head_end   = sample_count < 6 ? sample_count : 6;               // indices 1..5
+    size_t tail_begin = sample_count > 5 ? sample_count - 5 : 0;           // last five
     printf("  per-launch-summary config=%s kernel=%s phase=%s metric=%s n=%zu"
            " min_us=%.2f p10_us=%.2f p50_us=%.2f p90_us=%.2f max_us=%.2f"
-           " first5_us=%.2f last5_us=%.2f sum_us=%.2f\n",
+           " idx0_us=%.2f head5_p50_us=%.2f tail5_p50_us=%.2f sum_us=%.2f\n",
            config_key, kernel_name, phase_name, metric_name, sample_count,
            (double)sorted_values.front(),
            (double)nearest_rank(sorted_values, 0.10),
            (double)nearest_rank(sorted_values, 0.50),
            (double)nearest_rank(sorted_values, 0.90),
            (double)sorted_values.back(),
-           mean_of_range(values_us, 0, edge_count),
-           mean_of_range(values_us, sample_count - edge_count, sample_count),
-           mean_of_range(values_us, 0, sample_count) * (double)sample_count);
+           (double)values_us[0],
+           median_of_range(values_us, 1, head_end),
+           median_of_range(values_us, tail_begin, sample_count),
+           sum_of(values_us));
 }
 
 static void print_phase_total(const char *config_key, const char *path_name,
