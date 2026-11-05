@@ -20,8 +20,9 @@
  * passes the config key as `1 64 64 320 320`); anything else exits 2.
  *
  * --per-launch records a CUevent pair around every launch of the 20 warmup
- * and 100 timed launches, per config, and prints each launch's span and the
- * gap before it, per kernel and phase (see LaunchTimeline). The default
+ * and 100 timed iterations, per config (an explicit iteration is two
+ * launches, im2col then GEMM), and prints each launch's span and the gap
+ * before it, per kernel and phase (see LaunchTimeline). The default
  * path creates no extra events and prints no extra lines, so bench_regress
  * and conv2d_variance.R see the same output as before. See print_series()
  * for the line format.
@@ -53,14 +54,17 @@
 //   span[j] = stop[j] - start[j]. The kernel's execution, plus any time
 //             inside that window when the GPU was not running it: another
 //             context's time slice, a GPU-wide stall such as a clock
-//             switch, or idling because the launch command itself had not
-//             arrived. start[j] is stamped as soon as it reaches the GPU,
-//             so if the queue had drained (the host was late in
-//             cuLaunchKernel, or a submission batch ended between the two
-//             commands), the wait for the launch lands in span[j], not in
-//             gap[j]. Only a host-side timestamp separates that case, and
-//             step 1 records none. Clock telemetry (#223 step 5) is
-//             needed to tell slow clocks from preemption.
+//             switch, or idling because a later command in the window had
+//             not arrived: the launch itself, or the stop event (each is a
+//             separate host call). start[j] is stamped as soon as it
+//             reaches the GPU, so if the queue had drained, the wait for
+//             the launch or for stop[j] lands in span[j], not in gap[j].
+//             The host may simply have been late with that call, which a
+//             host-side timestamp would show (step 1 records none); or a
+//             driver submission batch may have ended between the
+//             commands, which even a host timestamp would not show. Clock
+//             telemetry (#223 step 5) is needed to tell slow clocks from
+//             preemption.
 //   gap[j]  = start[j] - stop[j-1] (j = 0: start[0] - origin). About zero
 //             while the host keeps the queue fed; larger when the GPU
 //             waited for the start event itself, or stalled between
@@ -68,14 +72,15 @@
 //             wait can sit in the span instead.
 //
 // Launch 0 of every phase follows an idle GPU, because each phase starts
-// after a synchronization. Its post-idle latency is split three ways:
+// after a synchronization. Its post-idle latency can fall in any of three
+// places, and the instrument cannot apportion it among them:
 // - before the origin (in timed phases, between BenchTimer's start event
-//   and the origin);
+//   and the origin; in warmup phases nothing before the origin is
+//   observed at all);
 // - in gap[0] (origin to start[0], two back-to-back event commands);
-// - in span[0], which by construction takes the delay of the launch
-//   command, the last of the three to reach the GPU.
-// The instrument cannot tell that latency from a slow first launch after
-// idle.
+// - in span[0], which takes any delay of the launch command or of stop[0].
+// The instrument also cannot tell that latency from a slow first launch
+// after idle.
 //
 // gap[j] + span[j] is what one event between consecutive launches would
 // report. On the explicit path the launches alternate im2col, GEMM,
@@ -173,8 +178,9 @@ static double sum_of(const std::vector<float> &values) {
 // Percentiles are nearest-rank. idx0_us is the series' first value on its
 // own, because launch 0 follows an idle GPU and both its gap and its span
 // carry post-idle latency (see LaunchTimeline). For wmma_gemm_conv the
-// first value is the phase's second launch (j = 1), which is kept apart
-// only for uniformity. head5_p50_us is the median of indices 1..5 and
+// first value is the phase's second launch (j = 1); it is kept apart for
+// uniformity, and because it follows launch 0 closely enough to share its
+// early-phase effects. head5_p50_us is the median of indices 1..5 and
 // tail5_p50_us the median of the last five, so a ramp has to show in
 // several launches: one stall cannot move a median of five. Event timestamps step in about
 // 1.02 us on this machine (most values sit on a 1.024 us grid). The %.2f
@@ -188,8 +194,9 @@ static double sum_of(const std::vector<float> &values) {
 // against offset_us + the launch's position, not against launch index.
 // The first GPU work after the idle is NOT instrumented:
 // - the device allocations and host-to-device copies;
-// - one run of each kernel for the correctness check, each followed by a
-//   synchronization and a device-to-host copy;
+// - the correctness check: im2col and the explicit GEMM, then a
+//   synchronization and a device-to-host copy; then the implicit GEMM,
+//   another synchronization and copy;
 // - a host-only comparison, during which the GPU idles a second time.
 // All of it comes before the explicit warmup's origin, so the window's
 // length is that phase's offset_us. A ramp that starts and ends inside it
@@ -210,7 +217,9 @@ static double sum_of(const std::vector<float> &values) {
 // them. R/cuasmR/tests/testthat/test-parse_throughput.R pins that against
 // a CAPTURED file, fixtures/conv2d_implicit_per_launch.txt, not against
 // this bench: after changing any of these lines, recapture it
-// (`bench_implicit_gemm --per-launch > <fixture>`) and rerun the test.
+// (`bench_implicit_gemm --per-launch > <fixture>`), update the provenance
+// line in the test's comment (commit, date, host conditions), and rerun
+// the test.
 static void print_series(const char *config_key, const char *kernel_name,
                          const char *phase_name, const char *metric_name,
                          const std::vector<float> &values_us, bool print_raw) {
