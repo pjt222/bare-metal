@@ -91,8 +91,8 @@ jobs:
           restore-keys: |
             renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-
 
-      # cuasmR is excluded from the restore on purpose: renv.lock:391-394 records
-      # it as Source: Local, which describes a package built from this working
+      # cuasmR is excluded from the restore on purpose: its renv.lock record
+      # ("cuasmR", Source: Local) describes a package built from this working
       # tree rather than one fetchable from a repository. It is installed from
       # source in the next step instead — which is also what keeps CI honest,
       # since four of the five suites load the INSTALLED cuasmR while the
