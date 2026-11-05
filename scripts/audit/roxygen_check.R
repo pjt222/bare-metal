@@ -3,21 +3,30 @@
 #
 # R/cuasmR/man/*.Rd and R/cuasmR/NAMESPACE are generated from the roxygen
 # blocks in R/cuasmR/R/*.R. There is one copy to edit: the roxygen block.
-# The roxygen2 that generates them is the one renv.lock pins, and
-# DESCRIPTION's RoxygenNote must name that same version. Both are enforced
-# below, so a regeneration on any machine with the restored library
-# produces the same bytes.
 #
 # Run from the repo root:
-#   Rscript scripts/audit/roxygen_check.R           # check (make roxygen-check, CI)
-#   Rscript scripts/audit/roxygen_check.R --write   # regenerate (make roxygen)
+#   Rscript scripts/audit/roxygen_check.R           # check  (make roxygen-check; CI runs the script)
+#   Rscript scripts/audit/roxygen_check.R --write   # regenerate in place (make roxygen)
 #
-# The check regenerates into a temporary copy of the package and compares
-# man/, NAMESPACE and DESCRIPTION with the tree, byte for byte, and refuses
-# any man page without roxygen2's header. It never writes to the tree.
+# Both modes first require the installed roxygen2 to be the version
+# renv.lock pins, so every machine with the restored library generates
+# with the same roxygen2. (R itself is not pinned locally; see #230.)
 #
-# Exit status: 0 = the tree matches what roxygen2 generates; 1 = drift
-# (every differing file is named, with a diff); 2 = could not run.
+# The check regenerates into a temporary copy of the package, never
+# writing to the tree, and fails on:
+#   - any file under man/, or NAMESPACE or DESCRIPTION, that differs
+#     byte for byte from what roxygen2 generates;
+#   - any man page or NAMESPACE without roxygen2's header (roxygen2 leaves
+#     such files alone, so they would otherwise compare equal);
+#   - a DESCRIPTION RoxygenNote that is not the pinned version.
+#
+# Exit status: 0 = the tree matches; 1 = drift (each problem named, with
+# a diff and roxygen2's messages); 2 = could not run (wrong roxygen2,
+# unreadable renv.lock, roxygen2 error, any unexpected error). Through
+# make, both 1 and 2 surface as make's own exit status 2. One failure is
+# outside this script's reach: a renv.lock that is not valid JSON breaks
+# renv's own activation (.Rprofile sources renv/activate.R) before the
+# script runs, and R exits 1.
 
 package_dir <- "R/cuasmR"
 
@@ -26,56 +35,71 @@ fail_to_run <- function(...) {
   quit(save = "no", status = 2L)
 }
 
-cli_args <- commandArgs(trailingOnly = TRUE)
-write_mode <- "--write" %in% cli_args
-unknown_args <- setdiff(cli_args, "--write")
-if (length(unknown_args)) {
-  fail_to_run("unknown argument: ", unknown_args[[1]],
-              "\nusage: Rscript scripts/audit/roxygen_check.R [--write]")
+# The roxygen2 version renv.lock pins. Each way this can fail gets its own
+# message, so "no pinned version" is never reported for a lock that is
+# missing, unparseable, or unreadable for want of jsonlite.
+read_locked_roxygen_version <- function() {
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    fail_to_run("jsonlite is not installed, so renv.lock cannot be read. Run `make setup` (renv::restore()).")
+  }
+  if (!file.exists("renv.lock")) fail_to_run("renv.lock not found in ", getwd())
+  lock <- tryCatch(jsonlite::fromJSON("renv.lock", simplifyVector = FALSE),
+                   error = function(e) fail_to_run("renv.lock could not be parsed: ", conditionMessage(e)))
+  version <- lock$Packages$roxygen2$Version
+  if (is.null(version)) {
+    fail_to_run("renv.lock has no roxygen2 record, so there is no pinned version to check against.")
+  }
+  version
 }
 
-if (!file.exists(file.path(package_dir, "DESCRIPTION"))) {
-  fail_to_run("run from the repo root (", package_dir,
-              "/DESCRIPTION not found from ", getwd(), ")")
-}
-if (!requireNamespace("roxygen2", quietly = TRUE)) {
-  fail_to_run("roxygen2 is not installed. It is pinned in renv.lock: ",
-              "run `make setup` (renv::restore()).")
-}
+main <- function() {
+  cli_args <- commandArgs(trailingOnly = TRUE)
+  write_mode <- "--write" %in% cli_args
+  unknown_args <- setdiff(cli_args, "--write")
+  if (length(unknown_args)) {
+    fail_to_run("unknown argument: ", unknown_args[[1]],
+                "\nusage: Rscript scripts/audit/roxygen_check.R [--write]")
+  }
 
-roxygen_version <- as.character(utils::packageVersion("roxygen2"))
-roxygen_note <- unname(read.dcf(file.path(package_dir, "DESCRIPTION"),
-                                fields = "RoxygenNote")[1, 1])
+  if (!file.exists(file.path(package_dir, "DESCRIPTION"))) {
+    fail_to_run("run from the repo root (", package_dir,
+                "/DESCRIPTION not found from ", getwd(), ")")
+  }
+  if (!requireNamespace("roxygen2", quietly = TRUE)) {
+    fail_to_run("roxygen2 is not installed. It is pinned in renv.lock: ",
+                "run `make setup` (renv::restore()).")
+  }
 
-# The installed roxygen2 must be the one renv.lock pins, in both modes:
-# another version regenerates different bytes (and --write would rewrite
-# every page and RoxygenNote with it). To upgrade, change the pin first
-# (renv::install("roxygen2@<version>"), then snapshot), then `make roxygen`.
-locked_version <- tryCatch(
-  jsonlite::fromJSON("renv.lock", simplifyVector = FALSE)$Packages$roxygen2$Version,
-  error = function(e) NULL)
-if (is.null(locked_version)) {
-  fail_to_run("renv.lock has no roxygen2 record, so there is no pinned version to check against.")
-}
-if (!identical(roxygen_version, locked_version)) {
-  fail_to_run(sprintf(paste0(
-    "roxygen2 %s is installed, but renv.lock pins %s. Run `make setup` ",
-    "(renv::restore()). To upgrade roxygen2, change the pin in renv.lock first."),
-    roxygen_version, locked_version))
-}
+  roxygen_version <<- as.character(utils::packageVersion("roxygen2"))
+  roxygen_note <<- unname(read.dcf(file.path(package_dir, "DESCRIPTION"),
+                                   fields = "RoxygenNote")[1, 1])
 
-if (write_mode) {
-  regenerated <- tryCatch({
-    roxygen2::roxygenise(package_dir)
-    TRUE
-  }, error = function(e) {
-    message("roxygen_check: roxygen2::roxygenise() failed: ", conditionMessage(e))
-    FALSE
-  })
-  if (!regenerated) quit(save = "no", status = 2L)
-  message(sprintf("roxygen_check: regenerated %s with roxygen2 %s.",
-                  package_dir, roxygen_version))
-  quit(save = "no", status = 0L)
+  # The installed roxygen2 must be the one renv.lock pins, in both modes:
+  # another version regenerates different bytes (and --write would rewrite
+  # every page and RoxygenNote with it). To upgrade, follow AGENTS.md
+  # ("cuasmR's man pages are generated").
+  locked_version <- read_locked_roxygen_version()
+  if (!identical(roxygen_version, locked_version)) {
+    fail_to_run(sprintf(paste0(
+      "roxygen2 %s is installed, but renv.lock pins %s. Run `make setup` ",
+      "(renv::restore()). To upgrade roxygen2, change the pin in renv.lock first."),
+      roxygen_version, locked_version))
+  }
+
+  if (write_mode) {
+    regenerated <- tryCatch({
+      roxygen2::roxygenise(package_dir)
+      TRUE
+    }, error = function(e) {
+      message("roxygen_check: roxygen2::roxygenise() failed: ", conditionMessage(e))
+      FALSE
+    })
+    if (!regenerated) return(2L)
+    message(sprintf("roxygen_check: regenerated %s with roxygen2 %s.",
+                    package_dir, roxygen_version))
+    return(0L)
+  }
+  run_check()
 }
 
 same_bytes <- function(path_a, path_b) {
@@ -136,7 +160,7 @@ run_check <- function() {
 
   compared_files <- c(sort(union(man_files(package_dir), man_files(generated_dir))),
                       "NAMESPACE", "DESCRIPTION")
-  page_count <- sum(grepl("\\.Rd$", compared_files))
+  page_count <- sum(grepl("\\.[Rr]d$", compared_files))
 
   drift <- character()
 
@@ -167,7 +191,7 @@ run_check <- function() {
     readLines(file.path(package_dir, relative_file), n = 1L, warn = FALSE)
   }
   rd_header <- "% Generated by roxygen2: do not edit by hand"
-  for (rd_file in grep("\\.Rd$", man_files(package_dir), value = TRUE)) {
+  for (rd_file in grep("\\.[Rr]d$", man_files(package_dir), value = TRUE)) {
     if (!identical(first_line_of(rd_file), rd_header)) {
       drift <- c(drift, sprintf("%s: no roxygen2 header, so it is hand-written; document it with a roxygen block instead", rd_file))
     }
@@ -211,4 +235,14 @@ run_check <- function() {
   0L
 }
 
-quit(save = "no", status = run_check())
+# Any error not handled above (a malformed DESCRIPTION, an unreadable
+# file) is "could not run", exit 2, not R's default status 1, which the
+# contract reserves for drift. on.exit() in run_check() still runs while
+# the error unwinds.
+roxygen_version <- NA_character_
+roxygen_note <- NA_character_
+exit_status <- tryCatch(main(), error = function(e) {
+  message("roxygen_check: could not run: ", conditionMessage(e))
+  2L
+})
+quit(save = "no", status = exit_status)
