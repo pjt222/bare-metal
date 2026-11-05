@@ -204,8 +204,13 @@ static double sum_of(const std::vector<float> &values) {
 // timing can be read only by comparing the default-mode aggregate with the
 // --per-launch aggregate across runs.
 //
-// The lines avoid `ms`/`GFLOPS` and never start with `===`/`---`, so
-// parse_throughput() cannot select them.
+// The lines avoid `ms`/`GFLOPS` and never start with `===`/`---`, and
+// neither parser match string ("Explicit (im2col+GEMM)", "Implicit
+// (single kern)") appears in them, so parse_throughput() cannot select
+// them. R/cuasmR/tests/testthat/test-parse_throughput.R pins that against
+// a CAPTURED file, fixtures/conv2d_implicit_per_launch.txt, not against
+// this bench: after changing any of these lines, recapture it
+// (`bench_implicit_gemm --per-launch > <fixture>`) and rerun the test.
 static void print_series(const char *config_key, const char *kernel_name,
                          const char *phase_name, const char *metric_name,
                          const std::vector<float> &values_us, bool print_raw) {
