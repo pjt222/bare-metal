@@ -91,8 +91,8 @@ jobs:
           restore-keys: |
             renv-${{ runner.os }}-${{ runner.arch }}-r4.6.0-
 
-      # cuasmR is excluded from the restore on purpose: renv.lock:391-394 records
-      # it as Source: Local, which describes a package built from this working
+      # cuasmR is excluded from the restore on purpose: its renv.lock record
+      # ("cuasmR", Source: Local) describes a package built from this working
       # tree rather than one fetchable from a repository. It is installed from
       # source in the next step instead — which is also what keeps CI honest,
       # since four of the five suites load the INSTALLED cuasmR while the
@@ -135,6 +135,7 @@ jobs:
           fi
 
       - name: Install cuasmR from the working tree
+        id: install_cuasmr
         run: R CMD INSTALL R/cuasmR
 
       # --expect is the outside denominator: "all discovered suites passed" is
@@ -205,3 +206,17 @@ jobs:
             echo "assertion and the note above it; if not, the gate now exercises less than it did."
             exit 1
           }
+
+      # cuasmR's man/*.Rd and NAMESPACE are generated, not hand-kept (#225):
+      # regenerate them with the roxygen2 renv.lock pins, in a temporary copy,
+      # and fail on any byte that differs from the committed files, on any man
+      # page or NAMESPACE without roxygen2's header, or on a roxygen2 or
+      # RoxygenNote that is not the pinned version. A separate step, not a test
+      # suite, so the R_SUITES / --expect carriers do not move. It runs last,
+      # and also when a suite step failed, so a docs failure never hides the
+      # suites' results and a suite failure never hides the docs check. It is
+      # skipped when setup failed (restore, cuasmR install): without the
+      # library it could only add a second, misleading red step.
+      - name: Check cuasmR docs match their roxygen blocks
+        if: ${{ !cancelled() && steps.install_cuasmr.outcome == 'success' }}
+        run: Rscript scripts/audit/roxygen_check.R
