@@ -3,8 +3,9 @@
 Documents **cuasmR 0.2.0**. The package now has two surfaces: the SASS cubin
 read / write / patch toolchain (most of this document) and the **benchmark
 measurement API** added in 0.2.0 ([#134](https://github.com/pjt222/bare-metal/issues/134))
-— see the *Measurement API* section below. 20 exported functions total
-(8 cubin + 12 measurement).
+— see the *Measurement API* section below. Its exports are listed in
+`R/cuasmR/NAMESPACE` and documented under `man/`, both generated from the
+roxygen blocks (#225); this document does not restate the count.
 
 Replaces the upstream Python [`cloudcores/CuAssembler`](https://github.com/cloudcores/CuAssembler) for the `.cubin → edit → .cubin` workflow on this project (#102).
 
@@ -130,12 +131,15 @@ Mix of CUDA 12.x and 13.x cubins, single- and multi-kernel cubins.
 Rscript -e 'library(testthat); library(cuasmR); test_dir("R/cuasmR/tests/testthat")'
 ```
 
-Five test files (`R/cuasmR/tests/testthat/`):
-- `test-roundtrip.R` — byte-identical roundtrip, `e_flags` decode (legacy + new
-  layouts), `cuasm_set` patches at most one 64-bit word per call.
-- `test-parse_throughput.R`, `test-validate_sample.R`, `test-check_regression.R`,
-  `test-bench_io.R` — the 0.2.0 measurement API (differential / characterization
-  tests against captured bench stdout fixtures).
+The test files live in `R/cuasmR/tests/testthat/`; their count is pinned by
+`--expect-cuasmr` in `.github/workflows/tests.yml`, not restated here. They
+cover two surfaces:
+- the cubin toolchain — `test-roundtrip.R` (byte-identical roundtrip, `e_flags`
+  decode for legacy and new layouts, `cuasm_set` patching at most one 64-bit
+  word per call) and its siblings;
+- the 0.2.0 measurement API — `test-parse_throughput.R` and the other `bench_*`
+  suites (differential / characterization tests against captured bench stdout
+  fixtures).
 
 ## CLI
 
@@ -156,21 +160,23 @@ The `assemble` subcommand is a stub — point users at the `cuasm_read → cuasm
 pipeline has one tested implementation. The seven measurement harnesses
 (`bench_regress.R`, `grid_measure.R`, `grid_collect.R`, `probe_gpu_power.R`,
 `rebaseline_measure.R`, `clock_lock_sweep.R`, `bench_flash_all.R`) now
-`library(cuasmR)` and call these 12 exports:
+`library(cuasmR)` and call its measurement API. The authoritative export list
+is `R/cuasmR/NAMESPACE`, with per-function docs under `man/` (both generated
+from the roxygen blocks, #225); the functions live in `R/cuasmR/R/bench_*.R`
+(`bench_run.R`, `bench_measure.R`, `bench_regression.R`, `bench_io.R`,
+`bench_meta.R`). The pipeline that uses them:
 
-| Group | Functions | Source |
-|---|---|---|
-| Run + parse | `run_bench`, `parse_throughput` | `R/cuasmR/R/bench_run.R` |
-| Sampling | `validate_sample`, `collect_valid_samples`, `report_median_metrics` | `R/cuasmR/R/bench_measure.R` |
-| Regression | `check_regression` | `R/cuasmR/R/bench_regression.R` |
-| JSONL store | `append_jsonl_row`, `read_jsonl` | `R/cuasmR/R/bench_io.R` |
-| GPU metadata | `capture_gpu_state`, `capture_power_policy`, `classify_meta`, `decode_throttle`, `summarise_meta` | `R/cuasmR/R/bench_meta.R` |
-
-Pipeline order: `run_bench` (launch + GPU-state snapshot) → `parse_throughput`
-(ms + GFLOPS/TOPS from stdout) → `validate_sample` (reject throttled / wrong-clock
-samples via `classify_meta`) → `collect_valid_samples` → `report_median_metrics`
-→ `check_regression` (vs `data/baselines.json`), with `append_jsonl_row` /
-`read_jsonl` as the per-sample store. See `docs/benchmark_methodology.md` and
+Pipeline order: `run_bench` (launch + a before/after GPU-state snapshot via
+`capture_gpu_state`, whose `throttle` field `decode_throttle` builds from the
+driver's bitmask) → `parse_throughput` (ms + GFLOPS/TOPS from stdout) →
+`validate_sample` (reject throttled / wrong-clock samples via `classify_meta`,
+which reads the pre/post snapshots) → `collect_valid_samples` →
+`report_median_metrics` → `check_regression` (vs `data/baselines.json`, also
+via `classify_meta`), with `append_jsonl_row` / `read_jsonl` as the per-sample
+store. `summarise_meta` reduces a run's pre/post snapshots (through
+`classify_meta`) for the record; `capture_power_policy` is separate — a
+once-per-session, memoised host-power-policy capture, not part of this
+per-sample path. See `docs/benchmark_methodology.md` and
 `docs/grid_sweep_methodology.md` for the measurement design.
 
 ## Comparison to upstream CuAssembler
@@ -182,7 +188,7 @@ samples via `classify_meta`) → `collect_valid_samples` → `report_median_metr
 | CUDA 12.x compatible         | yes                            | yes |
 | CUDA 13.x compatible         | broken (#101)                  | yes |
 | Roundtrip byte-identical     | mostly (depends on metadata)   | yes (preserves all non-text bytes) |
-| Maintenance surface          | ~5000 lines Python              | ~1,100 lines R (incl. 0.2.0 measurement API) |
+| Maintenance surface          | a full per-arch assembler       | `R/cuasmR/R/` only — nvdisasm + a minimal ELF reader, plus the 0.2.0 measurement API; no text-to-bytes assembler |
 | Drift on CUDA major bump     | breaks                         | tracks nvdisasm output (stable) |
 
 ## See also
