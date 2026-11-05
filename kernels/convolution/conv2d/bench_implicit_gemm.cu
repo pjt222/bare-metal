@@ -19,11 +19,12 @@
  * Positional arguments are ignored (bench_regress passes the config key
  * as `1 64 64 320 320`); unknown options exit 2.
  *
- * --per-launch records a CUevent after every launch of the 20 warmup and
- * 100 timed launches, per config, and prints one raw line and one summary
- * line per kernel and phase. The default path creates no extra events and
- * prints no extra lines, so bench_regress and conv2d_variance.R see the
- * same output as before. See print_per_launch() for the line format.
+ * --per-launch records a CUevent pair around every launch of the 20 warmup
+ * and 100 timed launches, per config, and prints each launch's span and the
+ * gap before it, per kernel and phase (see LaunchTimeline). The default
+ * path creates no extra events and prints no extra lines, so bench_regress
+ * and conv2d_variance.R see the same output as before. See print_series()
+ * for the line format.
  */
 
 #include <cstdio>
@@ -43,39 +44,70 @@
 // -----------------------------------------------------------------------
 // Per-launch timing (#223 step 1). Off unless --per-launch is given.
 //
-// A chain of events in the default stream: event 0 is recorded before the
-// first launch of a phase, then one event after every launch. The time
-// between consecutive events is the GPU time of the launch in between,
-// so a clock ramp shows up as slow early launches, a throttle event as a
-// slow run in the middle, and a uniformly slow window as neither.
+// A pair of events per launch in the default stream, as #223 step 1
+// specifies: start[j] is recorded right before launch j and stop[j] right
+// after it, and each phase records an origin event before its first
+// launch. Two readings per launch, both spans on the GPU timeline:
 //
-// Event 0 of a phase is recorded while the GPU is idle, so the first
-// interval also contains the host's submission latency for the first
-// launch (microseconds against a ~1 ms kernel).
+//   span[j] = stop[j] - start[j]. The kernel's execution, plus any time
+//             the GPU spent on something other than this stream inside
+//             that window: another context's time slice, or a GPU-wide
+//             stall such as a clock switch. No event scheme can split a
+//             span excursion into "ran on slow clocks" and "was
+//             preempted"; that needs clock telemetry (#223 step 5).
+//   gap[j]  = start[j] - stop[j-1] (j = 0: start[0] - origin). About zero
+//             while the host keeps the queue fed; larger when the GPU
+//             waited for the host to submit, or stalled between commands.
+//             gap[0] holds the host's submission latency for the first
+//             launch, because the origin event is processed on an idle GPU.
+//
+// gap[j] + span[j] is what one event between consecutive launches would
+// report. On the explicit path the launches alternate im2col, GEMM,
+// im2col, ..., so a sustained change can be localized to the im2col window
+// or the GEMM window. An isolated spike cannot be attributed to the kernel
+// whose window it lands in, and neither can memory traffic that crosses
+// the kernel boundary (dirty col-buffer lines written back from L2 during
+// the GEMM).
 // -----------------------------------------------------------------------
-struct LaunchEventChain {
-    std::vector<CUevent> events;
+struct LaunchTimeline {
+    CUevent origin = nullptr;
+    std::vector<CUevent> start_events, stop_events;
 
-    explicit LaunchEventChain(size_t event_count) : events(event_count) {
-        for (CUevent &event : events)
-            CHECK_CU(cuEventCreate(&event, CU_EVENT_DEFAULT));
+    explicit LaunchTimeline(size_t launch_count)
+        : start_events(launch_count), stop_events(launch_count) {
+        CHECK_CU(cuEventCreate(&origin, CU_EVENT_DEFAULT));
+        for (size_t j = 0; j < launch_count; j++) {
+            CHECK_CU(cuEventCreate(&start_events[j], CU_EVENT_DEFAULT));
+            CHECK_CU(cuEventCreate(&stop_events[j],  CU_EVENT_DEFAULT));
+        }
     }
-    ~LaunchEventChain() {
-        for (CUevent event : events) cuEventDestroy(event);
+    ~LaunchTimeline() {
+        cuEventDestroy(origin);
+        for (CUevent event : start_events) cuEventDestroy(event);
+        for (CUevent event : stop_events)  cuEventDestroy(event);
     }
-    LaunchEventChain(const LaunchEventChain &) = delete;
-    LaunchEventChain &operator=(const LaunchEventChain &) = delete;
+    LaunchTimeline(const LaunchTimeline &) = delete;
+    LaunchTimeline &operator=(const LaunchTimeline &) = delete;
 
-    void record(size_t event_index) {
-        CHECK_CU(cuEventRecord(events[event_index], NULL));
-    }
-    // Caller must have synchronized past events[to_index].
-    float elapsed_us(size_t from_index, size_t to_index) const {
+    size_t launch_count() const { return start_events.size(); }
+    void record_origin()        { CHECK_CU(cuEventRecord(origin, NULL)); }
+    void record_start(size_t j) { CHECK_CU(cuEventRecord(start_events[j], NULL)); }
+    void record_stop(size_t j)  { CHECK_CU(cuEventRecord(stop_events[j],  NULL)); }
+
+    // Callers must have synchronized past the phase's last event.
+    static float elapsed_us(CUevent from_event, CUevent to_event) {
         float elapsed_ms = 0.0f;
-        CHECK_CU(cuEventElapsedTime(&elapsed_ms, events[from_index], events[to_index]));
+        CHECK_CU(cuEventElapsedTime(&elapsed_ms, from_event, to_event));
         return elapsed_ms * 1000.0f;
     }
+    float span_us(size_t j) const { return elapsed_us(start_events[j], stop_events[j]); }
+    float gap_us(size_t j) const  { return elapsed_us(j == 0 ? origin : stop_events[j - 1], start_events[j]); }
+    float total_us() const        { return elapsed_us(origin, stop_events.back()); }
 };
+
+// No-ops when timeline is null, which is the default mode.
+static inline void mark_start(LaunchTimeline *timeline, size_t j) { if (timeline) timeline->record_start(j); }
+static inline void mark_stop(LaunchTimeline *timeline, size_t j)  { if (timeline) timeline->record_stop(j); }
 
 // Nearest-rank percentile: the smallest value with at least
 // `fraction` of the sample at or below it.
@@ -93,31 +125,36 @@ static double mean_of_range(const std::vector<float> &values, size_t begin, size
     return end > begin ? total / (double)(end - begin) : 0.0;
 }
 
-// Two lines per (kernel, phase), tab-free, `key=value` fields:
+// Output lines, all `key=value` fields:
 //
-//   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> n=<count> us=<v1,v2,...>
-//   per-launch-summary config=... kernel=... phase=... n=... min_us=... p10_us=... p50_us=...
-//       p90_us=... max_us=... first5_us=... last5_us=... sum_us=... [aggregate_us=...]
+//   per-launch config=<N_H_W_Cin_Cout> kernel=<name> phase=<warmup|timed> metric=<span|gap> n=<count> us=<v1,v2,...>
+//   per-launch-summary config=... kernel=... phase=... metric=... n=... min_us=... p10_us=... p50_us=...
+//       p90_us=... max_us=... first5_us=... last5_us=... sum_us=...
+//   per-launch-phase config=... path=<explicit|implicit> phase=... launches=<count> total_us=... [aggregate_us=...]
 //
-// Values are microseconds in launch order. aggregate_us, on timed phases
-// only, is the BenchTimer window the default output reports (as ms per
-// launch). sum_us telescopes to the chain's span (last event - event 0),
-// so it matches aggregate_us up to the gaps at the window's edges: a
-// consistency check on the chain, NOT a measure of what the extra events
-// cost, which sits inside every interval. Whether --per-launch perturbs
-// the timing is read only by comparing the default-mode aggregate with
-// the --per-launch aggregate across runs. The lines avoid `ms`/`GFLOPS` and
-// never start with `===`/`---`, so parse_throughput() cannot select them.
-// `print_raw = false` prints only the summary (used for the explicit pair,
-// whose raw values are im2col + gemm per index).
-static void print_per_launch(const char *config_key, const char *kernel_name,
-                             const char *phase_name, const std::vector<float> &values_us,
-                             bool print_raw, double aggregate_us) {
+// One raw and one summary line per (kernel, phase, metric), except
+// explicit_pair (start of im2col to end of the GEMM, per iteration), which
+// gets a summary only. Values are microseconds in launch order.
+//
+// total_us runs from the phase's origin to its last stop event, so it is
+// the sum of all its spans and gaps. aggregate_us, on timed phases only,
+// is the BenchTimer window the default output reports (as ms per launch).
+// The two differ only by the edges outside the timeline, which makes them
+// a consistency check, NOT a measure of what the extra events cost: that
+// cost sits inside the spans and gaps. Whether --per-launch perturbs the
+// timing can be read only by comparing the default-mode aggregate with the
+// --per-launch aggregate across runs.
+//
+// The lines avoid `ms`/`GFLOPS` and never start with `===`/`---`, so
+// parse_throughput() cannot select them.
+static void print_series(const char *config_key, const char *kernel_name,
+                         const char *phase_name, const char *metric_name,
+                         const std::vector<float> &values_us, bool print_raw) {
     size_t sample_count = values_us.size();
     if (sample_count == 0) return;
     if (print_raw) {
-        printf("  per-launch config=%s kernel=%s phase=%s n=%zu us=",
-               config_key, kernel_name, phase_name, sample_count);
+        printf("  per-launch config=%s kernel=%s phase=%s metric=%s n=%zu us=",
+               config_key, kernel_name, phase_name, metric_name, sample_count);
         for (size_t index = 0; index < sample_count; index++)
             printf(index == 0 ? "%.2f" : ",%.2f", (double)values_us[index]);
         printf("\n");
@@ -125,10 +162,10 @@ static void print_per_launch(const char *config_key, const char *kernel_name,
     std::vector<float> sorted_values(values_us);
     std::sort(sorted_values.begin(), sorted_values.end());
     size_t edge_count = sample_count < 5 ? sample_count : 5;
-    printf("  per-launch-summary config=%s kernel=%s phase=%s n=%zu"
+    printf("  per-launch-summary config=%s kernel=%s phase=%s metric=%s n=%zu"
            " min_us=%.2f p10_us=%.2f p50_us=%.2f p90_us=%.2f max_us=%.2f"
-           " first5_us=%.2f last5_us=%.2f sum_us=%.2f",
-           config_key, kernel_name, phase_name, sample_count,
+           " first5_us=%.2f last5_us=%.2f sum_us=%.2f\n",
+           config_key, kernel_name, phase_name, metric_name, sample_count,
            (double)sorted_values.front(),
            (double)nearest_rank(sorted_values, 0.10),
            (double)nearest_rank(sorted_values, 0.50),
@@ -137,6 +174,13 @@ static void print_per_launch(const char *config_key, const char *kernel_name,
            mean_of_range(values_us, 0, edge_count),
            mean_of_range(values_us, sample_count - edge_count, sample_count),
            mean_of_range(values_us, 0, sample_count) * (double)sample_count);
+}
+
+static void print_phase_total(const char *config_key, const char *path_name,
+                              const char *phase_name, const LaunchTimeline &timeline,
+                              double aggregate_us) {
+    printf("  per-launch-phase config=%s path=%s phase=%s launches=%zu total_us=%.2f",
+           config_key, path_name, phase_name, timeline.launch_count(), (double)timeline.total_us());
     if (aggregate_us >= 0.0) printf(" aggregate_us=%.2f", aggregate_us);
     printf("\n");
 }
@@ -423,40 +467,45 @@ int main(int argc, char **argv) {
             printf("  vs CPU ref:  max_abs=%.2e\n", (double)max_abs_vs_ref);
         }
 
-        // Per-launch event chains, created before any timed section so
-        // event creation never falls inside a window. Explicit: event 0,
-        // then one event after im2col and one after the GEMM per launch.
-        // Implicit: event 0, then one event per launch. Default mode
-        // creates none of them.
+        // Per-launch timelines, created before any timed section so event
+        // creation never falls inside a window. Default mode creates none,
+        // and every mark_* call below is then a no-op.
         char config_key[64];
         snprintf(config_key, sizeof(config_key), "%d_%d_%d_%d_%d", N, H, W_dim, Cin, Cout);
-        std::unique_ptr<LaunchEventChain> explicit_warmup_chain, explicit_timed_chain;
-        std::unique_ptr<LaunchEventChain> implicit_warmup_chain, implicit_timed_chain;
+        std::unique_ptr<LaunchTimeline> explicit_warmup_timeline, explicit_timed_timeline;
+        std::unique_ptr<LaunchTimeline> implicit_warmup_timeline, implicit_timed_timeline;
         if (per_launch) {
-            explicit_warmup_chain.reset(new LaunchEventChain(1 + 2 * (size_t)warmup_launches));
-            explicit_timed_chain.reset(new LaunchEventChain(1 + 2 * (size_t)timed_launches));
-            implicit_warmup_chain.reset(new LaunchEventChain(1 + (size_t)warmup_launches));
-            implicit_timed_chain.reset(new LaunchEventChain(1 + (size_t)timed_launches));
+            explicit_warmup_timeline.reset(new LaunchTimeline(2 * (size_t)warmup_launches));
+            explicit_timed_timeline.reset(new LaunchTimeline(2 * (size_t)timed_launches));
+            implicit_warmup_timeline.reset(new LaunchTimeline((size_t)warmup_launches));
+            implicit_timed_timeline.reset(new LaunchTimeline((size_t)timed_launches));
         }
 
         // ---- Timing: explicit (im2col + GEMM combined) ----
+        // Launch j = 2t is im2col, j = 2t + 1 is the GEMM.
         float ms_explicit = 0.0f, explicit_window_ms = 0.0f;
         {
-            if (per_launch) explicit_warmup_chain->record(0);
+            LaunchTimeline *timeline = explicit_warmup_timeline.get();
+            if (timeline) timeline->record_origin();
             for (int t = 0; t < warmup_launches; t++) {
+                mark_start(timeline, 2 * (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_im2col, im2col_blocks,1,1, im2col_threads,1,1, 0,0, im2col_args,0));
-                if (per_launch) explicit_warmup_chain->record(1 + 2 * (size_t)t);
+                mark_stop(timeline, 2 * (size_t)t);
+                mark_start(timeline, 2 * (size_t)t + 1);
                 CHECK_CU(cuLaunchKernel(fn_gemm_explicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_EXPLICIT,0, gemm_exp_args,0));
-                if (per_launch) explicit_warmup_chain->record(2 + 2 * (size_t)t);
+                mark_stop(timeline, 2 * (size_t)t + 1);
             }
             CHECK_CU(cuCtxSynchronize());
             BenchTimer bt; bt.start();
-            if (per_launch) explicit_timed_chain->record(0);
+            timeline = explicit_timed_timeline.get();
+            if (timeline) timeline->record_origin();
             for (int t = 0; t < timed_launches; t++) {
+                mark_start(timeline, 2 * (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_im2col, im2col_blocks,1,1, im2col_threads,1,1, 0,0, im2col_args,0));
-                if (per_launch) explicit_timed_chain->record(1 + 2 * (size_t)t);
+                mark_stop(timeline, 2 * (size_t)t);
+                mark_start(timeline, 2 * (size_t)t + 1);
                 CHECK_CU(cuLaunchKernel(fn_gemm_explicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_EXPLICIT,0, gemm_exp_args,0));
-                if (per_launch) explicit_timed_chain->record(2 + 2 * (size_t)t);
+                mark_stop(timeline, 2 * (size_t)t + 1);
             }
             explicit_window_ms = bt.stop_ms();
             ms_explicit = explicit_window_ms / (float)timed_launches;
@@ -465,17 +514,21 @@ int main(int argc, char **argv) {
         // ---- Timing: implicit GEMM (single kernel) ----
         float ms_implicit = 0.0f, implicit_window_ms = 0.0f;
         {
-            if (per_launch) implicit_warmup_chain->record(0);
+            LaunchTimeline *timeline = implicit_warmup_timeline.get();
+            if (timeline) timeline->record_origin();
             for (int t = 0; t < warmup_launches; t++) {
+                mark_start(timeline, (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_gemm_implicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_IMPLICIT,0, gemm_imp_args,0));
-                if (per_launch) implicit_warmup_chain->record(1 + (size_t)t);
+                mark_stop(timeline, (size_t)t);
             }
             CHECK_CU(cuCtxSynchronize());
             BenchTimer bt; bt.start();
-            if (per_launch) implicit_timed_chain->record(0);
+            timeline = implicit_timed_timeline.get();
+            if (timeline) timeline->record_origin();
             for (int t = 0; t < timed_launches; t++) {
+                mark_start(timeline, (size_t)t);
                 CHECK_CU(cuLaunchKernel(fn_gemm_implicit, grid_m, grid_n,1, 128,1,1, SMEM_BYTES_IMPLICIT,0, gemm_imp_args,0));
-                if (per_launch) implicit_timed_chain->record(1 + (size_t)t);
+                mark_stop(timeline, (size_t)t);
             }
             implicit_window_ms = bt.stop_ms();
             ms_implicit = implicit_window_ms / (float)timed_launches;
@@ -488,37 +541,49 @@ int main(int argc, char **argv) {
         printf("  Implicit (single kern): %.3f ms  → %6.0f GFLOPS  (%.2f× speedup)\n",
                ms_implicit, gflops_imp, ms_explicit / ms_implicit);
 
-        // Every chain is complete: each phase ended in cuCtxSynchronize()
-        // or BenchTimer::stop_ms(), which synchronizes on an event
-        // recorded after the chain's last event.
+        // Every timeline is complete: each phase ended in cuCtxSynchronize()
+        // or BenchTimer::stop_ms(), which synchronizes on an event recorded
+        // after the phase's last stop event.
         if (per_launch) {
-            struct ExplicitPhase { const char *name; LaunchEventChain *chain; int launches; double aggregate_us; };
-            ExplicitPhase explicit_phases[] = {
-                { "warmup", explicit_warmup_chain.get(), warmup_launches, -1.0 },
-                { "timed",  explicit_timed_chain.get(),  timed_launches,  (double)explicit_window_ms * 1000.0 },
+            struct Phase { const char *name; LaunchTimeline *timeline; double aggregate_us; };
+            Phase explicit_phases[] = {
+                { "warmup", explicit_warmup_timeline.get(), -1.0 },
+                { "timed",  explicit_timed_timeline.get(),  (double)explicit_window_ms * 1000.0 },
             };
-            for (const ExplicitPhase &phase : explicit_phases) {
-                std::vector<float> im2col_us, gemm_us, pair_us;
-                for (int t = 0; t < phase.launches; t++) {
-                    size_t before_im2col = 2 * (size_t)t, after_im2col = before_im2col + 1, after_gemm = before_im2col + 2;
-                    im2col_us.push_back(phase.chain->elapsed_us(before_im2col, after_im2col));
-                    gemm_us.push_back(phase.chain->elapsed_us(after_im2col, after_gemm));
-                    pair_us.push_back(phase.chain->elapsed_us(before_im2col, after_gemm));
+            for (const Phase &phase : explicit_phases) {
+                const LaunchTimeline &timeline = *phase.timeline;
+                size_t iterations = timeline.launch_count() / 2;
+                std::vector<float> im2col_span, im2col_gap, gemm_span, gemm_gap, pair_span;
+                for (size_t t = 0; t < iterations; t++) {
+                    size_t im2col_j = 2 * t, gemm_j = 2 * t + 1;
+                    im2col_span.push_back(timeline.span_us(im2col_j));
+                    im2col_gap.push_back(timeline.gap_us(im2col_j));
+                    gemm_span.push_back(timeline.span_us(gemm_j));
+                    gemm_gap.push_back(timeline.gap_us(gemm_j));
+                    pair_span.push_back(LaunchTimeline::elapsed_us(timeline.start_events[im2col_j],
+                                                                   timeline.stop_events[gemm_j]));
                 }
-                print_per_launch(config_key, "im2col_nhwc_fp16", phase.name, im2col_us, true,  -1.0);
-                print_per_launch(config_key, "wmma_gemm_conv",   phase.name, gemm_us,   true,  -1.0);
-                print_per_launch(config_key, "explicit_pair",    phase.name, pair_us,   false, phase.aggregate_us);
+                print_series(config_key, "im2col_nhwc_fp16", phase.name, "span", im2col_span, true);
+                print_series(config_key, "im2col_nhwc_fp16", phase.name, "gap",  im2col_gap,  true);
+                print_series(config_key, "wmma_gemm_conv",   phase.name, "span", gemm_span,   true);
+                print_series(config_key, "wmma_gemm_conv",   phase.name, "gap",  gemm_gap,    true);
+                print_series(config_key, "explicit_pair",    phase.name, "span", pair_span,   false);
+                print_phase_total(config_key, "explicit", phase.name, timeline, phase.aggregate_us);
             }
-            struct ImplicitPhase { const char *name; LaunchEventChain *chain; int launches; double aggregate_us; };
-            ImplicitPhase implicit_phases[] = {
-                { "warmup", implicit_warmup_chain.get(), warmup_launches, -1.0 },
-                { "timed",  implicit_timed_chain.get(),  timed_launches,  (double)implicit_window_ms * 1000.0 },
+            Phase implicit_phases[] = {
+                { "warmup", implicit_warmup_timeline.get(), -1.0 },
+                { "timed",  implicit_timed_timeline.get(),  (double)implicit_window_ms * 1000.0 },
             };
-            for (const ImplicitPhase &phase : implicit_phases) {
-                std::vector<float> implicit_us;
-                for (int t = 0; t < phase.launches; t++)
-                    implicit_us.push_back(phase.chain->elapsed_us((size_t)t, (size_t)t + 1));
-                print_per_launch(config_key, "implicit_gemm_conv", phase.name, implicit_us, true, phase.aggregate_us);
+            for (const Phase &phase : implicit_phases) {
+                const LaunchTimeline &timeline = *phase.timeline;
+                std::vector<float> implicit_span, implicit_gap;
+                for (size_t j = 0; j < timeline.launch_count(); j++) {
+                    implicit_span.push_back(timeline.span_us(j));
+                    implicit_gap.push_back(timeline.gap_us(j));
+                }
+                print_series(config_key, "implicit_gemm_conv", phase.name, "span", implicit_span, true);
+                print_series(config_key, "implicit_gemm_conv", phase.name, "gap",  implicit_gap,  true);
+                print_phase_total(config_key, "implicit", phase.name, timeline, phase.aggregate_us);
             }
         }
         printf("\n");
